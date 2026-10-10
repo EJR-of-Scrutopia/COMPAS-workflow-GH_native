@@ -25,6 +25,17 @@ def linear(rgb):
 
     return [c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4 for c in rgb]
 
+
+STOPS = ["#3a6fc4", "#3fa6a0", "#e8c547", "#cc2211"]
+
+
+def ramp(fraction):
+    # formwork_model.ramp: the full ramp, sRGB from 0 to 1, as three is given it
+    f = min(1.0, max(0.0, fraction)) * (len(STOPS) - 1)
+    i = min(len(STOPS) - 2, int(f))
+    a, b = ([((int(s[1:], 16) >> k) & 255) / 255 for k in (16, 8, 0)] for s in STOPS[i:i + 2])
+    return linear([x + (y - x) * (f - i) for x, y in zip(a, b)])
+
 HARNESS = """
 import * as THREE from %(three)r;
 import * as m from %(model)r;
@@ -174,10 +185,7 @@ def test_the_drawing_blends_the_positions_and_colours_from_the_nearer_capture(ou
     # half way through the lift: node 2 at 250 mm
     assert out["net"] == pytest.approx([1.0, 0.0, 0.0, 1.0, 1.0, 0.25])
     # the member's colour is the hold's 2.5 kN on the run's 3 kN scale
-    cream, red = [0xf2, 0xef, 0xe8], [0xcc, 0x22, 0x11]
-    f = 2500 / 3000
-    assert out["netColour"] == pytest.approx(
-        linear([(c + (r - c) * f) / 255 for c, r in zip(cream, red)]), abs=1e-6)
+    assert out["netColour"] == pytest.approx(ramp(2500 / 3000), abs=1e-6)
     # the tree member from its foot to its head, as long as the lift so far
     assert out["tree"]["p"] == pytest.approx([1.0, 1.0, 0.125])
     assert out["tree"]["s"][1] == pytest.approx(0.25)
@@ -206,17 +214,12 @@ def test_each_wire_runs_from_its_node_the_way_it_runs_in(out):
     line, colour = out["wire"]
     assert line == pytest.approx([0, 0, 0, -0.3, 0, 0])
     assert colour == pytest.approx(linear([0.86, 0.86, 0.86]))
-    f = 1200 / 1500
-    assert out["wireColour"] == pytest.approx(
-        linear([(c + (r - c) * f) / 255 for c, r in zip([0xf2, 0xef, 0xe8], [0xcc, 0x22, 0x11])]),
-        abs=1e-6)
+    assert out["wireColour"] == pytest.approx(ramp(1200 / 1500), abs=1e-6)
 
 
 def test_under_colour_by_wires_each_anchor_wears_its_wires_colour(out):
     # a wire runs straight down into its anchor, so its stub is hidden in the
     # rim beam: the anchor mark carries the wire's colour (found on screen)
-    ramp = lambda f: linear([(c + (r - c) * f) / 255
-                             for c, r in zip([0xf2, 0xef, 0xe8], [0xcc, 0x22, 0x11])])
     first, second = out["anchorColours"]
     assert first == pytest.approx(ramp(1200 / 1500), abs=1e-6)
     assert second == pytest.approx(ramp(900 / 1500), abs=1e-6)
@@ -238,13 +241,14 @@ def test_the_skin_is_the_faces_placed_riding_the_net(out):
 
 
 def test_each_colour_by_colours_its_own_part(out):
-    within, near = out["deviation"]
-    # node 0 at 5 mm is within 20; node 2 at 12 mm is near it
-    assert within == pytest.approx(linear([0xf2 / 255, 0xef / 255, 0xe8 / 255]))
-    assert near == pytest.approx(linear([0xc9 / 255, 0x9a / 255, 0x2e / 255]))
+    small, larger = out["deviation"]
+    # node 0 at 5 mm and node 2 at 12 mm, on the run's 500 mm scale (spec
+    # 2026-10-11 section 5.1: every Colour by on the full ramp over the run)
+    assert small == pytest.approx(ramp(5 / 500), abs=1e-6)
+    assert larger == pytest.approx(ramp(12 / 500), abs=1e-6)
     tree, net, _ = out["utilisation"]
-    # over its capacity: the over band (final review 3)
-    assert tree == pytest.approx(linear([0xc2 / 255, 0x49 / 255, 0x36 / 255]), abs=1e-6)
+    # the run's largest utilisation, 1.2: the ramp's end
+    assert tree == pytest.approx(ramp(1.0), abs=1e-6)
     assert net == pytest.approx(linear([0.86, 0.86, 0.86]))
 
 
