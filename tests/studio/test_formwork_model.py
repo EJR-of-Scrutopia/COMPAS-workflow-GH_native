@@ -107,6 +107,7 @@ out.lineHtml = m.frameLineHtml(out.line);
 out.noLine = m.frameLine(sim, 9);
 out.colours = { high: m.colourOf("tension", 3000, sim, 20), low: m.colourOf("tension", 0, sim, 20),
   over: m.colourOf("utilisation", 1.2, sim, 20), half: m.colourOf("utilisation", 0.5, sim, 20),
+  nearCapacity: m.colourOf("utilisation", 0.8, sim, 20),
   wire: m.colourOf("wire", 1500, sim, 20),
   deviation: [5, 12, 40].map((v) => m.colourOf("deviation", v, sim, 20)),
   off: m.colourOf("off", 3, sim, 20) };
@@ -231,9 +232,12 @@ def test_each_colour_by_draws_on_the_runs_own_scale(out):
     red, cream = [0xcc / 255, 0x22 / 255, 0x11 / 255], [0xf2 / 255, 0xef / 255, 0xe8 / 255]
     assert colours["high"] == pytest.approx(red) and colours["low"] == pytest.approx(cream)
     assert colours["wire"] == pytest.approx(red)
-    # a tree at capacity and over is full red; half way is half way along
-    assert colours["over"] == pytest.approx(red)
-    assert colours["half"] == pytest.approx([(a + b) / 2 for a, b in zip(red, cream)])
+    # a tree is banded at its capacity, 1.0, as the Sag lens bands a sag:
+    # within to half of it, near to it, over it (final review 3: a ramp
+    # clamped at 1.0 drew 2.36 and 1.0 the same red)
+    assert colours["over"] == pytest.approx([0xc2 / 255, 0x49 / 255, 0x36 / 255])
+    assert colours["nearCapacity"] == pytest.approx([0xc9 / 255, 0x9a / 255, 0x2e / 255])
+    assert colours["half"] == pytest.approx(cream)
     # deviation in the Sag lens's bands against the tolerance
     within, near, over = colours["deviation"]
     assert within == pytest.approx(cream)
@@ -247,7 +251,9 @@ def test_each_colour_by_has_its_key(out):
     assert tension == {"title": "rope tension, kN", "min": "0", "max": "3.0"}
     assert deviation["title"] == "deviation, mm: tolerance 20" and deviation["max"] == "500"
     assert [band["name"] for band in deviation["bands"]] == ["within", "near", "over"]
-    assert utilisation == {"title": "tree utilisation", "min": "0", "max": "1.0"}
+    assert utilisation["title"] == "tree utilisation: capacity 1.0"
+    assert (utilisation["min"], utilisation["max"]) == ("0", "1.20")
+    assert [band["name"] for band in utilisation["bands"]] == ["within", "near", "over"]
     assert wire == {"title": "wire tension, N", "min": "0", "max": "1500"}
     assert off is None
 

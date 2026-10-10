@@ -181,7 +181,8 @@ def test_each_colour_by_colours_its_own_part(out):
     assert within == pytest.approx(linear([0xf2 / 255, 0xef / 255, 0xe8 / 255]))
     assert near == pytest.approx(linear([0xc9 / 255, 0x9a / 255, 0x2e / 255]))
     tree, net, _ = out["utilisation"]
-    assert tree == pytest.approx(linear([0xcc / 255, 0x22 / 255, 0x11 / 255]), abs=1e-6)
+    # over its capacity: the over band (final review 3)
+    assert tree == pytest.approx(linear([0xc2 / 255, 0x49 / 255, 0x36 / 255]), abs=1e-6)
     assert net == pytest.approx(linear([0.86, 0.86, 0.86]))
 
 

@@ -206,8 +206,9 @@ export function colourOf(by, value, sim, tolerance) {
   if (!sim || value == null) return null;
   if (by === "tension") return ramp(sim.scales.tension > 0 ? value / sim.scales.tension : 0);
   if (by === "wire") return ramp(sim.scales.wire > 0 ? value / sim.scales.wire : 0);
-  // full red at the tube's capacity and over it
-  if (by === "utilisation") return ramp(value);
+  // banded at the tube's capacity, 1.0, as a sag is at the tolerance
+  // (final review 3: a ramp clamped at 1.0 drew 2.36 and 1.0 the same red)
+  if (by === "utilisation") return hexRgb(DEVIATION_COLOURS[deviationBand(value, 1)]);
   if (by === "deviation") return hexRgb(DEVIATION_COLOURS[deviationBand(value, tolerance)]);
   return null;
 }
@@ -219,7 +220,11 @@ export function colourKey(by, sim, tolerance) {
     return { title: "rope tension, kN", min: "0", max: (sim.scales.tension / 1000).toFixed(1) };
   }
   if (by === "wire") return { title: "wire tension, N", min: "0", max: sim.scales.wire.toFixed(0) };
-  if (by === "utilisation") return { title: "tree utilisation", min: "0", max: "1.0" };
+  if (by === "utilisation") {
+    return { title: "tree utilisation: capacity 1.0", min: "0",
+             max: sim.scales.utilisation.toFixed(2),
+             bands: ["within", "near", "over"].map((name) => ({ name, colour: DEVIATION_COLOURS[name] })) };
+  }
   if (by === "deviation") {
     return { title: "deviation, mm: tolerance " + Number(tolerance), min: "0",
              max: sim.scales.deviation.toFixed(0),
