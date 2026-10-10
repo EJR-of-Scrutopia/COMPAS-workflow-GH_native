@@ -1723,6 +1723,25 @@ body.stilling #model-labels, body.stilling #cablenet-pick { display: none; }
 #formwork-popup td { color: var(--ink); }
 #formwork-popup tr[data-capture] { cursor: pointer; }
 #formwork-popup tr[data-capture]:hover td { background: var(--raised); }
+/* The one Cable net tab's mechanism pop-up (spec 2026-10-11 section 8.1), on
+   the left as the other pop-ups are. */
+#mechanism-popup { position: fixed; left: 16px; top: 58px; width: 440px; max-height: 80vh;
+  overflow: auto; z-index: 27; padding: var(--s2) var(--s3); background: var(--scrim);
+  border: 1px solid var(--line); border-radius: var(--radius);
+  -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px); }
+#mechanism-popup.hidden { display: none; }
+#mechanism-popup-head { display: flex; justify-content: space-between; align-items: center;
+  margin-bottom: var(--s2); }
+#mechanism-tabs { display: flex; gap: var(--s1); }
+#mechanism-popup button { height: var(--h-small); padding: 0 var(--s2); background: var(--raised);
+  border: 1px solid var(--line); border-radius: var(--radius); color: var(--ink); width: auto; }
+#mechanism-tabs button.active { background: var(--accent-bg); color: var(--accent-ink);
+  border-color: var(--accent); }
+#mechanism-preset { width: 100%; margin-bottom: var(--s2); }
+#mechanism-popup table { width: 100%; border-collapse: collapse; }
+#mechanism-popup th, #mechanism-popup td { text-align: left; padding: 2px 6px 2px 0;
+  font-size: var(--t-2); }
+#mechanism-popup th { color: var(--ink-3); font-weight: 400; }
 #formwork-labels { position: fixed; inset: 0; pointer-events: none; z-index: 14; }
 #formwork-labels .model-label { position: absolute; transform: translate(-50%, calc(-100% - 6px));
   padding: 1px 4px; border-radius: 3px; background: var(--scrim-thin); color: var(--ink);

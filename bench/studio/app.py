@@ -3678,7 +3678,8 @@ def create_app(runner=None, cra_runner=None, cablenet_runner=None,
         for module in ("panel.js", "pbr.js", "fields.js",
                        "data_analysis.js", "live_graphs.js", "atmosphere.js",
                        "cablenet.js", "cablenet_model.js", "formwork.js",
-                       "formwork_model.js", "formwork_view.js"):
+                       "formwork_model.js", "formwork_view.js", "mechanism_pick.js",
+                       "mechanism_pick_model.js"):
             page = page.replace(
                 '"three/addons/": "/static/vendor/addons/"',
                 '"three/addons/": "/static/vendor/addons/",\n'
