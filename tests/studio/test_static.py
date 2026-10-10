@@ -4619,13 +4619,50 @@ def test_space_is_wired_to_play_pause_and_the_rewind():
     assert "applyTimeline(0);" in rewind
 
 
+def test_the_formwork_section_is_a_run_a_player_ticks_and_the_worst_popup():
+    # spec 2026-10-10 formwork tab, sections 5 and 10
+    html = (STATIC / "index.html").read_text(encoding="utf-8")
+    opening = '<details id="formwork-section">'
+    assert opening in html
+    section = html[html.index(opening) + len(opening):]
+    section = section[:section.index("</details>")]
+    for ident in ("formwork-run", "formwork-run-status", "formwork-machine", "formwork-wall",
+                  "formwork-scrub", "formwork-speed", "formwork-back", "formwork-play",
+                  "formwork-on", "formwork-label", "formwork-line", "formwork-show",
+                  "formwork-colour", "formwork-label-ticks", "formwork-worst-toggle",
+                  "formwork-warnings"):
+        assert 'id="{}"'.format(ident) in section, ident
+    assert section.count('class="primary"') == 1 and section.count("<details") == 0
+    for tag in re.findall(r"<button[^>]*>", section):
+        assert 'title="' in tag, tag
+    # the eight show ticks, the five colour choices (Deviation first on), the
+    # three label ticks
+    assert re.findall(r'data-show="([a-z]+)"', section) == [
+        "net", "trees", "heads", "wires", "anchors", "ground", "skin", "design"]
+    assert re.findall(r'name="formwork-colour" value="([a-z]+)"', section) == [
+        "tension", "deviation", "utilisation", "wire", "off"]
+    assert 'value="deviation" checked' in section
+    assert re.findall(r'data-label="([a-z]+)"', section) == ["rope", "deviation", "contact"]
+    # the worst tables in a pop-up on the left, one tab a part; the labels and
+    # the card of their own
+    for ident in ("formwork-popup", "formwork-popup-close", "formwork-worst", "formwork-labels",
+                  "formwork-pick"):
+        assert 'id="{}"'.format(ident) in html, ident
+    popup = html[html.index('<div id="formwork-popup"'):]
+    popup = popup[:popup.index("<!-- the end of the formwork pop-up -->")]
+    assert re.findall(r'data-fw-tab="([a-z]+)"', popup) == [
+        "ropes", "wires", "trees", "nodes", "machines"]
+    for tag in re.findall(r"<button[^>]*>", popup):
+        assert 'title="' in tag, tag
+
+
 def test_the_rail_has_a_cable_net_section_and_the_data_popup_lost_its_tab():
     html = (STATIC / "index.html").read_text(encoding="utf-8")
     rail = html[html.index('<nav id="tab-rail">'):html.index("</nav>")]
     buttons = re.findall(r'data-section="([a-z-]+)"', rail)
     assert buttons == ["import-section", "study-section", "analysis-section",
-                       "cablenet-section", "animation-section", "camera-section",
-                       "scene-section", "output-section"]
+                       "cablenet-section", "formwork-section", "animation-section",
+                       "camera-section", "scene-section", "output-section"]
     assert '<details id="cablenet-section">' in html
     assert "cablenet-panel" not in html
     for ident in ("cablenet-run", "cablenet-speed", "cablenet-lenses",

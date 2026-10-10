@@ -1685,3 +1685,51 @@ body.stilling #model-labels, body.stilling #cablenet-pick { display: none; }
 #cablenet-pick table { border-collapse: collapse; }
 #cablenet-pick th { color: var(--ink-3); font-weight: 400; text-align: left; padding: 1px 8px 1px 0; }
 #cablenet-pick td { color: var(--ink); text-align: right; }
+
+/* The Formwork tab (spec 2026-10-10 formwork tab): the player, the ticks, the
+   worst tables in the Cable net pop-up's place and dress, and the labels and
+   the card as the Cable net tab draws them. */
+#panel #formwork-run-status { color: var(--ink-2); min-height: 1.2em; }
+#panel #formwork-player { display: flex; align-items: center; gap: var(--s1); margin: var(--s2) 0; }
+#panel #formwork-label { color: var(--ink); font-size: var(--t-2); margin-left: var(--s2); }
+#panel .formwork-ticks { display: flex; flex-wrap: wrap; gap: var(--s1) var(--s3);
+  margin: var(--s2) 0; color: var(--ink-2); font-size: var(--t-2); }
+#panel .formwork-ticks > span { width: 100%; color: var(--ink-3); }
+#panel .formwork-ticks label { display: inline-flex; align-items: center; gap: var(--s1);
+  cursor: pointer; }
+#panel #formwork-worst-toggle.active { background: var(--accent-bg); color: var(--accent-ink);
+  border-color: var(--accent); }
+#formwork-popup { position: fixed; left: 16px; top: 58px; width: 440px; max-height: 80vh;
+  overflow: auto; background: var(--scrim); -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px); padding: var(--s4); border: 1px solid var(--line);
+  border-radius: var(--radius); z-index: 20; color: var(--ink-2); font-size: var(--t-2); }
+#formwork-popup.hidden { display: none; }
+#formwork-popup-head { display: flex; justify-content: space-between; align-items: center;
+  gap: var(--s2); margin-bottom: var(--s3); }
+#formwork-tabs { display: flex; flex-wrap: wrap; gap: var(--s1); }
+#formwork-popup button { height: var(--h-small); padding: 0 var(--s2); background: var(--raised);
+  color: var(--ink); border: 1px solid var(--line); border-radius: var(--radius);
+  font: inherit; font-size: var(--t-2); cursor: pointer; }
+#formwork-popup button:hover { border-color: var(--line-lit); }
+#formwork-tabs button.active { background: var(--accent-bg); color: var(--accent-ink);
+  border-color: var(--accent); }
+#formwork-popup table { width: 100%; border-collapse: collapse; margin: 0 0 var(--s2); }
+#formwork-popup th, #formwork-popup td { text-align: left; padding: 2px 6px 2px 0;
+  border-bottom: 1px solid var(--line); font-weight: 400; }
+#formwork-popup th { color: var(--ink-3); cursor: pointer; }
+#formwork-popup th.sorted { color: var(--ink); }
+#formwork-popup td { color: var(--ink); }
+#formwork-popup tr[data-capture] { cursor: pointer; }
+#formwork-popup tr[data-capture]:hover td { background: var(--raised); }
+#formwork-labels { position: fixed; inset: 0; pointer-events: none; z-index: 14; }
+#formwork-labels .model-label { position: absolute; transform: translate(-50%, calc(-100% - 6px));
+  padding: 1px 4px; border-radius: 3px; background: var(--scrim-thin); color: var(--ink);
+  font-size: 10px; line-height: 1.3; white-space: nowrap; }
+body.stilling #formwork-labels, body.stilling #formwork-pick { display: none; }
+#formwork-pick { position: fixed; z-index: 27; min-width: 180px; padding: var(--s2) var(--s3);
+  background: var(--scrim); -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px);
+  border: 1px solid var(--line); border-radius: var(--radius); font-size: var(--t-2); }
+#formwork-pick.hidden { display: none; }
+#formwork-pick table { border-collapse: collapse; }
+#formwork-pick th { color: var(--ink-3); font-weight: 400; text-align: left; padding: 1px 8px 1px 0; }
+#formwork-pick td { color: var(--ink); text-align: right; }
