@@ -134,7 +134,8 @@ out.warn = [m.formworkWarnings(null, chosen), m.formworkWarnings(sim, chosen),
   m.formworkWarnings(sim, { ...chosen, prestress: 6660 }),
   m.formworkWarnings(sim, { ...chosen, prestress: 725 }),
   m.formworkWarnings(sim, { ...chosen, wall: 2.6 }),
-  m.formworkWarnings(sim, { ...chosen, prestress: null })];
+  m.formworkWarnings(sim, { ...chosen, prestress: null }),
+  m.formworkWarnings(sim, { ...chosen, rope: null })];
 // the worst tables (spec section 10)
 const tables = m.worstTables(sim);
 out.worst = tables;
@@ -307,7 +308,10 @@ def test_the_card_gives_the_node_its_head_or_wire_and_its_members(out):
 
 
 def test_the_warnings_are_one_line_each(out):
-    none, same, older, machine, prestress, within, wall, unknown = out["warn"]
+    none, same, older, machine, prestress, within, wall, unknown, unloaded = out["warn"]
+    # the Cable net tab's choices not loaded yet: no machine to differ (final
+    # review 6: a false "Run again: machine no wire")
+    assert unloaded == []
     assert none == ["No formwork run: Run formwork analysis"]
     assert same == [] and within == [] and unknown == []
     assert older == ["Run again: older formwork run"]

@@ -358,7 +358,7 @@ export function formworkWarnings(sim, chosen) {
   if (sim.older) out.push("Run again: older formwork run");
   const ran = sim.options || {};
   if (!chosen) return out;
-  if (machineName(chosen) !== machineName(ran)) {
+  if (chosen.rope != null && machineName(chosen) !== machineName(ran)) {
     out.push("Run again: machine " + machineName(chosen) + ", run " + machineName(ran));
   }
   if (chosen.prestress != null && ran.prestress != null
