@@ -46,6 +46,15 @@ def test_node_force_colours_the_nodes_and_each_new_lens_draws_its_legend():
     assert "TENSION_SCALE(sizes[i] || 0, top)" in nodes
     legend = _function_body(JS, "paintLensLegend")
     assert "lensLegend(lens, state.cablenet, stage, state.cablenetCeiling)" in legend
+    # a banded lens is keyed by its bands, and every other legend clears them
+    assert "if (legend.bands) paintBandLegend(legend.title, legend.bands, legend.min, legend.max);" in legend
+    bands = _function_body(JS, "paintBandLegend")
+    assert 'legend.classList.add("bands");' in bands and "escapeHtml(band.name)" in bands
+    for writer in ("paintScalarLegend", "paintForceLegend", "updateLegend"):
+        assert 'legend.classList.remove("bands");' in _function_body(JS, writer), writer
+    assert '<div id="legend-bands"></div>' in HTML
+    assert "#legend.bands #legend-bar { display: none; }" in CSS
+    assert "#legend.bands #legend-bands { display: flex; }" in CSS
 
 
 def test_the_arrows_stand_behind_a_tick_off_for_node_force_on_for_the_wires():
@@ -75,6 +84,12 @@ def test_numbers_ride_the_model_from_the_models_targets():
     # labels that would print over one another give way (found on screen)
     assert "const LABEL_GAP_X = 44;" in JS and "const LABEL_GAP_Y = 16;" in JS
     assert "spreadLabels(points, LABEL_GAP_X, LABEL_GAP_Y)" in place
+    # never over the side menu: a point past the panel's left edge is not drawn
+    # (review 4)
+    assert "const right = viewRight();" in place and "sx < right" in place
+    edge = _function_body(JS, "viewRight")
+    assert 'document.body.classList.contains("panel-collapsed")' in edge
+    assert ".getBoundingClientRect().left" in edge
     # under the legend, never over it
     assert "#model-labels { position: fixed; inset: 0; pointer-events: none; z-index: 14; }" in CSS
     assert "placeModelLabels();" in _function_body(JS, "renderView")
@@ -99,7 +114,16 @@ def test_a_click_on_a_node_opens_its_card_and_a_drag_does_not():
     # above the bottom shelf (z-index 25) and inside the view, found on screen
     # cut off under the shelf
     assert "#cablenet-pick { position: fixed; z-index: 27;" in CSS
-    assert "innerHeight - card.offsetHeight - CARD_CLEAR_BOTTOM" in pick
+    assert "innerHeight - card.offsetHeight - CARD_CLEAR_BOTTOM" in _function_body(JS, "placeCard")
+    assert "placeCard(card, best.x, best.y);" in pick
+    assert "viewRight() - CARD_WIDTH" in _function_body(JS, "placeCard")
+    # the card rides with its node as the view moves, as the labels do
+    # (review 7), and a press the scatter tools own opens none (review 11)
+    assert "cablenetPick.at = " in pick
+    assert "placeCablenetPick(rect, lift);" in _function_body(JS, "placeModelLabels")
+    ride = _function_body(JS, "placeCablenetPick")
+    assert "cablenetPick.at" in ride and 'card.classList.add("hidden")' in ride
+    assert "!state.scatterArmed" in press
 
 
 def test_the_card_reads_each_wires_own_ceiling_from_the_scored_row():

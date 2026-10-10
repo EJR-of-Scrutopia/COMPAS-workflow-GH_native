@@ -55,6 +55,11 @@ out.pickGrabbed = m.pickHtml(held, f60, 4, verdict);
 out.pickWire = m.pickHtml({ ...held, wires: [{ name: "w<0>", net_vertex: 3 }] }, f60, 3, verdict);
 out.pickNoVerdict = m.pickHtml({ ...held, wires: [{ name: "w0", net_vertex: 3 }] }, f60, 3, null);
 out.pickNothing = [m.pickHtml(null, f60, 1, null), m.pickHtml(held, null, 1, null), m.pickHtml(held, f60, null, null)];
+// A reel of a few hundredths of a millimetre: never a signed zero (review 2).
+const tiny = { ...demand, stages: [{ name: "S9", time: null, course: 3,
+  wire_reel_commands: [-0.04, -0.07, 0.02] }] };
+out.reelTiny = m.labelTargets("reel", tiny, tiny.stages[0], null).map((t) => [t.text, t.side]);
+out.reelTinyLegend = m.lensLegend("reel", tiny, tiny.stages[0], null);
 // Labels that would print over one another: the one placed first stands.
 out.spread = m.spreadLabels([[100, 100], [120, 104], [100, 130], null, [300, 100], [310, 300]], 44, 16);
 console.log(JSON.stringify(out));
@@ -101,6 +106,11 @@ def test_the_wire_lenses_label_every_wire_at_its_rim_node(out):
     assert [(t["node"], t["text"], t["side"]) for t in out["reel"]] == [
         (10, "-4.2 mm", "in"), (12, "2.0 mm", "out"), (11, "0.0 mm", "still")]
     assert out["noStage"] == []
+    # a wire that has moved less than a twentieth of a millimetre reads 0.0 mm
+    # and is still, never -0.0 mm taken in (found by the final review on the
+    # real study, where most wires end within 0.1 mm)
+    assert out["reelTiny"] == [["-0.1 mm", "in"], ["0.0 mm", "still"], ["0.0 mm", "still"]]
+    assert out["reelTinyLegend"]["min"] == "-0.1" and out["reelTinyLegend"]["max"] == "0.0"
 
 
 def test_crowded_labels_give_way_to_the_one_placed_first(out):
@@ -125,10 +135,17 @@ def test_every_lens_has_a_legend_with_its_unit_and_range(out):
     # Wire tension and Sag keep the legends they draw today
     assert legends["tension"] is None and legends["sag"] is None
     assert legends["nodeforce"] == {"title": "node force, N", "min": "0", "max": "12.0"}
-    assert legends["prestress"] == {"title": "wire tension, N: within / near / over 1123.4",
-                                    "min": "0", "max": "1200.0"}
+    # a banded lens keys its bands in the colours its arrows are drawn in, not
+    # the pale-to-red ramp (review 3)
+    assert legends["prestress"] == {
+        "title": "wire tension, N: within / near / over 1123.4", "min": "0", "max": "1200.0",
+        "bands": [{"name": "within", "colour": "#3f9e57"}, {"name": "near", "colour": "#c99a2e"},
+                  {"name": "over", "colour": "#c24936"}]}
     assert legends["prestressPlain"]["title"] == "wire tension, N"
-    assert legends["reel"] == {"title": "reel, mm: in / out", "min": "-4.2", "max": "2.0"}
+    assert legends["prestressPlain"]["bands"] == [{"name": "no machine", "colour": "#9aa4b2"}]
+    assert legends["reel"] == {
+        "title": "reel, mm: in / out", "min": "-4.2", "max": "2.0",
+        "bands": [{"name": "in", "colour": "#66aaff"}, {"name": "out", "colour": "#c99a2e"}]}
 
 
 def test_a_clicked_node_shows_its_force_and_sag_and_a_wires_figures(out):

@@ -227,10 +227,20 @@ export function mountCableNet({ studyName, studyOptions, onDemand, onCeiling, on
     const options = studyOptions();
     const body = { choices, angle_degrees: ASSUMED_ANGLE_DEGREES };
     if (options) body.options = sentOptions(options);
+    // scored once for what the rows depend on (the study, its options, every
+    // choice but the motor, the demand): opening the tab again or choosing a
+    // motor redraws them from what was scored
+    const key = JSON.stringify([studyName(), body, panel.demandTicket]);
+    if (key === panel.motorsKey && panel.motorsRows) {
+      el.motors.innerHTML = motorsHtml(panel.motorsRows, panel.choices.motor);
+      return;
+    }
     try {
       const scored = await postJson(
         `/api/studies/${encodeURIComponent(studyName())}/cablenet/configurations`, body);
       if (mine !== panel.motorsTicket) return;
+      panel.motorsKey = key;
+      panel.motorsRows = scored.rows;
       el.motors.innerHTML = motorsHtml(scored.rows, panel.choices.motor);
     } catch (error) {
       if (mine !== panel.motorsTicket) return;
@@ -478,6 +488,8 @@ export function mountCableNet({ studyName, studyOptions, onDemand, onCeiling, on
     panel.demand = null;
     panel.row = null;
     panel.strongest = null;
+    panel.motorsKey = null;
+    panel.motorsRows = null;
     panel.demandNote = null;
     el.demand.innerHTML = "";
     el.limits.innerHTML = "";

@@ -7,7 +7,7 @@ import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 import { buildLiveSeries, liveSpecs, liveCut, seriesToCsv } from "./live_graphs.js";
 import { mountCableNet } from "./cablenet.js";
 import {
-  instantAt, labelTargets, lensLegend, pickHtml, sagBand, spreadLabels, stageCaption,
+  escapeHtml, instantAt, labelTargets, lensLegend, pickHtml, sagBand, spreadLabels, stageCaption,
 } from "./cablenet_model.js";
 import {
   upgradeSliders, paintScrub, repaintScrubs, settleRangeFills,
@@ -11722,6 +11722,7 @@ function paintForceLegend(magnitude) {
     return;
   }
   legend.classList.remove("hidden");
+  legend.classList.remove("bands");
   legend.classList.remove("deflection");
   document.getElementById("legend-title").textContent =
     "member force, kN (extremes clamped)";
@@ -11919,6 +11920,7 @@ function updateLegend(stressMagnitude, deflectionMax, deflectionPeakOnly, stage)
     return;
   }
   legend.classList.remove("hidden");
+  legend.classList.remove("bands");
   const surface = document.getElementById("stress-surface").value;
   const surfaceLabels = {
     per: "top and bottom skins",
@@ -12204,6 +12206,7 @@ function resetNodeColours() {
 function paintScalarLegend(title, low, zero, high) {
   const legend = document.getElementById("legend");
   legend.classList.remove("hidden");
+  legend.classList.remove("bands");
   legend.classList.add("deflection");
   document.getElementById("legend-title").textContent = title;
   document.getElementById("legend-min").textContent = low;
@@ -12240,7 +12243,24 @@ function paintNodeForces(stage) {
 // The legend of a lens that keys its own figures: Node force, Prestress, Reel.
 function paintLensLegend(lens, stage) {
   const legend = lensLegend(lens, state.cablenet, stage, state.cablenetCeiling);
-  if (legend) paintScalarLegend(legend.title, legend.min, "", legend.max);
+  if (!legend) return;
+  if (legend.bands) paintBandLegend(legend.title, legend.bands, legend.min, legend.max);
+  else paintScalarLegend(legend.title, legend.min, "", legend.max);
+}
+
+// A banded lens's key (Prestress, Reel): a swatch a band in the colours its
+// arrows are drawn in, in place of the ramp, which would key nothing on the
+// model. Every other legend takes the class back off.
+function paintBandLegend(title, bands, low, high) {
+  const legend = document.getElementById("legend");
+  legend.classList.remove("hidden");
+  legend.classList.add("bands");
+  document.getElementById("legend-title").textContent = title;
+  document.getElementById("legend-bands").innerHTML = bands.map((band) =>
+    `<span style="background:${band.colour}">${escapeHtml(band.name)}</span>`).join("");
+  document.getElementById("legend-min").textContent = low;
+  document.getElementById("legend-zero").textContent = "";
+  document.getElementById("legend-max").textContent = high;
 }
 
 function applyCableNetPaint() {
@@ -12412,6 +12432,23 @@ const LABEL_GAP_X = 44;
 const LABEL_GAP_Y = 16;
 const modelLabels = { items: [], stage: null, projected: new THREE.Vector3() };
 
+// The card a click on a node opens: where the press went down, and the node it
+// is for, which it rides with as the view moves.
+const cablenetPick = { down: null, at: null };
+// The room the card leaves at the foot of the window for the bottom shelf, and
+// its width.
+const CARD_CLEAR_BOTTOM = 70;
+const CARD_WIDTH = 220;
+
+// The right edge of the view the model is seen in: the side menu's left edge,
+// or the window's when the menu is tucked away. Nothing drawn on the model
+// goes over the menu.
+function viewRight() {
+  const panel = document.getElementById("panel");
+  if (!panel || document.body.classList.contains("panel-collapsed")) return innerWidth;
+  return panel.getBoundingClientRect().left;
+}
+
 function cablenetLabelPoint(target, vertices, edges) {
   if (target.kind === "member") {
     const edge = edges[target.index];
@@ -12453,10 +12490,13 @@ function updateModelLabels(stage) {
 }
 
 function placeModelLabels() {
-  if (!modelLabels.items.length) return;
+  if (!modelLabels.items.length && !cablenetPick.at) return;
   const rect = canvas.getBoundingClientRect();
   // the net is drawn lifted clear of the skin; its labels ride with it
   const lift = state.objects.nodes ? state.objects.nodes.position.z : 0;
+  placeCablenetPick(rect, lift);
+  if (!modelLabels.items.length) return;
+  const right = viewRight();
   const projected = modelLabels.projected;
   const points = modelLabels.items.map((item) => {
     projected.copy(item.at);
@@ -12464,8 +12504,10 @@ function placeModelLabels() {
     projected.project(camera);
     const x = projected.x * 0.5 + 0.5;
     const y = -projected.y * 0.5 + 0.5;
-    return projected.z <= 1 && x >= 0 && x <= 1 && y >= 0 && y <= 1
-      ? [Math.round(rect.left + x * rect.width), Math.round(rect.top + y * rect.height)] : null;
+    if (!(projected.z <= 1 && x >= 0 && x <= 1 && y >= 0 && y <= 1)) return null;
+    const sx = Math.round(rect.left + x * rect.width);
+    const sy = Math.round(rect.top + y * rect.height);
+    return sx < right ? [sx, sy] : null;
   });
   const shown = spreadLabels(points, LABEL_GAP_X, LABEL_GAP_Y);
   modelLabels.items.forEach((item, i) => {
@@ -12477,18 +12519,40 @@ function placeModelLabels() {
   });
 }
 
+// The card beside its node, inside the view and above the bottom shelf.
+function placeCard(card, x, y) {
+  card.style.left = Math.round(Math.min(viewRight() - CARD_WIDTH, x + 14)) + "px";
+  card.style.top = Math.round(Math.max(12,
+    Math.min(innerHeight - card.offsetHeight - CARD_CLEAR_BOTTOM, y - 20))) + "px";
+}
+
+// Every frame: the open card follows its node, and closes when the node
+// leaves the view (behind the eye, off the canvas, under the menu).
+function placeCablenetPick(rect, lift) {
+  const card = document.getElementById("cablenet-pick");
+  if (!card || !cablenetPick.at || card.classList.contains("hidden")) return;
+  const p = modelLabels.projected.copy(cablenetPick.at);
+  p.z += lift;
+  p.project(camera);
+  const x = rect.left + (p.x * 0.5 + 0.5) * rect.width;
+  const y = rect.top + (-p.y * 0.5 + 0.5) * rect.height;
+  if (p.z > 1 || x < rect.left || x >= viewRight() || y < rect.top || y > rect.bottom) {
+    card.classList.add("hidden");
+    cablenetPick.at = null;
+    return;
+  }
+  placeCard(card, x, y);
+}
+
 // A click on a node while a Cable net lens is up shows its numbers beside it;
 // a click anywhere else closes the card. A drag (an orbit) is not a click, and
-// a press a stamp, an aim, a carry or prop editing owns is not one either:
-// taken at the press, before the studio's own handler acts on it.
-const cablenetPick = { down: null };
-// The room the card leaves at the foot of the window for the bottom shelf.
-const CARD_CLEAR_BOTTOM = 70;
-
+// a press a stamp, an aim, a carry, prop editing or a scatter tool owns is not
+// one either: taken at the press, before the studio's own handler acts on it.
 function pickCableNetNode(event) {
   const card = document.getElementById("cablenet-pick");
   if (!card) return;
   card.classList.add("hidden");
+  cablenetPick.at = null;
   const stage = modelLabels.stage;
   if (!stage || !cableNetLensUp()) return;
   const rect = canvas.getBoundingClientRect();
@@ -12507,13 +12571,14 @@ function pickCableNetNode(event) {
   if (!best) return;
   card.innerHTML = pickHtml(state.cablenet, stage, best.i, state.cablenetVerdict);
   card.classList.remove("hidden");
-  card.style.left = Math.round(Math.min(innerWidth - 220, best.x + 14)) + "px";
-  card.style.top = Math.round(Math.max(12,
-    Math.min(innerHeight - card.offsetHeight - CARD_CLEAR_BOTTOM, best.y - 20))) + "px";
+  const v = state.bundle.analysis_mesh.vertices[best.i];
+  cablenetPick.at = new THREE.Vector3(v[0], v[1], v[2]);
+  placeCard(card, best.x, best.y);
 }
 
 function noteCableNetPress(event) {
-  const free = event.button === 0 && !stampRig && !aimingLight && !state.carrying && !state.propEdit;
+  const free = event.button === 0 && !stampRig && !aimingLight && !state.carrying && !state.propEdit
+    && !state.scatterArmed;
   cablenetPick.down = free ? [event.clientX, event.clientY] : null;
 }
 

@@ -335,6 +335,12 @@ export function reelSoFar(stages, stage) {
   return sums.map((value) => Math.round(value * 1e9) / 1e9);
 }
 
+// One decimal, and never a signed zero: -0.04 reads 0.0, not -0.0.
+function oneDecimal(value) {
+  const rounded = Math.round(Number(value) * 10) / 10;
+  return (rounded === 0 ? 0 : rounded).toFixed(1);
+}
+
 export function reelSide(mm) {
   if (mm == null || !(Number(mm) !== 0)) return "still";
   return Number(mm) < 0 ? "in" : "out";
@@ -371,9 +377,10 @@ export function labelTargets(lens, demand, stage, ceiling, count = 20) {
     return largestFirst(rows);
   }
   if (lens === "reel") {
+    // the side read from the figure shown, so a wire that reads 0.0 is still
     return largestFirst(reelSoFar(demand.stages, stage).map((mm, index) => (!wires[index] ? null : {
       value: mm, target: { kind: "wire", index, node: wires[index].net_vertex,
-        text: mm.toFixed(1) + " mm", side: reelSide(mm) } })).filter(Boolean));
+        text: oneDecimal(mm) + " mm", side: reelSide(Number(oneDecimal(mm))) } })).filter(Boolean));
   }
   if (lens === "nodeforce") {
     return largest((stage.node_residual || []).map(magnitude), count)
@@ -399,6 +406,12 @@ export function spreadLabels(points, gapX, gapY) {
   });
 }
 
+// The colours the banded lenses draw their arrows in (studio.js
+// updateCableNetVectors), which their legends key: within, near and over the
+// machine's ceiling, none scored; rope taken in and paid out.
+const BAND_COLOURS = { within: "#3f9e57", near: "#c99a2e", over: "#c24936", plain: "#9aa4b2",
+                       in: "#66aaff", out: "#c99a2e" };
+
 // The legend a lens draws: its quantity and unit, and its range at the
 // instant. Wire tension and Sag keep the legends they draw today: null.
 export function lensLegend(lens, demand, stage, ceiling) {
@@ -410,12 +423,15 @@ export function lensLegend(lens, demand, stage, ceiling) {
   if (lens === "prestress") {
     const top = finiteMax(stage.wire_tensions);
     return { title: "wire tension, N" + (ceiling == null ? "" : ": within / near / over " + newtons(ceiling)),
-             min: "0", max: top == null ? "0" : newtons(top) };
+             min: "0", max: top == null ? "0" : newtons(top),
+             bands: ceiling == null ? [{ name: "no machine", colour: BAND_COLOURS.plain }]
+               : ["within", "near", "over"].map((name) => ({ name, colour: BAND_COLOURS[name] })) };
   }
   if (lens === "reel") {
     const sums = reelSoFar(demand && demand.stages, stage);
-    return { title: "reel, mm: in / out", min: Math.min(0, ...sums).toFixed(1),
-             max: Math.max(0, ...sums).toFixed(1) };
+    return { title: "reel, mm: in / out", min: oneDecimal(Math.min(0, ...sums)),
+             max: oneDecimal(Math.max(0, ...sums)),
+             bands: [{ name: "in", colour: BAND_COLOURS.in }, { name: "out", colour: BAND_COLOURS.out }] };
   }
   return null;
 }

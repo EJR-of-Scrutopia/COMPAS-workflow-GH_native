@@ -319,6 +319,12 @@ body.panel-collapsed #legend { right: var(--s4); }
   background: linear-gradient(to right, #f2efe8, #cc2211);
 }
 #legend-labels { display: flex; justify-content: space-between; }
+/* A banded lens keys its bands, not a ramp (Prestress, Reel). */
+#legend-bands { display: none; gap: 2px; }
+#legend.bands #legend-bar { display: none; }
+#legend.bands #legend-bands { display: flex; }
+#legend-bands span { flex: 1; text-align: center; padding: 1px 4px; border-radius: 2px;
+  font-size: 10px; color: #111; }
 #cut-overlay { position: fixed; left: 50%; top: 45%; transform: translate(-50%, -50%);
                display: flex; flex-direction: column; align-items: center; gap: var(--s2);
                padding: var(--s4) var(--s6); background: var(--scrim);

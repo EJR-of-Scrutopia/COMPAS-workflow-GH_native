@@ -290,6 +290,19 @@ def test_every_motor_is_scored_only_while_the_mechanism_tab_is_in_view():
     assert 'event.target.closest("tr[data-motor]")' in click and "refresh();" in click
 
 
+def test_every_motor_is_scored_once_for_what_it_depends_on():
+    """Review 6: the rows depend on the study, its options, the choices but
+    the motor, and the demand; opening the pop-up again or choosing a motor
+    redraws them from what was scored, and clear() forgets it."""
+
+    body = _function_body(JS, "renderMotors")
+    assert "const key = JSON.stringify([studyName(), body, panel.demandTicket]);" in body
+    assert "if (key === panel.motorsKey && panel.motorsRows) {" in body
+    assert "panel.motorsKey = key;" in body and "panel.motorsRows = scored.rows;" in body
+    clear = _function_body(JS, "clear")
+    assert "panel.motorsKey = null;" in clear and "panel.motorsRows = null;" in clear
+
+
 def test_the_wires_slider_chooses_wires_a_motor():
     listener = JS[JS.index('el.wires.addEventListener("change"'):]
     listener = listener[:listener.index("\n  });")]
