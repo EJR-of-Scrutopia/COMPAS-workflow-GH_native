@@ -165,12 +165,12 @@ NO_FALSEWORK = ("falsework is no longer taken: the net is judged against a toler
                 "from the designed form, so send tolerance_mm, in millimetres")
 
 # What a formwork run takes for each option its caller leaves out (spec
-# 2026-10-09). The prestress is the cable net run's starting point for the cut
-# rule, until part 3 works it out from the load. One wire a motor is the
-# machine as it is built. The trees are CHS 60.3 steel tube, and a 3.2 mm wall
-# is where the owner chose to start, a run deciding whether it can be thinner
-# or must be thicker (his ruling of 9 October 2026).
-FORMWORK_DEFAULTS = {"prestress": 300.0, "rope": "rope-4mm", "wires_per_motor": 1,
+# 2026-10-09). The prestress is the cable net run's design prestress for the
+# same cut (the owner's answer of 10 October 2026), so None here. One wire a
+# motor is the machine as it is built. The trees are CHS 60.3 steel tube, and a
+# 3.2 mm wall is where the owner chose to start, a run deciding whether it can
+# be thinner or must be thicker (his ruling of 9 October 2026).
+FORMWORK_DEFAULTS = {"prestress": None, "rope": "rope-4mm", "wires_per_motor": 1,
                      "wall": 3.2}
 FORMWORK_TUBE_MM = 60.3     # the trees' tube, the engine's trees.DIAMETER
 
@@ -2137,11 +2137,12 @@ def create_app(runner=None, cra_runner=None, cablenet_runner=None,
             size = float(body.get("size", 1.0))
             thickness = float(body.get("thickness", 0.02))
             density = float(body["density"]) if body.get("density") else None
-            prestress = float(body.get("prestress", FORMWORK_DEFAULTS["prestress"]))
+            named = body.get("prestress", FORMWORK_DEFAULTS["prestress"])
+            prestress = None if named is None else float(named)
             wall = float(body.get("wall", FORMWORK_DEFAULTS["wall"]))
         except (TypeError, ValueError, OverflowError) as error:
             raise HTTPException(400, "a number was unreadable: {}".format(error))
-        if not (math.isfinite(prestress) and prestress > 0.0):
+        if prestress is not None and not (math.isfinite(prestress) and prestress > 0.0):
             raise HTTPException(400, "prestress must be greater than zero newtons")
         if not (math.isfinite(wall) and 0.0 < wall < FORMWORK_TUBE_MM / 2.0):
             raise HTTPException(
@@ -2169,6 +2170,25 @@ def create_app(runner=None, cra_runner=None, cablenet_runner=None,
             raise HTTPException(400, "no rope named {!r} in the catalogue".format(rope_key))
         rope = parts["rope"][rope_key]
         _validate(export, material, pattern, size, thickness)
+        # The prestress the net is cut for: the cable net run's design prestress
+        # for the same cut (the owner's answer of 10 October 2026), unless the
+        # body names one, as scripts and tests do. The tab never sends one.
+        prestress_from = "request"
+        if prestress is None:
+            if export not in geometry.available_exports(bundle.UPLOAD_DIR):
+                raise HTTPException(404, "There is no export named {!r}.".format(export))
+            try:
+                demand = _read_cablenet_demand(export, material, pattern, size, thickness,
+                                               density, source)
+            except HTTPException as error:
+                if error.status_code != 404:
+                    raise
+                raise HTTPException(400, "Run the cable net analysis first")
+            designed = demand.get("prestress")
+            if (isinstance(designed, bool) or not isinstance(designed, (int, float))
+                    or not (math.isfinite(designed) and designed > 0.0)):
+                raise HTTPException(400, "Run the cable net analysis again: no prestress")
+            prestress, prestress_from = float(designed), "cable net"
         slug = geometry.slugify(export)
         with RUNS_LOCK:
             for run in RUNS.values():
@@ -2224,6 +2244,7 @@ def create_app(runner=None, cra_runner=None, cablenet_runner=None,
                     options={"material": material, "pattern": pattern, "size": size,
                              "thickness": thickness, "density": density, "source": source,
                              "rope": rope_key, "prestress": prestress,
+                             "prestress_from": prestress_from,
                              "wires_per_motor": wires_per_motor, "wall": wall,
                              "pulleys": pulleys},
                     runner=formwork_runner, progress=progress)
