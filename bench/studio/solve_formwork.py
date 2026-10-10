@@ -78,7 +78,8 @@ def model_from(request):
         tree_members=np.asarray(request["tree_members"], dtype=int).reshape(-1, 2),
         tree_feet=[int(foot) for foot in request["tree_feet"]], frames=frames, rows=rows,
         machines=[[int(node) for node in machine] for machine in request["machines"]],
-        wires_per_motor=int(request["wires_per_motor"]), wall=float(request["wall"]))
+        wires_per_motor=int(request["wires_per_motor"]), wall=float(request["wall"]),
+        holds=tuple(int(node) for node in request.get("holds") or ()))
 
 
 def _capture_entry(capture, added_faces=None):
@@ -88,6 +89,7 @@ def _capture_entry(capture, added_faces=None):
         "iterations": int(capture.iterations), "leftover": float(capture.leftover),
         "x": pack(capture.x), "tension": pack(capture.tension),
         "deviation": pack(capture.deviation), "head_push": pack(capture.head_push),
+        "hold_push": pack(capture.hold_push),
         "anchor_force": pack(capture.anchor_force), "wire_tension": pack(capture.wire_tension),
         "reel": pack(capture.reel), "let_out": pack(capture.let_out),
         "tree_x": pack(capture.tree_x), "tree_axial": pack(capture.tree_axial),
@@ -122,6 +124,10 @@ def _summary(result):
         "let_out_max_mm": largest(every, "let_out"),
         "tree_utilisation_max": largest(every, "tree_utilisation"),
         "relaxation_captures": sum(1 for c in every if c.solver == "relaxation"),
+        # spec 2026-10-10 formwork holds, section 4: what the search judges, the
+        # worst deviation from the jacking on, every node counted
+        "holds_deviation_max_mm": None if not any(c.phase == "holds" for c in every) else max(
+            float(c.deviation.max()) for c in every if c.phase in ("holds", "tiling")),
     }
 
 
@@ -154,6 +160,7 @@ def solve(request, progress=None):
             "rest_lengths": pack(result.rest_lengths), "cut_force": pack(result.cut_force),
             "faces": None if request.get("faces") is None else [
                 [int(i) for i in face] for face in request["faces"]],
+            "holds": [int(node) for node in model.holds],
         },
         "rim": {
             "nodes": rim, "names": [names.get(node) for node in rim],
