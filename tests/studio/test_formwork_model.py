@@ -42,6 +42,21 @@ def capture(phase, time, row, quarter, lift, tension, deviation, push, wire, uti
             "added_faces": added}
 
 
+def with_holds(doc):
+    # node 3 held from the jacking on: a capture after the hold, pushing 40 N,
+    # then 0 (lifted off), and the search that chose it
+    doc = json.loads(json.dumps(doc))
+    doc["net"]["holds"] = [3]
+    pushes = [0, 0, 40, 0]
+    for c, push in zip(doc["captures"], pushes):
+        c["hold_push"] = pack([[0, 0, push]])
+    doc["holds"] = {"spacing": 5, "bands": [5, 10], "count": 190, "tolerance_mm": 20.0,
+                    "met": True, "tried": [
+                        {"spacing": 10, "count": 95, "deviation_max_mm": 412.3},
+                        {"spacing": 5, "count": 190, "deviation_max_mm": 14.2}]}
+    return doc
+
+
 def document(older=False):
     # a square of four nodes: two on wires of one machine, one on a tree's head
     # that lifts it 500 mm, and one row of skin going on in two quarters
@@ -78,6 +93,7 @@ def document(older=False):
 HARNESS = """
 import * as m from %(module)r;
 const doc = %(doc)s;
+const holdsDoc = %(holds)s;
 const older = %(older)s;
 const out = {};
 const sim = m.readSim(doc);
@@ -147,6 +163,19 @@ out.many = m.worstTables({ captures: [{ tension: Float32Array.from({ length: 60 
   edges: [], rim: { nodes: [], names: [], machines: [] }, trees: { members: [], heads: [] } }).ropes;
 out.noTables = m.worstTables(null);
 out.worstRows = m.WORST_ROWS;
+// the holds (spec 2026-10-10 formwork holds, section 5)
+const held = m.readSim(holdsDoc);
+out.heldRead = { holds: held.holds, search: held.search,
+                 push: held.captures.map((c) => Array.from(c.holdPush)) };
+out.plainHolds = [sim.holds, sim.search, Array.from(sim.captures[0].holdPush)];
+out.heldLine = [m.frameLine(held, 2), m.frameLineHtml(m.frameLine(held, 2)), m.frameLineHtml(m.frameLine(held, 3))];
+out.plainLine = m.frameLineHtml(m.frameLine(sim, 2));
+out.heldPick = [m.formworkPickHtml(held, 2, 3), m.formworkPickHtml(held, 3, 3), m.formworkPickHtml(held, 2, 2)];
+out.holdsTable = m.holdsHtml(held);
+out.holdsMissed = m.holdsHtml({ ...held, search: { ...held.search, met: false, spacing: 1, count: 950,
+  tried: [{ spacing: 10, count: 95, deviation_max_mm: 412.3 }, { spacing: 1, count: 950, deviation_max_mm: 31.5 }] } });
+out.holdsNone = [m.holdsHtml(sim), m.holdsHtml(null)];
+out.names = [10, 5, 2, 1, 3].map((s) => m.spacingName(s, s === 3 ? 9 : 10));
 // what a recorded frame carries over the picture (the owner's choice of
 // 10 October 2026: record the raise with the tab's labels and key)
 out.caption = m.recordingCaption(sim, 1);
@@ -188,6 +217,7 @@ def out(tmp_path_factory):
     script = tmp_path_factory.mktemp("formwork") / "harness.mjs"
     module = (STATIC / "formwork_model.js").resolve().as_uri()
     script.write_text(HARNESS % {"module": module, "doc": json.dumps(document()),
+                                 "holds": json.dumps(with_holds(document())),
                                  "older": json.dumps(document(older=True)),
                                  "packed": json.dumps(pack([1.5, -2.25, 3.0]))},
                       encoding="utf-8")
@@ -416,3 +446,39 @@ def test_a_recorded_frame_carries_the_labels_and_the_key(out):
     assert [text for text, _, _ in ramp["texts"]] == ["rope tension, kN", "0", "3.0"]
     assert ramp["gradients"] == 1
     assert out["overlayNone"]["texts"] == [] and out["overlayNone"]["rects"] == 0
+
+
+def test_the_holds_are_read_with_each_holds_push(out):
+    read = out["heldRead"]
+    assert read["holds"] == [3]
+    assert read["search"]["spacing"] == 5 and read["search"]["met"] is True
+    assert read["push"] == [[0, 0, 0], [0, 0, 0], [0, 0, 40], [0, 0, 0]]
+    # a run with no holds reads none
+    holds, search, push = out["plainHolds"]
+    assert holds == [] and search is None and push == []
+
+
+def test_the_frame_line_and_the_card_count_the_holds(out):
+    line, html, lifted = out["heldLine"]
+    assert (line["holds"], line["holdsPushing"]) == (1, 1)
+    assert "<th>Holds pushing</th><td>1/1</td>" in html
+    assert "<th>Holds pushing</th><td>0/1</td>" in lifted
+    assert "Holds pushing" not in out["plainLine"]
+    pushing, off, other = out["heldPick"]
+    assert "<th>Hold</th><td>40 N</td>" in pushing
+    assert "<th>Hold</th><td>0 N</td>" in off
+    assert "<th>Hold</th>" not in other
+
+
+def test_the_search_is_one_table_kept_spacing_first_then_each_try(out):
+    table = out["holdsTable"]
+    assert "<th>Holds</th><td>every 5th line, 190</td>" in table
+    assert "<th>Worst</th><td>14 mm ✓</td>" in table
+    assert "<th>Tried</th><td>the open edges, 95: 412 mm</td>" in table
+    assert "<td>every 5th line, 190: 14 mm</td>" in table
+    missed = out["holdsMissed"]
+    assert "<th>Holds</th><td>every line, 950</td>" in missed
+    assert "<th>Worst</th><td>32 mm ✗</td>" in missed or "<th>Worst</th><td>31 mm ✗</td>" in missed
+    assert out["holdsNone"] == ["", ""]
+    assert out["names"] == ["the open edges", "every 5th line", "every 2nd line", "every line",
+                            "every 3rd line"]

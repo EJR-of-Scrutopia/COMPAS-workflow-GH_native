@@ -69,6 +69,7 @@ export function readSim(doc) {
     treeUtilisation: decodeF32(c.tree_utilisation),
     ground: Array.isArray(c.ground) ? c.ground : null,
     addedFaces: Array.isArray(c.added_faces) ? c.added_faces : null,
+    holdPush: decodeF32(c.hold_push) || new Float32Array(0),
   }));
   // a capture with no positions cannot be drawn: the document is not read
   // (final review 9)
@@ -95,6 +96,10 @@ export function readSim(doc) {
     trees: { members: trees.members || [], heads: trees.heads || [], feet: trees.feet || [],
              diameter: Number(trees.diameter) || 60.3, wall: trees.wall },
     captures,
+    // the holds (spec 2026-10-10 formwork holds): the held nodes, and the
+    // search that chose them, or none
+    holds: Array.isArray(net.holds) ? net.holds : [],
+    search: doc.holds || null,
     scales: { tension: scale("tension"), wire: scale("wireTension"),
               deviation: scale("deviation"), utilisation: scale("treeUtilisation"), push },
     older: !Array.isArray(net.faces) || doc.captures.some((c) => !Array.isArray(c.ground)),
@@ -176,15 +181,25 @@ export function frameLine(sim, index) {
   const heads = sim.trees.heads.length;
   let touching = 0;
   for (let h = 0; h < heads; h++) if (pushOf(c, h) > 0) touching += 1;
+  const holds = sim.holds.length;
+  let holdsPushing = 0;
+  for (let h = 0; h < holds; h++) if (holdPushOf(c, h) > 0) holdsPushing += 1;
   return { rope: largestOf(c.tension), wire: largestOf(c.wireTension),
-           trees: largestOf(c.treeUtilisation), deviation: largestOf(c.deviation), touching, heads };
+           trees: largestOf(c.treeUtilisation), deviation: largestOf(c.deviation), touching, heads,
+           holds, holdsPushing };
+}
+
+function holdPushOf(capture, hold) {
+  const p = capture.holdPush;
+  return p && 3 * hold + 2 < p.length ? Math.hypot(p[3 * hold], p[3 * hold + 1], p[3 * hold + 2]) : 0;
 }
 
 export function frameLineHtml(line) {
   if (!line) return "";
   return keyed([["Rope max", kilonewtons(line.rope)], ["Wire max", newtons(line.wire)],
     ["Trees", line.trees.toFixed(2)], ["Deviation max", millimetres(line.deviation)],
-    ["Heads touching", line.touching + "/" + line.heads]]);
+    ["Heads touching", line.touching + "/" + line.heads],
+    ...(line.holds ? [["Holds pushing", line.holdsPushing + "/" + line.holds]] : [])]);
 }
 
 export const COLOUR_BY = [["tension", "Rope tension"], ["deviation", "Deviation"],
@@ -330,6 +345,8 @@ export function formworkPickHtml(sim, index, node) {
   if (c.ground) rows.push(["Ground", c.ground.includes(node) ? "yes" : "no"]);
   const head = sim.trees.heads.findIndex(([net]) => net === node);
   if (head >= 0) rows.push(["Head push", newtons(pushOf(c, head))]);
+  const hold = sim.holds.indexOf(node);
+  if (hold >= 0) rows.push(["Hold", newtons(holdPushOf(c, hold))]);
   const wire = sim.rim.nodes.indexOf(node);
   if (wire >= 0) {
     rows.push(["Wire", escapeHtml(sim.rim.names[wire] || "#" + wire)],
@@ -557,4 +574,33 @@ export function placedFaces(sim, index) {
     for (const face of sim.captures[k].addedFaces || []) out.push(face);
   }
   return out;
+}
+
+// ---------- the holds' search ----------
+
+// A spacing as the tab says it (formwork_sim.spacing_name): the open edges,
+// every 5th line, every line.
+export function spacingName(spacing, widest) {
+  if (spacing === widest) return "the open edges";
+  if (spacing === 1) return "every line";
+  const tens = spacing % 100;
+  const suffix = tens >= 11 && tens <= 13 ? "th" : ({ 1: "st", 2: "nd", 3: "rd" }[spacing % 10] || "th");
+  return "every " + spacing + suffix + " line";
+}
+
+// The search as one table (spec 2026-10-10 formwork holds, section 5): the
+// spacing kept and its holds, the worst deviation marked against the
+// tolerance, then each try. A run with no search shows nothing.
+export function holdsHtml(sim) {
+  const search = sim && sim.search;
+  if (!search || !Array.isArray(search.tried) || !search.tried.length) return "";
+  const widest = Math.max(...search.tried.map((t) => t.spacing));
+  const worstOf = (t) => (t.deviation_max_mm == null ? "none" : Number(t.deviation_max_mm).toFixed(0) + " mm");
+  const kept = search.tried.find((t) => t.spacing === search.spacing) || search.tried[search.tried.length - 1];
+  const rows = [["Holds", escapeHtml(spacingName(search.spacing, widest)) + ", " + search.count],
+                ["Worst", worstOf(kept) + " " + (search.met ? "✓" : "✗")]];
+  search.tried.forEach((t, i) => {
+    rows.push([i === 0 ? "Tried" : "", escapeHtml(spacingName(t.spacing, widest)) + ", " + t.count + ": " + worstOf(t)]);
+  });
+  return keyed(rows);
 }
