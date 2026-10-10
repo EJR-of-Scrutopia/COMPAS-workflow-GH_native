@@ -19611,7 +19611,10 @@ window.__studio = { state, scene, controls, applyDayCycle, placeProp,
   get shaftsPass() { return shaftsPass; },
   // The clock, so a probe can photograph a named hour through the same
   // path the day track takes.
-  setSunMinutes };
+  setSunMinutes,
+  // The Formwork tab's drawing, so a probe can see what the tab draws, and
+  // the props, so it can put them out of view (bench/scripts/formwork_screens.mjs).
+  formworkView, propsGroup };
 // The page's boot-fault banner (index.html) stands down once evaluation has
 // made it to here: from this line on, a stray rejection is an incident for
 // the diagnostics log, not a "half-built panel" alarm.

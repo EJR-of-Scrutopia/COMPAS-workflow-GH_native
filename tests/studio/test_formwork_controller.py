@@ -146,6 +146,23 @@ def test_the_pop_ups_and_the_data_sheet_take_turns_on_the_left():
     assert "if (formworkTab) formworkTab.closePopup();" in data
 
 
+def test_the_check_on_screen_reaches_the_drawing_and_never_his_studio():
+    # spec section 12: the check finds the Formwork drawing through the probe
+    # hook, and runs against a spare port, never Param's 8600
+    hook = STUDIO[STUDIO.index("window.__studio = {"):]
+    hook = hook[:hook.index("};") + 2]
+    assert "formworkView" in hook
+    # and the props, which the check puts out of view: a forest streaming in
+    # under SwiftShader makes a frame take a quarter of an hour
+    assert "formworkView, propsGroup" in hook
+    script = (STATIC.parents[1] / "scripts" / "formwork_screens.mjs").read_text(encoding="utf-8")
+    assert 'process.env.STUDIO_URL || "http://127.0.0.1:8601"' in script
+    assert "8600" not in script.replace("never Param's 8600", "")
+    for step in ("03-raise", "04-finish", "05-hold", "06-tiling", "-colour-", "-show-",
+                 "-labels", "-worst-", "-fly-to", "-card", "-left"):
+        assert step in script, step
+
+
 def test_the_cable_net_labels_and_card_stand_down_while_the_tab_is_open():
     assert ("body.formwork-open #model-labels, body.formwork-open #cablenet-pick "
             "{ display: none; }") in CSS
