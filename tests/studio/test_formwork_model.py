@@ -101,6 +101,32 @@ for (let q = 0; q < 64; q++) real.push({ phase: "tiling", time: null, row: "S1",
 out.realEnd = m.captureTimes(real)[real.length - 1];
 out.heads = [0, 6.3, 8.4, 8.6, 100, -1].map((s) => m.playhead(out.times, s));
 out.noHead = m.playhead([], 1);
+// what the tab shows of a capture (spec sections 9 and 11)
+out.line = m.frameLine(sim, 1);
+out.lineHtml = m.frameLineHtml(out.line);
+out.noLine = m.frameLine(sim, 9);
+out.colours = { high: m.colourOf("tension", 3000, sim, 20), low: m.colourOf("tension", 0, sim, 20),
+  over: m.colourOf("utilisation", 1.2, sim, 20), half: m.colourOf("utilisation", 0.5, sim, 20),
+  wire: m.colourOf("wire", 1500, sim, 20),
+  deviation: [5, 12, 40].map((v) => m.colourOf("deviation", v, sim, 20)),
+  off: m.colourOf("off", 3, sim, 20) };
+out.keys = ["tension", "deviation", "utilisation", "wire", "off"].map((by) => m.colourKey(by, sim, 20));
+out.points = [{ kind: "member", index: 1 }, { kind: "node", index: 2 }, { kind: "wire", index: 1 },
+  { kind: "tree", index: 0 }, { kind: "machine", index: 0 }, { kind: "member", index: 9 }]
+  .map((target) => m.targetPoint(sim, 1, target));
+out.labels2 = m.formworkLabels(sim, 2, ["rope", "deviation", "contact"], 2);
+out.contact3 = m.formworkLabels(sim, 3, ["contact"]);
+out.pickHead = m.formworkPickHtml(sim, 1, 2);
+out.pickRim = m.formworkPickHtml(sim, 1, 0);
+out.pickNone = m.formworkPickHtml(sim, 1, 9);
+const chosen = { rope: "rope-4mm", wires_per_motor: 1, pulleys: true, wall: 3.2, prestress: 723.4 };
+out.warn = [m.formworkWarnings(null, chosen), m.formworkWarnings(sim, chosen),
+  m.formworkWarnings(m.readSim(older), chosen),
+  m.formworkWarnings(sim, { ...chosen, wires_per_motor: 2 }),
+  m.formworkWarnings(sim, { ...chosen, prestress: 6660 }),
+  m.formworkWarnings(sim, { ...chosen, prestress: 725 }),
+  m.formworkWarnings(sim, { ...chosen, wall: 2.6 }),
+  m.formworkWarnings(sim, { ...chosen, prestress: null })];
 console.log(JSON.stringify(out));
 """
 
@@ -173,3 +199,83 @@ def test_the_playhead_blends_for_the_drawing_and_shows_the_nearer_capture(out):
     assert beyond == {"from": 3, "to": 3, "blend": 0, "nearer": 3}
     assert before == start
     assert out["noHead"] is None
+
+
+def test_the_frame_line_is_the_captures_largest_and_its_heads_touching(out):
+    line = out["line"]
+    assert line["rope"] == 2500 and line["wire"] == 1200 and line["deviation"] == 30
+    assert line["trees"] == pytest.approx(0.4) and (line["touching"], line["heads"]) == (1, 1)
+    html = out["lineHtml"]
+    for row in ("<th>Rope max</th><td>2.5 kN</td>", "<th>Wire max</th><td>1200 N</td>",
+                "<th>Trees</th><td>0.40</td>", "<th>Deviation max</th><td>30 mm</td>",
+                "<th>Heads touching</th><td>1/1</td>"):
+        assert row in html, row
+    assert out["noLine"] is None
+
+
+def test_each_colour_by_draws_on_the_runs_own_scale(out):
+    colours = out["colours"]
+    red, cream = [0xcc / 255, 0x22 / 255, 0x11 / 255], [0xf2 / 255, 0xef / 255, 0xe8 / 255]
+    assert colours["high"] == pytest.approx(red) and colours["low"] == pytest.approx(cream)
+    assert colours["wire"] == pytest.approx(red)
+    # a tree at capacity and over is full red; half way is half way along
+    assert colours["over"] == pytest.approx(red)
+    assert colours["half"] == pytest.approx([(a + b) / 2 for a, b in zip(red, cream)])
+    # deviation in the Sag lens's bands against the tolerance
+    within, near, over = colours["deviation"]
+    assert within == pytest.approx(cream)
+    assert near == pytest.approx([0xc9 / 255, 0x9a / 255, 0x2e / 255])
+    assert over == pytest.approx([0xc2 / 255, 0x49 / 255, 0x36 / 255])
+    assert colours["off"] is None
+
+
+def test_each_colour_by_has_its_key(out):
+    tension, deviation, utilisation, wire, off = out["keys"]
+    assert tension == {"title": "rope tension, kN", "min": "0", "max": "3.0"}
+    assert deviation["title"] == "deviation, mm: tolerance 20" and deviation["max"] == "500"
+    assert [band["name"] for band in deviation["bands"]] == ["within", "near", "over"]
+    assert utilisation == {"title": "tree utilisation", "min": "0", "max": "1.0"}
+    assert wire == {"title": "wire tension, N", "min": "0", "max": "1500"}
+    assert off is None
+
+
+def test_each_part_has_a_point_at_the_capture(out):
+    member, node, wire, tree, machine, missing = out["points"]
+    assert member == pytest.approx([1.0, 0.5, 0.25])
+    assert node == pytest.approx([1.0, 1.0, 0.5]) and wire == pytest.approx([1.0, 0.0, 0.0])
+    assert tree == pytest.approx([1.0, 1.0, 0.25]) and machine == pytest.approx([0.5, 0.0, 0.0])
+    assert missing is None
+
+
+def test_the_labels_are_the_largest_of_each_ticked_kind(out):
+    assert out["labels2"] == [
+        {"kind": "member", "index": 1, "text": "3.0 kN"}, {"kind": "member", "index": 2, "text": "0.4 kN"},
+        {"kind": "node", "index": 3, "text": "40 mm"}, {"kind": "node", "index": 2, "text": "12 mm"},
+        {"kind": "node", "index": 2, "text": "900 N"}]
+    # a head that has let go of its node pushes nothing, and says nothing
+    assert out["contact3"] == []
+
+
+def test_the_card_gives_the_node_its_head_or_wire_and_its_members(out):
+    head = out["pickHead"]
+    for row in ("<th>Node</th><td>2</td>", "<th>At</th><td>1.000, 1.000, 0.500 m</td>",
+                "<th>Deviation</th><td>0.0 mm</td>", "<th>Ground</th><td>no</td>",
+                "<th>Head push</th><td>800 N</td>", "<tr><td>1</td><td>2.5 kN</td></tr>",
+                "<tr><td>3</td><td>300 N</td></tr>"):
+        assert row in head, row
+    assert "Wire" not in head
+    rim = out["pickRim"]
+    assert "<th>Wire</th><td>w0</td>" in rim and "<th>Wire tension</th><td>1200 N</td>" in rim
+    assert "Head push" not in rim
+    assert out["pickNone"] == ""
+
+
+def test_the_warnings_are_one_line_each(out):
+    none, same, older, machine, prestress, within, wall, unknown = out["warn"]
+    assert none == ["No formwork run: Run formwork analysis"]
+    assert same == [] and within == [] and unknown == []
+    assert older == ["Run again: older formwork run"]
+    assert machine == ["Run again: machine rope-4mm, 2 a motor, pulleys, "
+                       "run rope-4mm, 1 a motor, pulleys"]
+    assert prestress == ["Run again: prestress 6660.0 N, run 723.4 N"]
+    assert wall == ["Run again: wall 2.6 mm, run 3.2 mm"]

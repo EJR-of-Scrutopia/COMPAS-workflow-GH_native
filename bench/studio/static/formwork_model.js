@@ -3,6 +3,8 @@
 // player's clock over it. Pure: no page and no three.js, so it runs under node
 // in the tests. formwork.js wires it to the page, formwork_view.js draws it.
 
+import { escapeHtml, forceLabel } from "./cablenet_model.js";
+
 export const SCHEMA = "bench.formwork-sim/1";
 // The studio plays machine time 0 to 100 in its 12 s formwork act; the raise,
 // finish and hold go at that rate, and each tiling quarter takes TILING_BEAT
@@ -118,4 +120,225 @@ export function playhead(times, s) {
   const span = times[i + 1] - times[i];
   const blend = span > 0 ? (t - times[i]) / span : 0;
   return { from: i, to: i + 1, blend, nearer: blend < 0.5 ? i : i + 1 };
+}
+
+// ---------- what the tab shows of a capture ----------
+
+export function kilonewtons(n) {
+  return (Number(n) / 1000).toFixed(1) + " kN";
+}
+
+export function newtons(n) {
+  return Number(n).toFixed(0) + " N";
+}
+
+export function millimetres(mm) {
+  const v = Number(mm);
+  return (v >= 10 ? v.toFixed(0) : v.toFixed(1)) + " mm";
+}
+
+function keyed(rows) {
+  return "<table>" + rows.map(([name, value]) =>
+    `<tr><th>${escapeHtml(name)}</th><td>${value}</td></tr>`).join("") + "</table>";
+}
+
+function pushOf(capture, head) {
+  const p = capture.headPush;
+  return p ? Math.hypot(p[3 * head], p[3 * head + 1], p[3 * head + 2]) : 0;
+}
+
+// The frame line (spec section 9): the largest rope, wire, tree and deviation
+// at the capture, and how many heads touch their nodes.
+export function frameLine(sim, index) {
+  const c = sim && sim.captures[index];
+  if (!c) return null;
+  const heads = sim.trees.heads.length;
+  let touching = 0;
+  for (let h = 0; h < heads; h++) if (pushOf(c, h) > 0) touching += 1;
+  return { rope: largestOf(c.tension), wire: largestOf(c.wireTension),
+           trees: largestOf(c.treeUtilisation), deviation: largestOf(c.deviation), touching, heads };
+}
+
+export function frameLineHtml(line) {
+  if (!line) return "";
+  return keyed([["Rope max", kilonewtons(line.rope)], ["Wire max", newtons(line.wire)],
+    ["Trees", line.trees.toFixed(2)], ["Deviation max", millimetres(line.deviation)],
+    ["Heads touching", line.touching + "/" + line.heads]]);
+}
+
+export const COLOUR_BY = [["tension", "Rope tension"], ["deviation", "Deviation"],
+  ["utilisation", "Tree utilisation"], ["wire", "Wire tension"], ["off", "Off"]];
+
+// The two ends of the studio's one-sided ramp (#legend.deflection's bar), and
+// the deviation bands in the colours the Sag lens draws them.
+const RAMP_LOW = [0xf2, 0xef, 0xe8];
+const RAMP_HIGH = [0xcc, 0x22, 0x11];
+const DEVIATION_COLOURS = { within: "#f2efe8", near: "#c99a2e", over: "#c24936" };
+
+function hexRgb(hex) {
+  const n = parseInt(hex.slice(1), 16);
+  return [((n >> 16) & 255) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255];
+}
+
+export function ramp(fraction) {
+  const f = Math.min(1, Math.max(0, Number(fraction) || 0));
+  return RAMP_LOW.map((low, i) => (low + (RAMP_HIGH[i] - low) * f) / 255);
+}
+
+// A deviation's band against the tolerance, as the Sag lens bands a sag: over
+// it, near it (over half of it), or within it.
+export function deviationBand(mm, tolerance) {
+  if (Number(mm) > tolerance) return "over";
+  if (Number(mm) > 0.5 * tolerance) return "near";
+  return "within";
+}
+
+// The colour a value is drawn in under a Colour by choice, [r, g, b] from 0 to
+// 1, on the run's own scale; null where the choice colours nothing (Off).
+export function colourOf(by, value, sim, tolerance) {
+  if (!sim || value == null) return null;
+  if (by === "tension") return ramp(sim.scales.tension > 0 ? value / sim.scales.tension : 0);
+  if (by === "wire") return ramp(sim.scales.wire > 0 ? value / sim.scales.wire : 0);
+  // full red at the tube's capacity and over it
+  if (by === "utilisation") return ramp(value);
+  if (by === "deviation") return hexRgb(DEVIATION_COLOURS[deviationBand(value, tolerance)]);
+  return null;
+}
+
+// The key a Colour by choice draws, in the legend's own shape (lensLegend's).
+export function colourKey(by, sim, tolerance) {
+  if (!sim) return null;
+  if (by === "tension") {
+    return { title: "rope tension, kN", min: "0", max: (sim.scales.tension / 1000).toFixed(1) };
+  }
+  if (by === "wire") return { title: "wire tension, N", min: "0", max: sim.scales.wire.toFixed(0) };
+  if (by === "utilisation") return { title: "tree utilisation", min: "0", max: "1.0" };
+  if (by === "deviation") {
+    return { title: "deviation, mm: tolerance " + Number(tolerance), min: "0",
+             max: sim.scales.deviation.toFixed(0),
+             bands: ["within", "near", "over"].map((name) => ({ name, colour: DEVIATION_COLOURS[name] })) };
+  }
+  return null;
+}
+
+// Where a part is at a capture, in metres: a member's midpoint, a node, a
+// wire's rim node, a tree member's midpoint, the centre of a machine's rim
+// nodes. The labels stand there and the worst tables turn the camera there.
+export function targetPoint(sim, index, target) {
+  const c = sim && sim.captures[index];
+  if (!c || !target) return null;
+  const at = (array, i) => (array && i != null && 3 * i + 2 < array.length
+    ? [array[3 * i], array[3 * i + 1], array[3 * i + 2]] : null);
+  const mid = (a, b) => (a && b ? a.map((v, k) => (v + b[k]) / 2) : null);
+  if (target.kind === "node") return at(c.x, target.index);
+  if (target.kind === "member") {
+    const edge = sim.edges[target.index];
+    return edge ? mid(at(c.x, edge[0]), at(c.x, edge[1])) : null;
+  }
+  if (target.kind === "wire") return at(c.x, sim.rim.nodes[target.index]);
+  if (target.kind === "tree") {
+    const member = sim.trees.members[target.index];
+    return member ? mid(at(c.treeX, member[0]), at(c.treeX, member[1])) : null;
+  }
+  if (target.kind === "machine") {
+    const points = (sim.rim.machines[target.index] || []).map((node) => at(c.x, node)).filter(Boolean);
+    if (!points.length) return null;
+    return [0, 1, 2].map((k) => points.reduce((sum, p) => sum + p[k], 0) / points.length);
+  }
+  return null;
+}
+
+export const LABEL_KINDS = [["rope", "Rope"], ["deviation", "Deviation"], ["contact", "Contact"]];
+
+function largestIndices(values, count) {
+  const found = [];
+  if (!values) return found;
+  for (let i = 0; i < values.length; i++) if (values[i] > 0) found.push(i);
+  found.sort((a, b) => values[b] - values[a] || a - b);
+  return found.slice(0, count);
+}
+
+// The labels a capture puts on the model for the ticked kinds, each kind's
+// largest first, so where they crowd the largest is the one kept: rope kN at a
+// member, deviation mm at a node, the push of each head touching its node.
+export function formworkLabels(sim, index, kinds, count = 20) {
+  const c = sim && sim.captures[index];
+  if (!c) return [];
+  const out = [];
+  if (kinds.includes("rope")) {
+    for (const i of largestIndices(c.tension, count)) {
+      out.push({ kind: "member", index: i, text: kilonewtons(c.tension[i]) });
+    }
+  }
+  if (kinds.includes("deviation")) {
+    for (const i of largestIndices(c.deviation, count)) {
+      out.push({ kind: "node", index: i, text: millimetres(c.deviation[i]) });
+    }
+  }
+  if (kinds.includes("contact")) {
+    const push = sim.trees.heads.map((_, h) => pushOf(c, h));
+    for (const h of largestIndices(push, count)) {
+      out.push({ kind: "node", index: sim.trees.heads[h][0], text: newtons(push[h]) });
+    }
+  }
+  return out;
+}
+
+// The card a click on a node opens (spec section 9): where it is, how far from
+// where it should be, on the ground or not, a head's push, a rim node's wire,
+// then each member at the node with its tension.
+export function formworkPickHtml(sim, index, node) {
+  const c = sim && sim.captures[index];
+  if (!c || node == null || node < 0 || node >= sim.nodes) return "";
+  const p = [c.x[3 * node], c.x[3 * node + 1], c.x[3 * node + 2]];
+  const rows = [["Node", String(node)], ["At", p.map((v) => v.toFixed(3)).join(", ") + " m"],
+                ["Deviation", millimetres(c.deviation[node])]];
+  if (c.ground) rows.push(["Ground", c.ground.includes(node) ? "yes" : "no"]);
+  const head = sim.trees.heads.findIndex(([net]) => net === node);
+  if (head >= 0) rows.push(["Head push", newtons(pushOf(c, head))]);
+  const wire = sim.rim.nodes.indexOf(node);
+  if (wire >= 0) {
+    rows.push(["Wire", escapeHtml(sim.rim.names[wire] || "#" + wire)],
+              ["Wire tension", newtons(c.wireTension[wire])]);
+  }
+  const members = [];
+  sim.edges.forEach(([u, v], e) => {
+    if (u === node || v === node) {
+      members.push(`<tr><td>${u === node ? v : u}</td><td>${forceLabel(c.tension[e])}</td></tr>`);
+    }
+  });
+  return keyed(rows) + (members.length
+    ? "<table><tr><th>To node</th><th>Tension</th></tr>" + members.join("") + "</table>" : "");
+}
+
+// The machine as a warning names it: its wire, wires a motor and pulleys.
+function machineName(options) {
+  return (options.rope || "no wire") + ", " + (options.wires_per_motor || 1) + " a motor, "
+    + (options.pulleys === false ? "no pulleys" : "pulleys");
+}
+
+// One line each (spec section 11): no run yet, an older run, and the run's
+// machine, prestress or wall not the chosen ones. chosen: the Cable net tab's
+// rope, wires_per_motor and pulleys, the Wall dial, and the cable net run's
+// design prestress (null when there is none).
+export function formworkWarnings(sim, chosen) {
+  if (!sim) return ["No formwork run: Run formwork analysis"];
+  const out = [];
+  if (sim.older) out.push("Run again: older formwork run");
+  const ran = sim.options || {};
+  if (!chosen) return out;
+  if (machineName(chosen) !== machineName(ran)) {
+    out.push("Run again: machine " + machineName(chosen) + ", run " + machineName(ran));
+  }
+  if (chosen.prestress != null && ran.prestress != null
+      && Math.abs(chosen.prestress - ran.prestress) > 0.01 * ran.prestress) {
+    out.push("Run again: prestress " + Number(chosen.prestress).toFixed(1) + " N, run "
+      + Number(ran.prestress).toFixed(1) + " N");
+  }
+  if (chosen.wall != null && ran.wall != null
+      && Number(chosen.wall).toFixed(1) !== Number(ran.wall).toFixed(1)) {
+    out.push("Run again: wall " + Number(chosen.wall).toFixed(1) + " mm, run "
+      + Number(ran.wall).toFixed(1) + " mm");
+  }
+  return out;
 }
