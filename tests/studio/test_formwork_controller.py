@@ -109,7 +109,7 @@ def test_the_studio_stands_still_while_the_tab_is_open():
     leave = _top(STUDIO, "leaveFormworkTab")
     for line in ("formworkView.group.visible = false;",
                  "for (const object of formworkHidden) object.visible = true;",
-                 "applySceneAtTime(state.timeline.t);", "applyShowMode();",
+                 "applySceneAtTime(formworkTakeT);", "applyShowMode();",
                  "if (cableNetLensUp()) paintCableNetLenses(true);"):
         assert line in leave, line
     assert "formworkView.group.visible = true;" in _top(STUDIO, "enterFormworkTab")
@@ -168,6 +168,29 @@ def test_the_capture_label_keeps_to_one_line():
     # found on screen: "t 100 hold" wrapped onto three lines beside the buttons
     assert ("#panel #formwork-label { color: var(--ink); font-size: var(--t-2); "
             "margin-left: var(--s2);\n  white-space: nowrap; }") in CSS
+
+
+def test_the_studio_s_own_act_is_hidden_and_the_take_comes_back_as_it_was():
+    # final review 1 and 5: the act's net and columns are the studio's own;
+    # the machine stands at its working place (the act's end) while the tab is
+    # open; leaving puts the take's clock back and repaints the Forces key
+    hold = _top(STUDIO, "studioFormworkObjects")
+    assert "formworkObjects && formworkObjects.group" in hold
+    enter = _top(STUDIO, "enterFormworkTab")
+    assert "formworkTakeT = state.timeline ? state.timeline.t : null;" in enter
+    assert ("if (state.bundle && state.timeline && formworkSeconds() > 0) "
+            "applySceneAtTime(formworkSeconds());") in enter
+    leave = _top(STUDIO, "leaveFormworkTab")
+    assert "if (state.bundle && formworkTakeT != null) applySceneAtTime(formworkTakeT);" in leave
+    assert "applySceneAtTime(state.timeline.t);" not in leave
+    assert "if (state.bundle) applyWireForces();" in leave
+    assert leave.index("applyShowMode();") < leave.index("applyWireForces();")
+    # the tab opened at boot (the remembered tab) is entered only once the whole
+    # module has run: the hook reads the act's objects, declared further down
+    boot = 'formworkTab.setActive(!document.getElementById("formwork-section").classList.contains("hidden"));'
+    assert STUDIO.count(boot) == 1
+    assert STUDIO.index("let formworkObjects = null;") < STUDIO.index(boot)
+    assert STUDIO.index(boot) > STUDIO.index("window.__studioReady = true;")
 
 
 def test_the_cable_net_labels_and_card_stand_down_while_the_tab_is_open():

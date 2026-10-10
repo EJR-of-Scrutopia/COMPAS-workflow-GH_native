@@ -16082,12 +16082,17 @@ const formworkView = createFormworkView(THREE);
 formworkView.group.visible = false;
 scene.add(formworkView.group);
 const formworkHidden = new Set();
+// The take's clock as the tab found it: the machine is stood at its working
+// place while the tab is open, and the take is put back on leaving.
+let formworkTakeT = null;
 
 function studioFormworkObjects() {
   const arrows = Object.keys(state.objects).filter((key) => key.endsWith("Arrows"))
     .map((key) => state.objects[key]);
+  // the studio's own formwork act too: its net, nodes and columns
   return [state.objects.shell, state.objects.falsework, state.objects.wires, state.objects.nodes,
-          state.objects.principal, state.objects.columns, state.objects.holdMarkers, ...arrows]
+          state.objects.principal, state.objects.columns, state.objects.holdMarkers, ...arrows,
+          formworkObjects && formworkObjects.group]
     .filter(Boolean);
 }
 
@@ -16107,6 +16112,9 @@ function enterFormworkTab() {
     state.timeline.playing = false;
     paintPlayButtons("Play");
   }
+  formworkTakeT = state.timeline ? state.timeline.t : null;
+  // the machine at its working place: the act's end, machine time 100
+  if (state.bundle && state.timeline && formworkSeconds() > 0) applySceneAtTime(formworkSeconds());
   formworkView.group.visible = true;
   holdStudioForFormwork();
 }
@@ -16116,8 +16124,10 @@ function leaveFormworkTab() {
   for (const object of formworkHidden) object.visible = true;
   formworkHidden.clear();
   if (machineObjects) machineObjects.group.visible = true;
-  if (state.bundle && state.timeline) applySceneAtTime(state.timeline.t);
+  if (state.bundle && formworkTakeT != null) applySceneAtTime(formworkTakeT);
+  formworkTakeT = null;
   applyShowMode();
+  if (state.bundle) applyWireForces();
   if (state.bundle) recolourSegments();
   if (cableNetLensUp()) paintCableNetLenses(true);
 }
@@ -16166,8 +16176,6 @@ formworkTab = mountFormwork({
     },
   },
 });
-formworkTab.setActive(!document.getElementById("formwork-section").classList.contains("hidden"));
-
 document.getElementById("data-button").addEventListener("click", () => {
   const panel = document.getElementById("data-panel");
   if (panel.classList.contains("hidden")) {
@@ -19619,5 +19627,8 @@ window.__studio = { state, scene, controls, applyDayCycle, placeProp,
 // made it to here: from this line on, a stray rejection is an incident for
 // the diagnostics log, not a "half-built panel" alarm.
 window.__studioReady = true;
+// The Formwork tab, if it is the tab this browser last left open, entered now
+// that the whole module has run: its hooks read objects declared below its mount.
+formworkTab.setActive(!document.getElementById("formwork-section").classList.contains("hidden"));
 
 export { state, buildScene, setLayer, applyCut, applyTimeline, timelineDuration, rebuildTimeline };
