@@ -116,6 +116,33 @@ def test_with_no_cable_net_run_the_formwork_run_is_refused_in_one_line(tmp_path,
     assert response.status_code == 404 and "Nowhere" in response.json()["detail"]
 
 
+def test_the_run_takes_its_holds_choice_and_tolerance(tmp_path, monkeypatch):
+    # spec 2026-10-10 formwork holds, section 4: none by default; a search on
+    # a net with no principal line fails with the reason
+    seen = {}
+
+    def fake(request, progress=None):
+        seen.update(request)
+        return {"schema": "bench.formwork-sim/1", "captures": [],
+                "summary": {"holds_deviation_max_mm": None}}
+
+    client, _ = make_client(tmp_path, monkeypatch, formwork_runner=fake)
+    _plant(tmp_path)
+    started = client.post("/api/studies/Tiny/formwork/run", json=RUN)
+    assert wait_for(client, started.json()["run"])["state"] == "done"
+    assert "holds" not in seen or not seen["holds"]
+    assert seen["options"]["holds"] == "none" and seen["options"]["tolerance_mm"] == 20.0
+    started = client.post("/api/studies/Tiny/formwork/run",
+                          json={**RUN, "holds": "search", "tolerance_mm": 15})
+    state = wait_for(client, started.json()["run"])
+    assert state["state"] == "failed" and "principal line" in state["message"]
+    for bad, word in (({"holds": "some"}, "holds"), ({"tolerance_mm": 0}, "tolerance_mm"),
+                      ({"tolerance_mm": True}, "tolerance_mm")):
+        response = client.post("/api/studies/Tiny/formwork/run", json={**RUN, **bad})
+        assert response.status_code == 400, bad
+        assert word in response.json()["detail"], bad
+
+
 def test_a_study_with_no_formwork_document_is_refused_before_the_cut(tmp_path, monkeypatch):
     import staging
 

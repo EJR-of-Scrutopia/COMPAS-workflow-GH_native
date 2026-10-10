@@ -2162,6 +2162,17 @@ def create_app(runner=None, cra_runner=None, cablenet_runner=None,
         pulleys = body.get("pulleys", True)
         if not isinstance(pulleys, bool):
             raise HTTPException(400, "pulleys: true or false, not {!r}".format(pulleys))
+        # the holds (spec 2026-10-10 formwork holds, section 4): none, or a
+        # search of evenly spaced whole lines to the tolerance
+        holds = body.get("holds", "none")
+        if holds not in ("none", "search"):
+            raise HTTPException(400, "holds: none or search, not {!r}".format(holds))
+        tolerance_mm = body.get("tolerance_mm", 20.0)
+        if (isinstance(tolerance_mm, bool) or not isinstance(tolerance_mm, (int, float))
+                or not (math.isfinite(tolerance_mm) and tolerance_mm > 0.0)):
+            raise HTTPException(400, "tolerance_mm must be more than nought millimetres, not "
+                                     "{!r}".format(tolerance_mm))
+        tolerance_mm = float(tolerance_mm)
         source = body.get("source")
         if source is not None and source not in bundle.CUT_SOURCES:
             raise HTTPException(400, "source must be one of {} when given".format(
@@ -2248,8 +2259,9 @@ def create_app(runner=None, cra_runner=None, cablenet_runner=None,
                              "rope": rope_key, "prestress": prestress,
                              "prestress_from": prestress_from,
                              "wires_per_motor": wires_per_motor, "wall": wall,
-                             "pulleys": pulleys},
-                    runner=formwork_runner, progress=progress)
+                             "pulleys": pulleys, "holds": holds, "tolerance_mm": tolerance_mm},
+                    runner=formwork_runner, progress=progress, holds=holds,
+                    tolerance_mm=tolerance_mm)
                 run["state"] = "done"
                 run["phase"] = "done"
                 run["message"] = ""

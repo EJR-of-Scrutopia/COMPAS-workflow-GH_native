@@ -328,6 +328,47 @@ def holds_at(bands, spacing, exclude=()):
                   if band > 0 and band % spacing == 0 and node not in exclude)
 
 
+def spacing_name(spacing, widest):
+    """A spacing as the tab says it: the open edges, every 5th line, every line."""
+
+    if spacing == widest:
+        return "the open edges"
+    if spacing == 1:
+        return "every line"
+    suffix = {1: "st", 2: "nd", 3: "rd"}.get(spacing % 10 if spacing % 100 not in (11, 12, 13)
+                                              else 0, "th")
+    return "every {}{} line".format(spacing, suffix)
+
+
+def search_holds(request, bands, exclude, tolerance_mm, runner, progress=None):
+    """The search (spec 2026-10-10 formwork holds, section 4): each spacing in
+    turn, widest first, one engine run each, stopping at the first whose worst
+    deviation from the jacking on is within the tolerance; with none, the
+    every-line run is kept. Returns the chosen run's document with its holds
+    block."""
+
+    widest = max(bands.values())
+    tried = []
+    for spacing in hold_spacings(bands):
+        nodes = holds_at(bands, spacing, exclude)
+        name = spacing_name(spacing, widest)
+
+        def told(done, total, what, name=name):
+            if progress is not None:
+                progress(done, total, "{}: {}".format(name, what))
+
+        document = runner({**request, "holds": nodes}, told)
+        worst = (document.get("summary") or {}).get("holds_deviation_max_mm")
+        tried.append({"spacing": spacing, "count": len(nodes), "deviation_max_mm": worst})
+        if worst is not None and worst <= tolerance_mm:
+            break
+    met = tried[-1]["deviation_max_mm"] is not None and tried[-1]["deviation_max_mm"] <= tolerance_mm
+    document["holds"] = {"spacing": spacing, "bands": list(range(spacing, widest + 1, spacing)),
+                         "count": len(nodes), "tolerance_mm": float(tolerance_mm), "met": met,
+                         "tried": tried}
+    return document
+
+
 def request_from(inputs, arrays, binding, plan, thickness, density, ea, mass_per_metre,
                  prestress, wires_per_motor, wall, study=None, options=None, note=None):
     """The engine's request, every length in millimetres and every force in
@@ -382,7 +423,8 @@ def _subprocess_runner(python_exe: Path) -> Callable:
 
 def run_formwork(inputs, arrays, binding, plan, thickness, density, out_path, ea,
                  mass_per_metre, prestress, wires_per_motor, wall, study=None, options=None,
-                 note=None, runner=None, python_exe=None, progress=None):
+                 note=None, runner=None, python_exe=None, progress=None, holds="none",
+                 tolerance_mm=20.0):
     """From a checked study and its cut to a written capture document. runner,
     when given, replaces the subprocess: it takes the request and progress and
     returns the document. progress, when given, is called with (captures done,
@@ -392,6 +434,14 @@ def run_formwork(inputs, arrays, binding, plan, thickness, density, out_path, ea
                            mass_per_metre, prestress, wires_per_motor, wall, study, options, note)
     if runner is None:
         runner = _subprocess_runner(python_exe or FORMWORK_PYTHON)
-    document = runner(request, progress)
+    if holds == "search":
+        # the holds in whole bands from the principal lines, the wires' nodes
+        # never among them (spec 2026-10-10 formwork holds)
+        bands = hold_bands(arrays["faces"], [net for net, _ in inputs.heads])
+        document = search_holds(request, bands, {wire["node"] for wire in inputs.rim},
+                                tolerance_mm, runner, progress)
+    else:
+        document = runner(request, progress)
+        document["holds"] = None
     bundle.write_json_atomically(Path(out_path), document)
     return {"path": str(out_path), "captures": len(document.get("captures") or [])}

@@ -186,3 +186,52 @@ def test_a_net_that_does_not_sort_into_two_families_is_refused():
     # no principal line at all
     with pytest.raises(formwork_sim.FormworkError, match="principal line"):
         formwork_sim.hold_bands(faces, [node(0, 0)])
+
+
+def _stand_in(worst_by_count, seen):
+    # an engine that answers each try's worst deviation by how many holds it got
+    def run(request, progress=None):
+        seen.append(list(request["holds"]))
+        if progress is not None:
+            progress(1, 1, "the holds jacked to the design")
+        return {"schema": "bench.formwork-sim/1", "captures": [],
+                "summary": {"holds_deviation_max_mm": worst_by_count[len(request["holds"])]}}
+    return run
+
+
+def test_the_search_stops_at_the_first_spacing_that_meets_the_tolerance():
+    # spec 2026-10-10 formwork holds, section 4: the open edges, then denser,
+    # one engine run each, keeping the first within the tolerance
+    faces, heads, node = _strip_net()
+    bands = formwork_sim.hold_bands(faces, heads)
+    rim = {node(4, j) for j in range(-2, 3)}
+    seen, told = [], []
+    worst = {8: 50.0, 16: 12.0}
+    document = formwork_sim.search_holds({"study": "Strip"}, bands, rim, 20.0, _stand_in(worst, seen),
+                                         lambda done, total, what: told.append(what))
+    assert [len(holds) for holds in seen] == [8, 16]
+    assert document["holds"] == {"spacing": 1, "bands": [1, 2], "count": 16, "tolerance_mm": 20.0,
+                                 "met": True, "tried": [
+                                     {"spacing": 2, "count": 8, "deviation_max_mm": 50.0},
+                                     {"spacing": 1, "count": 16, "deviation_max_mm": 12.0}]}
+    assert told == ["the open edges: the holds jacked to the design",
+                    "every line: the holds jacked to the design"]
+    # the open edges alone are enough: one try
+    seen.clear()
+    document = formwork_sim.search_holds({}, bands, rim, 60.0, _stand_in(worst, seen))
+    assert len(seen) == 1 and document["holds"]["spacing"] == 2 and document["holds"]["met"]
+
+
+def test_when_no_spacing_meets_the_tolerance_the_every_line_run_is_kept():
+    faces, heads, node = _strip_net()
+    bands = formwork_sim.hold_bands(faces, heads)
+    seen = []
+    document = formwork_sim.search_holds({}, bands, (), 5.0, _stand_in({10: 50.0, 20: 12.0}, seen))
+    assert document["holds"]["spacing"] == 1 and document["holds"]["met"] is False
+    assert [t["deviation_max_mm"] for t in document["holds"]["tried"]] == [50.0, 12.0]
+
+
+def test_the_spacings_are_named_as_the_tab_says_them():
+    assert [formwork_sim.spacing_name(s, 10) for s in (10, 5, 2, 1)] == [
+        "the open edges", "every 5th line", "every 2nd line", "every line"]
+    assert formwork_sim.spacing_name(3, 9) == "every 3rd line"
