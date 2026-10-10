@@ -104,9 +104,9 @@ function listed(value) {
 // two is read by the same rule from what it does carry (the block's one figure
 // is the fit's, or the wires stage by stage when there is no block), with the
 // prestress it records. Wires only: the force a grabbed node's actuator
-// supplies is another figure, said in a sentence of its own by
-// demandSentences; folded in here it would be a number on the panel that no
-// document agrees with, and a verdict that disagrees with the server's.
+// supplies is another figure, shown on its own; folded in here it would be a
+// number on the panel that no document agrees with, and a verdict that
+// disagrees with the server's.
 export function wireFloor(demand) {
   const sizing = sizingOf(demand);
   const judged = sizing ? force(sizing.worst_wire_tension_newtons) : null;
@@ -135,63 +135,6 @@ export function prestressFloor(demand) {
   return floor === null ? 0 : floor;
 }
 
-// Where the floor is set, read off the larger of its two figures
-// (exports._floor_instant). When the entered prestress is the larger, a tie
-// included, it sets the floor at every instant and no stage is named:
-// { prestress: true }. When the fit's figure is, the first stage in the
-// document's order whose own greatest wire tension is that figure, with
-// whether it is a frame of the raise. It is not the sizing stage, which is
-// chosen among the courses; the fit's figure is the greatest over every
-// instant, the raise included. Null when there is no floor, when the fit's
-// figure is not above zero, when no stage carries it (a hand-edited document
-// whose sizing block and stages disagree), or when the stage has no name: an
-// instant is named only when the document says which it is.
-function floorInstant(demand, floor) {
-  if (floor.newtons === null) return null;
-  if (floor.prestress !== null && (floor.fitted === null || floor.prestress >= floor.fitted)) {
-    return { prestress: true };
-  }
-  // a net with no tension in it has no instant at which the tension is greatest
-  if (!(floor.fitted > 0)) return null;
-  for (const stage of listed(demand && demand.stages)) {
-    if (!stage || typeof stage !== "object") continue;
-    let top = null;
-    for (const tension of listed(stage.wire_tensions)) {
-      const value = force(tension);
-      if (value !== null && (top === null || value > top)) top = value;
-    }
-    if (top !== null && top === floor.fitted) {
-      const name = stage.name == null ? stage.stage : stage.name;
-      return name == null ? null : { name, frame: isFrame(stage) };
-    }
-  }
-  return null;
-}
-
-// A force with its unit, or the words that say it is missing
-// (exports._force_text).
-function forceText(value) {
-  return value == null ? "not recorded" : newtons(value) + " N";
-}
-
-// One sentence on the floor every wire is judged at, the two figures it is the
-// larger of and where it is set: exports.floor_sentence for a version 2
-// document, word for word, with the floor in bold. The stage name is the
-// server's string and is escaped.
-export function floorSentence(demand) {
-  const floor = wireFloor(demand);
-  if (floor.newtons === null) {
-    return "No prestress floor is recorded: the document gives neither an entered " +
-      "prestress nor a wire tension.";
-  }
-  const instant = floorInstant(demand, floor);
-  const where = !instant ? "" : instant.prestress ? ", set by the entered prestress"
-    : (instant.frame ? ", reached at the raise's instant " : ", reached at stage ") + esc(instant.name);
-  return "The net is held at a prestress floor of <b>" + newtons(floor.newtons) + " N</b>, " +
-    "the larger of the entered prestress (" + forceText(floor.prestress) + ") and the " +
-    "greatest tension the fit found in any wire (" + forceText(floor.fitted) + ")" + where + ".";
-}
-
 // Total rope one wire winds over the whole build, taken at the worst wire.
 export function ropeWound(demand) {
   const totals = [];
@@ -208,187 +151,181 @@ function esc(value) {
     { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 }
 
-// "1 wire", "2 wires", "2 batches": the noun agrees with the count
-// (exports._count).
-function counted(number, noun) {
-  const plural = noun + (/(ch|sh|s|x|z)$/.test(noun) ? "es" : "s");
-  return number + " " + (number === 1 ? noun : plural);
+// The wire the analysis ran for, against the wire chosen here, by stiffness: the
+// test is exports._rope_mismatch's (both numbers, differing by more than a
+// millionth of the larger), so the panel and the documents warn in the same
+// cases. Null when there is nothing to compare.
+const EA_TOLERANCE = 1e-6;
+
+export function eaMismatch(parts, demand, rope) {
+  const chosen = (((parts && parts.rope) || {})[rope] || {}).ea_newtons;
+  const analysed = demand && demand.ea_newtons;
+  const number = (value) => typeof value === "number" && Number.isFinite(value);
+  if (!number(chosen) || !number(analysed)) return null;
+  const larger = Math.max(Math.abs(chosen), Math.abs(analysed));
+  if (Math.abs(chosen - analysed) <= EA_TOLERANCE * larger) return null;
+  return { analysed, chosen };
 }
 
-// A sentence of the server's own, as the exports write one: ended with a full
-// stop when it has none (exports._sentence).
-function sentenceOf(text) {
-  const plain = String(text).trim();
-  return /[.!?]$/.test(plain) ? plain : plain + ".";
+// The prestress the form needs (spec 2026-10-10 prestress and holds) -------
+
+// The needs table of a current document, or null.
+function needsOf(demand) {
+  const needs = demand && !isStale(demand) ? demand.needs : null;
+  return needs && Array.isArray(needs.steps) && needs.steps.length ? needs : null;
 }
 
-// Where the acceptance line came from, in words, for a document written before
-// the line became a tolerance (9 October 2026). The engine then recorded a
-// catalogue rib as "falsework <key>: <the catalogue entry as JSON>" so the data
-// sheet could quote it verbatim; a sentence names the rib and its description
-// instead. Any other source is the study's own words, given as they are. Not
-// escaped: the caller escapes.
-export function acceptanceSourceText(source) {
-  const text = String(source);
-  const match = /^falsework ([^:]+): (\{[\s\S]*\})$/.exec(text);
-  if (!match) return text;
-  let entry;
-  try { entry = JSON.parse(match[2]); } catch (error) { return text; }
-  const description = entry && typeof entry.description === "string" ? entry.description.trim() : "";
-  return "falsework " + match[1].trim() + (description ? " (" + description + ")" : "");
+// The nodes a machine of this ceiling needs held: the fewest steps of the walk
+// whose prestress the ceiling covers, every node those steps added, and the
+// prestress it is then set to. A ceiling no step meets holds the whole walk
+// at the ceiling, not covered. Null with no table or no ceiling.
+export function holdsFor(demand, ceiling) {
+  const needs = needsOf(demand);
+  if (!needs || ceiling == null || !Number.isFinite(Number(ceiling))) return null;
+  const c = Number(ceiling);
+  const steps = needs.steps;
+  const at = steps.findIndex((s) => s.prestress_newtons != null && s.prestress_newtons <= c);
+  const step = at < 0 ? steps.length - 1 : at;
+  const nodes = steps.slice(1, step + 1).flatMap((s) => s.added || []);
+  const last = steps[steps.length - 1].prestress_newtons;
+  return { step, count: nodes.length, nodes, covered: at >= 0,
+           prestress: at >= 0 ? steps[at].prestress_newtons : last == null ? c : last };
 }
 
-// The demand, in sentences. They carry <b> tags the model writes itself, so
-// every string the server supplied (the stage names, the acceptance source,
-// the run's note, the schema) is escaped here, and the caller sets the result
-// as markup without escaping it a second time.
-export function demandSentences(demand) {
-  if (!demand) {
-    return ["This study has no cable net demand yet. Run the cable net analysis " +
-            "and the figures below will have something to answer."];
+// Why nodes need holding: a stronger machine would need none ("machine"), or
+// no machine reaches what the form needs ("every machine").
+export function holdsReason(needed, most) {
+  return needed != null && most != null && most >= needed ? "machine" : "every machine";
+}
+
+// A figure of the ladder at a prestress: straight across between two rungs in
+// the logarithm of the prestress, the end's own figure beyond either end.
+function ladderAt(demand, prestress, key) {
+  const needs = needsOf(demand);
+  const ladder = needs && Array.isArray(needs.ladder) ? needs.ladder : [];
+  if (!ladder.length || prestress == null || !(Number(prestress) > 0)) return null;
+  const p = Number(prestress);
+  const first = ladder[0], last = ladder[ladder.length - 1];
+  if (p <= first.prestress_newtons) return first[key];
+  if (p >= last.prestress_newtons) return last[key];
+  const i = ladder.findIndex((r, k) => k + 1 < ladder.length && ladder[k + 1].prestress_newtons > p);
+  const a = ladder[i], b = ladder[i + 1];
+  const t = Math.log(p / a.prestress_newtons) / Math.log(b.prestress_newtons / a.prestress_newtons);
+  return a[key] + t * (b[key] - a[key]);
+}
+
+// The worst sag, mm, with the column heads alone at this prestress.
+export function sagAt(demand, prestress) {
+  return ladderAt(demand, prestress, "worst_sag_mm");
+}
+
+// The factor on the load that keeps the net within the line at this prestress.
+export function roofAt(demand, prestress) {
+  return ladderAt(demand, prestress, "roof");
+}
+
+// The menu's answers (spec 2026-10-10 prestress and holds, section 5): the
+// prestress the form needs with its column heads alone, what the chosen
+// machine gives a wire and the most any machine makes, each marked against it,
+// the nodes the chosen machine needs held and why, and the roof its ceiling
+// gives. Each null where nothing gives it.
+export function menuAnswers(demand, row, strongest) {
+  const needs = needsOf(demand);
+  const worst = row && !row.refused && row.verdict ? row.verdict.worst : null;
+  const needed = needs ? needs.steps[0].prestress_newtons : null;
+  const known = needed != null;
+  // beyond 1 MN every machine is short; with no table, nothing is judged
+  const judged = (ceiling) => (!needs ? null : known ? ceiling >= needed : false);
+  const most = strongest ? { newtons: strongest.ceiling_newtons, described: strongest.described,
+                             holds: judged(strongest.ceiling_newtons) } : null;
+  // Gives is short of the prestress the form needs, or of what the run's
+  // verdict judged its wires at (a fitted peak above the ceiling), whichever
+  // is worse (final review 2)
+  let gives = null;
+  if (worst) {
+    const ratios = !needs || !known ? []
+      : [worst.ceiling / needed, ...(worst.margin == null ? [] : [worst.margin])];
+    const margin = ratios.length ? Math.min(...ratios) : null;
+    gives = { newtons: worst.ceiling, margin,
+              holds: !needs ? null : margin != null && margin >= 1 && row.verdict.holds !== false };
   }
-  if (isStale(demand)) {
-    return ["This demand document is from an earlier analysis (" +
-            esc(demand.schema || "unknown schema") + "). Run the cable net " +
-            "analysis again for the lenses, the load factor and the grab count."];
-  }
+  const held = gives && needs ? holdsFor(demand, worst.ceiling) : null;
+  return {
+    needed: needs ? { newtons: needed } : null,
+    gives,
+    most,
+    holds: held ? { count: held.count, covered: held.covered,
+                    reason: held.count === 0 ? null
+                      : holdsReason(needed, strongest ? strongest.ceiling_newtons : null) }
+      : null,
+    roof: gives && needs ? roofAt(demand, worst.ceiling) : null,
+  };
+}
+
+// A ratio as the menu shows it: one decimal, or two figures under a tenth, so
+// 0.023 is not printed as nought (found on screen: 0.0x).
+function ratio(value) {
+  return Number(value) >= 0.095 ? factor(value) : Number(value).toPrecision(2);
+}
+
+export function answersHtml(answers) {
+  const gives = answers.gives;
+  const marked = (answer) => (answer.holds == null ? "" : " " + mark(answer.holds));
+  const holds = answers.holds;
+  const missing = answers.needed == null ? "not run" : "no machine";
+  const rows = [
+    ["Needed", answers.needed == null ? "not run"
+      : answers.needed.newtons == null ? "more than 1 MN" : newtons(answers.needed.newtons) + " N"],
+    ["Gives", gives == null ? "no machine" : newtons(gives.newtons) + " N a wire" + marked(gives) +
+      (gives.margin == null ? "" : " " + ratio(gives.margin) + "x")],
+    ["Most", answers.most == null ? "none" : newtons(answers.most.newtons) + " N a wire" +
+      marked(answers.most) + ", " + escapeHtml(answers.most.described)],
+    ["Holds", holds == null ? missing : holds.count === 0 && holds.covered ? "none"
+      : (holds.covered ? "" : "more than ") + holds.count + " nodes, " +
+        (holds.reason === "machine" ? "this machine short" : "every machine short")],
+    ["Roof", answers.roof == null ? missing : ratio(answers.roof) + "x the skin"],
+  ];
+  return '<table class="cablenet-answers">' +
+    rows.map(([name, value]) => `<tr><th>${name}</th><td>${value}</td></tr>`).join("") + "</table>";
+}
+
+// One line for each thing the run on screen differs from: the machine it was
+// designed for, the tolerance dial, the chosen wire's stiffness. Plain text:
+// the caller escapes it.
+export function runWarnings(demand, dials, parts, rope) {
+  if (!demand) return [];
+  if (isStale(demand)) return ["Run again: older analysis, " + String(demand.schema || "unknown")];
+  if (!needsOf(demand)) return ["Run again: older analysis, no prestress table"];
   const out = [];
-  const sizing = sizingOf(demand);
-  // the document names the stage twice, in the sizing block and at the top level
-  const sizingStage = (sizing && sizing.stage) || demand.sizing_stage;
-  out.push(floorSentence(demand) +
-    (wireFloor(demand).newtons === null ? "" : " That is a property of the vault, the " +
-      "skin and the prestress, so it does not move when parts change.") +
-    (sizingStage ? " The stage that sizes the parts is " + esc(sizingStage) + "." : ""));
-  out.push(demand.acceptance == null
-    ? "No acceptance line is set for this run, so sag has nothing to be judged against."
-    : demand.tolerance_mm != null
-      ? "The acceptance line is a tolerance of " + millimetres(demand.tolerance_mm) +
-        " mm from the designed form, set for this run."
-      : "The acceptance line is " + millimetres(demand.acceptance) + " mm" +
-        (demand.acceptance_source ? ", from " + esc(acceptanceSourceText(demand.acceptance_source)) : "") + ".");
-  const courses = (demand.stages || []).filter((s) => !isFrame(s));
-  const last = courses[courses.length - 1];
-  if (last) {
-    out.push("The skin weighs <b>" + kilonewtons(last.skin_load_sum_newtons) + " kN</b> placed" +
-      (demand.thickness != null && demand.density != null
-        ? ", " + Math.round(Number(demand.thickness) * 1000) + " mm at " +
-          Math.round(Number(demand.density)) + " kg/m3" : "") +
-      "; the net itself weighs " + kilonewtons(last.net_weight_newtons) + " kN.");
+  const number = (value) => (value == null || value === "" ? NaN : Number(value));
+  const chosen = number(dials && dials.ceiling);
+  const designed = number(demand.needs.ceiling_newtons);
+  if (Number.isFinite(chosen) && (!Number.isFinite(designed) ||
+      Math.abs(chosen - designed) > 0.01 * Math.max(chosen, designed))) {
+    out.push("Run again: machine " + newtons(chosen) + " N, run " +
+      (Number.isFinite(designed) ? newtons(designed) + " N" : "no machine"));
   }
-  const held = demand.held || {};
-  out.push("Held by " + counted((held.wire_nodes || []).length, "wire") + " and " +
-    counted((held.column_heads || []).length, "column head") + ".");
-  // The grabbed nodes' own figure, apart from the wires' floor above: it is
-  // said when the document carries one above zero (exports._grab_section).
-  const pull = sizing && sizing.worst_actuator_newtons != null
-    ? Number(sizing.worst_actuator_newtons) : 0;
-  if (Number.isFinite(pull) && pull > 0) {
-    out.push("The grabbed nodes need up to " + newtons(pull) + " N each, " +
-      "which a wire there would have to carry.");
+  const usedTolerance = number(demand.tolerance_mm);
+  const dialTolerance = number(dials && dials.tolerance);
+  if (Number.isFinite(usedTolerance) && Number.isFinite(dialTolerance) && usedTolerance !== dialTolerance) {
+    out.push("Run again: tolerance " + millimetres(dialTolerance) + " mm, run " +
+      millimetres(usedTolerance) + " mm");
   }
-  const note = demand.note == null ? "" : String(demand.note).trim();
-  if (note) out.push(esc(sentenceOf(note)));
+  const ea = eaMismatch(parts, demand, rope);
+  if (ea) out.push("Run again: wire EA " + newtons(ea.chosen) + " N, run " + newtons(ea.analysed) + " N");
   return out;
 }
 
-// The rope the analysis ran for, against the rope chosen here. The rope sets the
-// stiffness the net was solved and cut for, so another rope leaves the ceiling
-// (parts arithmetic) valid and quietly invalidates the prestress floor, the
-// residuals and the cut lengths. It is said and not refused: trying another rope
-// is how the choice is made. The test is exports._rope_mismatch's (both
-// stiffnesses numbers, differing by more than a millionth of the larger), so the
-// panel and the three documents warn in the same cases; the words are the
-// panel's own. The sentence carries a <b> the model wrote, and the rope's key, a
-// server string, is escaped. Empty when there is nothing to compare: no demand,
-// no stiffness in it, a rope the catalogue does not have.
-const EA_TOLERANCE = 1e-6;
-
-export function ropeMismatch(parts, demand, configuration) {
-  const key = configuration && configuration.rope;
-  const chosen = (((parts && parts.rope) || {})[key] || {}).ea_newtons;
-  const analysed = demand && demand.ea_newtons;
-  const number = (value) => typeof value === "number" && Number.isFinite(value);
-  if (!number(chosen) || !number(analysed)) return "";
-  const larger = Math.max(Math.abs(chosen), Math.abs(analysed));
-  if (Math.abs(chosen - analysed) <= EA_TOLERANCE * larger) return "";
-  return "<b>The chosen rope is not the rope that was analysed.</b> The analysis used EA " +
-    newtons(analysed) + " N; " + esc(key) + " is EA " + newtons(chosen) + " N. " +
-    "The ceiling below is for the chosen rope. The prestress floor, the residuals and " +
-    "the cut lengths are for the analysed rope and do not describe this one.";
-}
-
-// Whether the prestress dial still matches the analysis on screen. The document
-// records the prestress it was run with; the dial is only the next run's, so
-// when they differ the panel says which of the two the figures came from.
-export function prestressNote(demand, dialNewtons) {
-  if (!demand || demand.prestress == null) return "";
-  const used = Number(demand.prestress);
-  const dial = Number(dialNewtons);
-  if (!Number.isFinite(used) || !Number.isFinite(dial) || used === dial) return "";
-  return "The analysis on screen used a prestress of <b>" + newtons(used) + " N</b>; the dial reads " +
-    newtons(dial) + " N. Run again to use the dial's value.";
-}
-
-// Whether the tolerance dial still matches the analysis on screen. The run
-// records the tolerance it was asked for; the dial is only the next run's. The
-// greedy walk picks the same nodes whatever the line, and stops at the first
-// point within it, at its cap of batches, or when no node is left unbalanced
-// (placement.greedy_actuators). So the curve it recorded gives the grab count
-// of any looser tolerance. A tighter one needs a new run only when the walk
-// stopped at its own line; otherwise a new run would end where this one did.
-export function toleranceNote(demand, dialMm) {
-  if (!demand || isStale(demand)) return "";
-  const dial = Number(dialMm);
-  if (!Number.isFinite(dial) || dial <= 0) return "";
-  const used = demand.tolerance_mm == null ? null : Number(demand.tolerance_mm);
-  if (used !== null && used === dial) return "";
-  const line = demand.acceptance == null ? null : Number(demand.acceptance);
-  const opening = used !== null
-    ? "The analysis on screen used a tolerance of <b>" + millimetres(used) +
-      " mm</b>; the dial reads " + millimetres(dial) + " mm."
-    : line !== null
-      ? "The analysis on screen judged the sag against a line of " + millimetres(line) +
-        " mm; the dial reads a tolerance of " + millimetres(dial) + " mm."
-      : "The analysis on screen had no acceptance line; the dial reads a tolerance of " +
-        millimetres(dial) + " mm.";
-  const placement = demand.placement || {};
-  const curve = (placement.curve || [])
-    .filter((point) => Number.isFinite(Number(point.worst_sag_mm)));
-  const met = curve.find((point) => Number(point.worst_sag_mm) <= dial);
-  const last = curve[curve.length - 1];
-  if (met) {
-    return opening + " At " + millimetres(dial) + " mm, this run's walk would " +
-      (Number(met.count) === 0 ? "grab no node"
-        : "stop at " + counted(Number(met.count), "grabbed node")) +
-      "; run again for the forces and the verdict.";
-  }
-  if (!last) return opening + " Run again to use the dial's value.";
-  const where = counted(Number(last.count), "grabbed node") + " with the worst sag at " +
-    millimetres(last.worst_sag_mm) + " mm";
-  if (placement.reached) {
-    return opening + " This run's walk stopped at its own line, at " + where +
-      ", so only a new run can say how many grabbed nodes " + millimetres(dial) +
-      " mm needs.";
-  }
-  const ended = curve.length === Number(placement.steps) + 1
-    ? "ended at its cap of " + counted(Number(placement.steps), "batch")
-    : "ended with no unbalanced node left to grab";
-  return opening + " This run's walk " + ended + ", at " + where + ", so a run at " +
-    millimetres(dial) + " mm would end at the same place without meeting it.";
-}
-
+// The instant on screen as data: "F60 finish, t 60", "S2 tile, course 2, 12.0 kN".
 export function stageCaption(stage) {
   if (!stage) return "";
-  if (isFrame(stage)) {
-    return "Frame at machine time " + Number(stage.time) + " (" + String(stage.kind) +
-      "): the net's own weight only.";
-  }
-  const placed = kilonewtons(stage.skin_load_sum_newtons) + " kN placed.";
+  const name = String(stage.name == null ? stage.stage : stage.name) +
+    (stage.kind ? " " + String(stage.kind) : "");
+  if (isFrame(stage)) return name + ", t " + Number(stage.time);
+  const placed = kilonewtons(stage.skin_load_sum_newtons) + " kN";
   // an older document carries no course number to count, and none is invented
-  if (stage.course == null) return "Stage " + String(stage.name) + ": " + placed;
-  return "Course " + (Number(stage.course) + 1) + " of the skin (" + String(stage.name) +
-    "): " + placed;
+  if (stage.course == null) return name + ", " + placed;
+  return name + ", course " + (Number(stage.course) + 1) + ", " + placed;
 }
 
 export function nearestInstant(stages, machineTime) {
@@ -428,49 +365,6 @@ export function sagBand(mm, acceptance) {
   return "inside";
 }
 
-// A sag with its unit, or the words that say it is missing: never "not
-// recorded mm" (exports._mm_text).
-function sagText(value) {
-  return value == null ? "not recorded" : millimetres(value) + " mm";
-}
-
-// The same sentence exports.grab_sentence renders, word for word: how many
-// nodes to grab, in how many batches (the last may be short), and whether
-// grabbing them brings the net inside the line. A document that names no held
-// set has not said that none are held, so it is not read as an empty one.
-export function grabText(placement, held, acceptance) {
-  if (!placement) {
-    return "Where to grab the net is not established: the demand document has no " +
-      "placement; run the cable net analysis again.";
-  }
-  const nodes = held && Array.isArray(held.actuators) ? held.actuators : null;
-  if (nodes === null) {
-    return "Where to grab the net is not established: the demand document has no " +
-      "held set; run the cable net analysis again.";
-  }
-  const count = nodes.length;
-  const batch = Math.max(1, Math.trunc(Number(placement.batch)) || 1);
-  const batches = count ? Math.ceil(count / batch) : 0;
-  // the last batch is short when the count is not a multiple of the size
-  const how = counted(batches, "batch") + " of " + (count % batch ? "up to " : "") + batch;
-  const line = acceptance == null ? "a line nobody set" : "the " + millimetres(acceptance) + " mm line";
-  const curve = placement.curve || [];
-  const none = curve.length ? sagText(curve[0].worst_sag_mm) : "not recorded";
-  const last = curve.length ? sagText(curve[curve.length - 1].worst_sag_mm) : "not recorded";
-  const method = "The placement is greedy by unbalanced force, a heuristic and not an optimum.";
-  if (placement.reached) {
-    if (!count) {
-      return "No node needs grabbing: with none grabbed the worst sag is " + none +
-        ", already inside " + line + ".";
-    }
-    return "Grab " + counted(count, "node") + " (" + how + ") to bring the net inside " +
-      line + "; the worst sag with none grabbed is " + none + ". " + method;
-  }
-  return "Grabbing " + counted(count, "node") + " (" + how + ") did not reach the line: " +
-    "the worst sag is still " + last + " against " + line + ", from " + none +
-    " with none grabbed. " + method;
-}
-
 // The walk as inline SVG: grabbed nodes along the bottom, worst sag up the
 // side on a log scale (a 2 m sag and a 2 mm line on one axis), the line dashed.
 export function curveSvg(points, acceptance, width = 240, height = 72) {
@@ -502,6 +396,311 @@ export function curveSvg(points, acceptance, width = 240, height = 72) {
     '<text x="2" y="' + (pad.top + 8) + '">' + esc(millimetres(yMax)) + "</text>" +
     '<text x="2" y="' + (height - pad.bottom) + '">' + esc(millimetres(yMin)) + "</text>" +
     "</svg>";
+}
+
+// The lenses (spec 2026-10-09 Cable net display, section 5) ----------------
+
+// A force as a label on the model: short, with its unit.
+export function forceLabel(value) {
+  if (value == null || !Number.isFinite(Number(value))) return "";
+  const n = Number(value);
+  if (Math.abs(n) >= 1000) return (n / 1000).toFixed(1) + " kN";
+  return (Math.abs(n) >= 100 ? n.toFixed(0) : n.toFixed(1)) + " N";
+}
+
+// A wire's tension against the chosen machine's ceiling: within up to 0.6 of
+// it, near below it, over above it; plain with no ceiling or no tension.
+export function prestressBand(tension, ceiling) {
+  if (tension == null || ceiling == null) return "plain";
+  if (tension > ceiling) return "over";
+  if (tension > 0.6 * ceiling) return "near";
+  return "within";
+}
+
+// Each wire's reel commands summed from the first stage to the instant on
+// screen, mm: negative reeled in, positive paid out. Zeros with no instant.
+export function reelSoFar(stages, stage) {
+  const list = stages || [];
+  const width = Math.max(0, ...list.map((s) => (s.wire_reel_commands || []).length));
+  const sums = new Array(width).fill(0);
+  const at = stage ? list.indexOf(stage) : -1;
+  for (let i = 0; i <= at; i += 1) {
+    (list[i].wire_reel_commands || []).forEach((command, w) => {
+      const value = Number(command);
+      if (Number.isFinite(value)) sums[w] += value;
+    });
+  }
+  return sums.map((value) => Math.round(value * 1e9) / 1e9);
+}
+
+// One decimal, and never a signed zero: -0.04 reads 0.0, not -0.0.
+function oneDecimal(value) {
+  const rounded = Math.round(Number(value) * 10) / 10;
+  return (rounded === 0 ? 0 : rounded).toFixed(1);
+}
+
+export function reelSide(mm) {
+  if (mm == null || !(Number(mm) !== 0)) return "still";
+  return Number(mm) < 0 ? "in" : "out";
+}
+
+function largest(values, count) {
+  return values.map((value, index) => ({ value, index }))
+    .filter((item) => item.value != null && item.value > 0)
+    .sort((a, b) => b.value - a.value || a.index - b.index)
+    .slice(0, count);
+}
+
+// The points a lens labels, with their text: every machine wire at its rim node
+// under Prestress and Reel, the largest node forces under Node force, the
+// largest member tensions under Wire tension. Sag labels nothing.
+// The largest first: where the wires crowd together, spreadLabels keeps the
+// first of a crowd, so the one shown is the largest.
+function largestFirst(rows) {
+  return rows.map((row, at) => ({ row, at }))
+    .sort((a, b) => Math.abs(b.row.value) - Math.abs(a.row.value) || a.at - b.at)
+    .map(({ row }) => row.target);
+}
+
+export function labelTargets(lens, demand, stage, ceiling, count = 20) {
+  if (!stage || !demand) return [];
+  const wires = demand.wires || [];
+  if (lens === "prestress") {
+    const rows = [];
+    (stage.wire_tensions || []).forEach((tension, index) => {
+      if (tension == null || !wires[index]) return;
+      rows.push({ value: Number(tension), target: { kind: "wire", index, node: wires[index].net_vertex,
+        text: forceLabel(tension), band: prestressBand(tension, ceiling) } });
+    });
+    return largestFirst(rows);
+  }
+  if (lens === "reel") {
+    // the side read from the figure shown, so a wire that reads 0.0 is still
+    return largestFirst(reelSoFar(demand.stages, stage).map((mm, index) => (!wires[index] ? null : {
+      value: mm, target: { kind: "wire", index, node: wires[index].net_vertex,
+        text: oneDecimal(mm) + " mm", side: reelSide(Number(oneDecimal(mm))) } })).filter(Boolean));
+  }
+  if (lens === "nodeforce") {
+    return largest((stage.node_residual || []).map(magnitude), count)
+      .map(({ value, index }) => ({ kind: "node", index, text: forceLabel(value) }));
+  }
+  if (lens === "tension") {
+    return largest((stage.member_tensions || []).map((v) => (v == null ? null : Number(v))), count)
+      .map(({ value, index }) => ({ kind: "member", index, text: forceLabel(value) }));
+  }
+  if (lens === "holds") {
+    // one label a batch the machine needs held, at the batch's first node
+    const held = holdsFor(demand, ceiling);
+    if (!held) return [];
+    return needsOf(demand).steps.slice(1, held.step + 1).filter((s) => (s.added || []).length)
+      .map((s) => ({ kind: "node", index: s.added[0], text: "+" + s.added.length }));
+  }
+  return [];
+}
+
+// Which labels to draw where they would print over one another: each screen
+// point ([x, y], or null for one off the view) in the order given; one that
+// falls within gapX across and gapY down of a label already kept is not drawn.
+export function spreadLabels(points, gapX, gapY) {
+  const kept = [];
+  return (points || []).map((point) => {
+    if (!point) return false;
+    if (kept.some((k) => Math.abs(k[0] - point[0]) < gapX && Math.abs(k[1] - point[1]) < gapY)) return false;
+    kept.push(point);
+    return true;
+  });
+}
+
+// The colours the banded lenses draw their arrows in (studio.js
+// updateCableNetVectors), which their legends key: within, near and over the
+// machine's ceiling, none scored; rope taken in and paid out.
+const BAND_COLOURS = { within: "#3f9e57", near: "#c99a2e", over: "#c24936", plain: "#9aa4b2",
+                       in: "#66aaff", out: "#c99a2e", hold: "#c24936", head: "#66aaff" };
+
+// The legend a lens draws: its quantity and unit, and its range at the
+// instant. Wire tension and Sag keep the legends they draw today: null.
+export function lensLegend(lens, demand, stage, ceiling, most = null) {
+  if (!stage) return null;
+  if (lens === "holds") {
+    const held = holdsFor(demand, ceiling);
+    const title = !held ? "holds: no machine" : held.count === 0 && held.covered ? "holds: none"
+      : "holds: " + (held.covered ? "" : "more than ") + held.count + " nodes, " +
+        (holdsReason(needsOf(demand).steps[0].prestress_newtons, most) === "machine"
+          ? "this machine short" : "every machine short");
+    return { title, min: "", max: "",
+             bands: [{ name: "hold", colour: BAND_COLOURS.hold },
+                     { name: "column head", colour: BAND_COLOURS.head }] };
+  }
+  if (lens === "nodeforce") {
+    const top = finiteMax((stage.node_residual || []).map(magnitude));
+    return { title: "node force, N", min: "0", max: top == null ? "0" : newtons(top) };
+  }
+  if (lens === "prestress") {
+    const top = finiteMax(stage.wire_tensions);
+    return { title: "wire tension, N" + (ceiling == null ? "" : ": within / near / over " + newtons(ceiling)),
+             min: "0", max: top == null ? "0" : newtons(top),
+             bands: ceiling == null ? [{ name: "no machine", colour: BAND_COLOURS.plain }]
+               : ["within", "near", "over"].map((name) => ({ name, colour: BAND_COLOURS[name] })) };
+  }
+  if (lens === "reel") {
+    const sums = reelSoFar(demand && demand.stages, stage);
+    return { title: "reel, mm: in / out", min: oneDecimal(Math.min(0, ...sums)),
+             max: oneDecimal(Math.max(0, ...sums)),
+             bands: [{ name: "in", colour: BAND_COLOURS.in }, { name: "out", colour: BAND_COLOURS.out }] };
+  }
+  return null;
+}
+
+// The card a click on a node opens (spec section 5.3): the node, its force and
+// its sag, held or grabbed; for a wire's rim node also the wire, its tension,
+// its own ceiling and margin from the scored row, and its reel so far.
+export function pickHtml(demand, stage, node, verdict) {
+  if (!demand || !stage || node == null) return "";
+  const residual = (stage.node_residual || [])[node];
+  const sag = (stage.node_sag_mm || [])[node];
+  // a held node (a wire's or a column's) has no sag of its own; its force is
+  // the support's, not an unbalanced one
+  const held = Array.isArray(stage.node_sag_mm) ? sag == null : residual == null;
+  const rows = [
+    ["Node", String(node)],
+    ["Force", held ? "held" : newtons(magnitude(residual || [0, 0, 0])) + " N"],
+    ["Sag", held || sag == null ? "held" : millimetres(sag) + " mm"],
+  ];
+  if (((demand.held || {}).actuators || []).includes(node)) rows.push(["Grabbed", "yes"]);
+  // one of the nodes the scored machine needs held (spec 2026-10-10, section 7)
+  const holds = holdsFor(demand, verdict && verdict.worst ? verdict.worst.ceiling : null);
+  if (holds && holds.nodes.includes(node)) rows.push(["Hold", "yes"]);
+  const wire = (demand.wires || []).findIndex((item) => item && item.net_vertex === node);
+  if (wire >= 0) {
+    const tension = (stage.wire_tensions || [])[wire];
+    rows.push(["Wire", String(demand.wires[wire].name)],
+              ["Tension", tension == null ? "not recorded" : newtons(tension) + " N"]);
+    const own = verdict && verdict.wires ? verdict.wires[wire] : null;
+    if (own) {
+      rows.push(["Ceiling", newtons(own.ceiling) + " N"],
+                ["Margin", own.margin == null ? "" : factor(own.margin) + "x"]);
+    }
+    rows.push(["Reel", (reelSoFar(demand.stages, stage)[wire] || 0).toFixed(1) + " mm"]);
+  }
+  return "<table>" + rows.map(([name, value]) =>
+    `<tr><th>${name}</th><td>${escapeHtml(value)}</td></tr>`).join("") + "</table>";
+}
+
+// The Graphs tab (spec 2026-10-09 Cable net display, section 4.3) ---------
+
+function finiteMax(values) {
+  let top = null;
+  for (const value of values || []) {
+    if (typeof value === "number" && Number.isFinite(value) && (top === null || value > top)) top = value;
+  }
+  return top;
+}
+
+function magnitude(vector) {
+  if (!Array.isArray(vector) || vector.length !== 3) return null;
+  const parts = vector.map(Number);
+  return parts.every(Number.isFinite) ? Math.hypot(...parts) : null;
+}
+
+// Each stage's worst wire tension (N), worst sag (mm) and worst node force
+// (N, the size of a node's unbalanced force), in the run's order; null where a
+// stage records none.
+export function stageSeries(demand) {
+  const stages = (demand && !isStale(demand) && demand.stages) || [];
+  return stages.map((stage) => ({
+    name: String(stage.name == null ? stage.stage : stage.name),
+    tension: finiteMax(stage.wire_tensions),
+    sag: finiteMax(stage.node_sag_mm),
+    force: finiteMax((stage.node_residual || []).map(magnitude)),
+  }));
+}
+
+// One series as inline SVG: the stages along the bottom, the value up the side
+// from zero, the line (a ceiling or the tolerance) dashed. Empty when the
+// series has no value at all.
+export function stageSvg(series, key, line, width = 240, height = 72) {
+  const values = (series || []).map((point) => point[key]);
+  const known = values.filter((value) => value != null);
+  if (!known.length) return "";
+  const text = key === "sag" ? millimetres : newtons;
+  const pad = { left: 40, right: 6, top: 6, bottom: 14 };
+  let top = Math.max(...known);
+  if (line != null && Number.isFinite(Number(line))) top = Math.max(top, Number(line));
+  if (!(top > 0)) top = 1;
+  const span = Math.max(1, values.length - 1);
+  const lx = (i) => pad.left + (i / span) * (width - pad.left - pad.right);
+  const ly = (y) => pad.top + (1 - y / top) * (height - pad.top - pad.bottom);
+  let path = "";
+  values.forEach((value, i) => {
+    if (value == null) return;
+    path += (path ? "L" : "M") + lx(i).toFixed(1) + " " + ly(value).toFixed(1) + " ";
+  });
+  const dashed = line == null || !Number.isFinite(Number(line)) ? "" :
+    '<line class="line" x1="' + pad.left + '" y1="' + ly(Number(line)).toFixed(1) +
+    '" x2="' + (width - pad.right) + '" y2="' + ly(Number(line)).toFixed(1) + '"/>';
+  const first = series[0].name;
+  const last = series[series.length - 1].name;
+  return '<svg class="cablenet-graph-svg" viewBox="0 0 ' + width + " " + height +
+    '" role="img">' +
+    '<line class="axis" x1="' + pad.left + '" y1="' + (height - pad.bottom) + '" x2="' +
+    (width - pad.right) + '" y2="' + (height - pad.bottom) + '"/>' +
+    '<path class="series" d="' + path.trim() + '"/>' + dashed +
+    '<text x="2" y="' + (pad.top + 8) + '">' + esc(text(top)) + "</text>" +
+    '<text x="2" y="' + (height - pad.bottom) + '">0</text>' +
+    '<text x="' + pad.left + '" y="' + (height - 3) + '">' + esc(first) + "</text>" +
+    '<text x="' + (width - pad.right) + '" y="' + (height - 3) + '" text-anchor="end">' +
+    esc(last) + "</text></svg>";
+}
+
+// The net in numbers, as rows of [name, value].
+export function netRows(demand) {
+  const sizing = sizingOf(demand) || {};
+  const held = (demand && demand.held) || {};
+  const courses = ((demand && demand.stages) || []).filter((s) => !isFrame(s));
+  // the last course that records the figure: a course with none hides nothing
+  const lastOf = (key) => [...courses].reverse().find((s) => s[key] != null) || {};
+  const last = { skin_load_sum_newtons: lastOf("skin_load_sum_newtons").skin_load_sum_newtons,
+                 net_weight_newtons: lastOf("net_weight_newtons").net_weight_newtons };
+  const tolerance = demand && (demand.tolerance_mm != null ? demand.tolerance_mm : demand.acceptance);
+  const count = (list) => String((list || []).length);
+  const stage = sizing.stage || (demand && demand.sizing_stage);
+  return [
+    ["Floor", newtons(wireFloor(demand).newtons) + (wireFloor(demand).newtons == null ? "" : " N")],
+    ["Tolerance", tolerance == null ? "not recorded" : millimetres(tolerance) + " mm"],
+    ["Skin", last.skin_load_sum_newtons == null ? "not recorded" : kilonewtons(last.skin_load_sum_newtons) + " kN"],
+    ["Net", last.net_weight_newtons == null ? "not recorded" : kilonewtons(last.net_weight_newtons) + " kN"],
+    ["Wires", count(held.wire_nodes)],
+    ["Column heads", count(held.column_heads)],
+    ["Grabbed nodes", count(held.actuators)],
+    ["Largest grabbed pull", sizing.worst_actuator_newtons == null ? "not recorded"
+      : newtons(sizing.worst_actuator_newtons) + " N"],
+    ["Worst sag", sizing.worst_sag_mm == null ? "not recorded" : millimetres(sizing.worst_sag_mm) + " mm"],
+    ["Sizing stage", stage == null ? "not recorded" : String(stage)],
+  ];
+}
+
+export function netHtml(demand) {
+  return '<table class="cablenet-net">' + netRows(demand).map(([name, value]) =>
+    `<tr><th>${name}</th><td>${esc(value)}</td></tr>`).join("") + "</table>";
+}
+
+// The whole tab: three graphs stage by stage, the walk, and the net.
+export function graphsHtml(demand, ceiling) {
+  if (!demand || isStale(demand)) return "";
+  const series = stageSeries(demand);
+  const acceptance = demand.acceptance == null ? null : Number(demand.acceptance);
+  const graphs = [
+    ["Worst wire tension, N", stageSvg(series, "tension", ceiling)],
+    ["Worst sag, mm", stageSvg(series, "sag", acceptance)],
+    ["Worst node force, N", stageSvg(series, "force", null)],
+    ["Sag against nodes grabbed, mm", demand.placement ? curveSvg(demand.placement.curve, acceptance) : ""],
+    ["Prestress needed against nodes held, N", needsOf(demand) ? stageSvg(
+      needsOf(demand).steps.map((s) => ({ name: String(s.count), prestress: s.prestress_newtons })),
+      "prestress", ceiling) : ""],
+  ];
+  return graphs.filter(([, svg]) => svg).map(([title, svg]) =>
+    `<div class="cablenet-graph"><div class="cablenet-graph-title">${title}</div>${svg}</div>`).join("") +
+    netHtml(demand);
 }
 
 // Annotation only: a number and its unit, never a comparison.
@@ -575,12 +774,63 @@ function table(head, rows) {
     "</table>";
 }
 
+// A readout of named values, one row each: the pop-up's headline figures
+// (spec 2026-10-09 Cable net display, section 8: tables, never a paragraph).
+// Each value comes escaped by its caller.
+function keyed(rows) {
+  return "<table>" + rows.map(([name, value]) =>
+    `<tr><th>${escapeHtml(name)}</th><td>${value}</td></tr>`).join("") + "</table>";
+}
+
+// The chosen machine's limits a wire, N, each with its part; the one that
+// binds is marked (spec 2026-10-09 Cable net display, section 4.1).
+const TERM_NAMES = { "rope tension": "Wire", anchor: "Anchor chain", "spool rope tension": "Spool rope",
+                     sheave: "Pulleys", "gearbox torque": "Gearbox", "motor torque": "Motor" };
+
+export function limitsHtml(terms) {
+  if (!terms || !terms.length) return "";
+  return table(["Limit", "N a wire", "Part", ""], terms.map((term) => [
+    escapeHtml(TERM_NAMES[term.name] || term.name), newtons(term.newtons),
+    escapeHtml(term.part == null ? "" : term.part), term.binds ? "binds" : ""]));
+}
+
+// Every motor at the other choices: one row each, the chosen one marked, a row
+// a click chooses.
+export function motorsHtml(rows, chosen, demand) {
+  const head = ["Motor", "Ratio", "N a wire", "Margin", "", "Price", "Holds", "Sag alone, mm"];
+  const body = (rows || []).map((row) => {
+    const choice = row.choices || {};
+    const motor = escapeHtml(choice.motor);
+    const open = `<tr data-motor="${motor}"${choice.motor === chosen ? ' class="chosen"' : ""}>`;
+    if (row.refused) return open + `<td>${motor}</td><td colspan="7">${escapeHtml(row.refused)}</td></tr>`;
+    const worst = row.verdict && row.verdict.worst;
+    // what this motor's ceiling needs held, and the sag it leaves with the
+    // column heads alone: what a change of motor does to the accuracy
+    const held = worst ? holdsFor(demand, worst.ceiling) : null;
+    const sag = worst ? sagAt(demand, worst.ceiling) : null;
+    const cells = [motor, ratioLabel(choice.ratio), worst ? newtons(worst.ceiling) : "",
+                   worst && worst.margin != null ? factor(worst.margin) + "x" : "",
+                   mark(row.verdict && row.verdict.holds),
+                   row.price ? pounds(row.price.priced_gbp) : "",
+                   held == null ? "" : held.count === 0 && held.covered ? "none"
+                     : (held.covered ? "" : "more than ") + held.count,
+                   sag == null ? "" : millimetres(sag)];
+    return open + cells.map((cell) => `<td>${cell}</td>`).join("") + "</tr>";
+  });
+  return "<table><tr>" + head.map((h) => `<th>${h}</th>`).join("") + "</tr>" + body.join("") + "</table>";
+}
+
+export function eyeBoltHtml(angle) {
+  return `<table><tr><th>Eye bolt angle</th><td>${Number(angle).toFixed(0)}°, assumed</td></tr></table>`;
+}
+
 export function machineHtml(row, parts) {
   if (!row) return "";
-  if (row.refused) return `<p>${escapeHtml(row.refused)}</p>`;
+  if (row.refused) return `<div class="cablenet-warning">${escapeHtml(row.refused)}</div>`;
   const c = row.configuration;
   const chain = (c.chain || []).map(escapeHtml).join(" + ");
-  return `<p><b>${escapeHtml(row.described)}</b></p>` + table(["Part", "Value"], [
+  return table(["Part", "Value"], [
+    ["Machine", escapeHtml(row.described)],
     ["Driver", escapeHtml(c.drive)],
     ["Gearbox", escapeHtml(c.gearbox)],
     ["Pulleys", c.sheave == null ? "none, 1 fall" : `${escapeHtml(c.sheave)}, ${c.reeve_factor} falls`],
@@ -591,13 +841,19 @@ export function machineHtml(row, parts) {
   ]);
 }
 
-export function verdictHtml(verdict) {
+// The machine's verdict on the run as designed: its wires at the run's
+// prestress with the run's nodes held, said apart from the menu's Holds
+// (final review 1).
+export function verdictHtml(verdict, demand) {
   if (!verdict) return "";
   const worst = verdict.worst;
-  const head = worst
-    ? `<p><b>${mark(verdict.holds)} ${factor(worst.margin)}x</b> ${escapeHtml(worst.limit)}, ` +
-      `${escapeHtml(worst.part)}, wire ${worst.wire}, pairing ${escapeHtml(verdict.pairing)}</p>`
-    : `<p><b>${mark(verdict.holds)}</b> no tension</p>`;
+  const held = needsOf(demand) ? [["Nodes held",
+    String((((demand.held || {}).actuators) || []).length)]] : [];
+  const head = keyed(worst
+    ? [["Wires hold", mark(verdict.holds)], ["Margin", factor(worst.margin) + "x"],
+       ["Limit", escapeHtml(worst.limit)], ["Part", escapeHtml(worst.part)],
+       ["Worst wire", String(worst.wire)], ["Pairing", escapeHtml(verdict.pairing)], ...held]
+    : [["Wires hold", mark(verdict.holds)], ["Tension", "none"], ...held]);
   const rows = verdict.machines.map((m) => {
     const w = verdict.wires[m.worst_wire];
     return [String(m.machine + 1), String(m.worst_wire), newtons(w.tension),
@@ -659,23 +915,25 @@ export function priceHtml(price) {
     sourced(l), escapeHtml(l.quoted || "")]) : [];
   const boxes = price.cabinets.cabinets.map((c, i) => [String(i + 1), String(c.motors),
     pounds(c.priced_gbp), String(c.unpriced)]);
-  return `<p><b>${pounds(price.priced_gbp)}${floor ? " floor" : ""}</b>, ` +
-    `${price.cabinets.cabinets.length} cabinets, exc VAT</p>` +
+  return keyed([["Study total", pounds(price.priced_gbp) + (floor ? " floor" : "")],
+                 ["Cabinets", String(price.cabinets.cabinets.length)], ["VAT", "excluded"]]) +
     table(["Part", "Count", "Unit", "Line"], study) +
     (first ? table(["Machine", "Motors", "Total", "Unpriced"], boxes) +
-      `<p>Cabinet, machine 1: ${pounds(first.priced_gbp)}, ${first.unpriced} lines unpriced</p>` +
+      keyed([["Cabinet, machine 1", pounds(first.priced_gbp)],
+             ["Unpriced lines", String(first.unpriced)]]) +
       table(["Part", "Count", "Rule", "Unit", "Line", "Supplier", "Quoted"], cabinet) : "");
 }
 
 export function recommendHtml(result) {
   if (!result) return "";
+  const binds = (pick) => escapeHtml([pick.limit, pick.part].filter(Boolean).join(", "));
   if (result.holds) {
-    return `<p><b>${escapeHtml(result.described)}</b>, ${pounds(result.priced_gbp)}, ` +
-      `${escapeHtml(result.limit || "")} ${escapeHtml(result.part || "")} ` +
-      `${result.margin == null ? "" : factor(result.margin) + "x"}` +
-      `${result.confirm_run ? ", run to confirm" : ""}</p>`;
+    return keyed([["Pick", escapeHtml(result.described)], ["Price", pounds(result.priced_gbp)],
+                  ["Binds", binds(result)],
+                  ["Margin", result.margin == null ? "" : factor(result.margin) + "x"],
+                  ...(result.confirm_run ? [["Run to confirm", "yes"]] : [])]);
   }
   const c = result.closest;
-  return `<p><b>none holds</b>${c ? `; closest ${escapeHtml(c.described)}, ` +
-    `${escapeHtml(c.limit)} ${escapeHtml(c.part)} ${factor(c.margin)}x` : ""}</p>`;
+  return keyed([["Pick", "none holds"], ...(c ? [["Closest", escapeHtml(c.described)],
+    ["Binds", binds(c)], ["Margin", factor(c.margin) + "x"]] : [])]);
 }

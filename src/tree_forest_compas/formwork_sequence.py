@@ -78,6 +78,7 @@ class Capture(NamedTuple):
                             # just taut with its node on the anchor, mm
     let_out: np.ndarray     # (rim,) how far each rim node is let out of its anchor, mm
     tree_x: np.ndarray      # (k, 3) the tree nodes, mm
+    ground: tuple           # the net nodes the ground holds, ascending
     tree_axial: np.ndarray  # (t,) N, tension positive
     tree_utilisation: np.ndarray  # (t,)
     tree_bending: dict      # tree node -> (3,) the load its joint cannot pass on
@@ -146,6 +147,7 @@ def _capture(model, rest, contacts, reel, target, tree_x, phase, time, row, quar
         tree_x=np.asarray(tree_x, dtype=float), tree_axial=loads.axial,
         tree_utilisation=tr.utilisation(tree_x, model.tree_members, loads.axial, section),
         tree_bending=loads.bending,
+        ground=tuple(sorted(int(node) for node in contacts.resting)),
         solver=rest.solver, iterations=rest.iterations, leftover=rest.leftover,
     )
 

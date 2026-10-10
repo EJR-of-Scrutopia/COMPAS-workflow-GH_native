@@ -30,29 +30,30 @@ def _function_body(js, name):
 
 
 def test_the_controller_fills_the_skeleton_and_judges_through_the_model():
-    for ident in ("cablenet-run", "cablenet-run-status", "cablenet-prestress", "cablenet-speed",
+    for ident in ("cablenet-run", "cablenet-run-status", "cablenet-speed",
                   "cablenet-tolerance", "cablenet-tolerance-value",
                   "cablenet-speed-note", "cablenet-demand", "cablenet-motor", "cablenet-ratio",
                   "cablenet-pulley", "cablenet-rope", "cablenet-wires", "cablenet-recommend",
                   "cablenet-recommend-note", "cablenet-machine", "cablenet-holds",
                   "cablenet-travel", "cablenet-buy", "cablenet-price",
-                  "cablenet-grab", "cablenet-export", "cablenet-export-choose",
+                  "cablenet-graphs", "cablenet-limits", "cablenet-motors",
+                  "cablenet-wires-value", "cablenet-popup", "cablenet-popup-toggle",
+                  "cablenet-popup-close", "cablenet-export", "cablenet-export-choose",
                   "cablenet-export-path", "cablenet-export-result"):
         assert '"{}"'.format(ident) in JS, ident
     assert 'from "./cablenet_model.js"' in JS
-    # newtons is not among them: the controller writes no force of its own, the
-    # prestress sentence having moved into the model beside the rope's
-    for name in ("demandSentences", "grabText", "curveSvg", "rpmText", "choiceOptions",
-                 "validChoices", "machineHtml", "verdictHtml", "travelHtml", "buyHtml",
-                 "priceHtml", "recommendHtml", "ropeMismatch", "prestressNote", "toleranceNote"):
+    # newtons is not among them: the controller writes no force of its own
+    for name in ("menuAnswers", "answersHtml", "runWarnings", "graphsHtml", "rpmText",
+                 "choiceOptions", "validChoices", "machineHtml", "verdictHtml", "travelHtml",
+                 "buyHtml", "priceHtml", "recommendHtml", "limitsHtml", "motorsHtml",
+                 "eyeBoltHtml"):
         assert name in JS, name
     assert "export function mountCableNet({" in JS
 
 
 def test_the_run_sends_the_tolerance_dial_and_the_demand_says_when_it_has_moved():
     assert "tolerance_mm: Number(el.tolerance.value)" in _function_body(JS, "startRun")
-    assert "toleranceNote(demand, Number(el.tolerance.value))" in _function_body(
-        JS, "renderDemand")
+    assert "tolerance: Number(el.tolerance.value)" in _function_body(JS, "renderDemand")
     html = (STATIC / "index.html").read_text(encoding="utf-8")
     # 20 mm: the placement tolerance the T1 brief sets at full scale
     assert ('<input id="cablenet-tolerance" type="range" min="1" max="100" step="1" '
@@ -102,21 +103,40 @@ def test_a_null_or_empty_option_is_left_out_of_every_query_and_body():
 def test_the_speed_dial_only_annotates():
     body = _function_body(JS, "annotateSpeed")
     assert "cablenet-speed-note" in body
-    for ident in ("cablenet-holds", "cablenet-grab", "cablenet-demand"):
+    for ident in ("cablenet-holds", "cablenet-graphs", "cablenet-demand"):
         assert ident not in body, ident
+
+
+def test_the_prestress_is_worked_out_and_the_run_sends_the_machines_ceiling():
+    """Spec 2026-10-10 prestress and holds, sections 4 and 5: no Prestress
+    dial; the run is designed for the chosen machine's ceiling, or the
+    strongest machine's while none is scored; the motors' new columns read the
+    needs table."""
+
+    html = (STATIC / "index.html").read_text(encoding="utf-8")
+    assert 'id="cablenet-prestress"' not in html
+    assert "el.prestress" not in JS and "cablenet-prestress" not in JS
+    chosen = _function_body(JS, "chosenCeiling")
+    assert "panel.row.verdict.worst.ceiling" in chosen
+    assert "panel.strongest ? panel.strongest.ceiling_newtons : null" in chosen
+    run = _function_body(JS, "startRun")
+    assert "ceiling_newtons: chosenCeiling() == null ? undefined : chosenCeiling()," in run
+    assert "prestress:" not in run
+    assert "motorsHtml(scored.rows, panel.choices.motor, panel.demand)" in JS
 
 
 def test_each_dial_keeps_its_reading_beside_the_track():
     """The interface language: a dial states the value it has, in a reading
     named <slider-id>-value, written by whoever owns the dial."""
 
-    for ident in ("cablenet-prestress-value", "cablenet-speed-value"):
+    for ident in ("cablenet-tolerance-value", "cablenet-speed-value", "cablenet-wires-value"):
         assert '"{}"'.format(ident) in JS, ident
     body = _function_body(JS, "showDials")
-    assert "el.prestressValue.textContent = el.prestress.value" in body
+    assert "el.toleranceValue.textContent = el.tolerance.value" in body
     assert "el.speedValue.textContent = el.speed.value" in body
-    # and every move of either dial writes its reading
-    for dial in ("prestress", "speed"):
+    assert "el.wiresValue.textContent = el.wires.value" in body
+    # and every move of a dial writes its reading
+    for dial in ("tolerance", "speed", "wires"):
         listener = JS[JS.index('el.{}.addEventListener("input"'.format(dial)):]
         assert "showDials();" in listener[:listener.index("});")], dial
 
@@ -191,23 +211,147 @@ def test_recommend_searches_the_choices_and_fills_the_selects():
 
 def test_the_machine_verdict_travel_wire_and_price_are_the_models_tables():
     body = _function_body(JS, "renderHolds")
-    for call in ("machineHtml(row, panel.parts)", "verdictHtml(row.verdict)",
+    for call in ("machineHtml(row, panel.parts)", "verdictHtml(row.verdict, panel.demand)",
                  "travelHtml(row.travel)"):
         assert call in body, call
     assert "verdictOf" not in JS
 
 
-def test_the_demand_readout_carries_the_models_two_notes_and_follows_the_chosen_rope():
-    """The rope the analysis ran for and the prestress it ran at are said in the
-    model's words beside the demand. The rope note depends on the system chosen
-    here, so every change of system redraws the readout: each of them ends in
-    refresh."""
+def test_the_menu_answers_in_values_and_warns_in_one_line_each():
+    """Needed, Gives and Most, then a line for each dial or wire the run on
+    screen differs from (spec 2026-10-09 Cable net display, section 3). The
+    answers follow the machine chosen, so the scored row redraws them."""
 
     body = _function_body(JS, "renderDemand")
-    assert "ropeMismatch(panel.parts, demand, { rope: panel.choices && panel.choices.rope })" in body
-    assert "prestressNote(demand, Number(el.prestress.value))" in body
-    assert "the dial reads" not in JS, "that sentence is the model's, not the controller's"
+    assert "answersHtml(menuAnswers(demand, panel.row, panel.strongest))" in body
+    assert ("runWarnings(demand, { ceiling: chosenCeiling(), "
+            "tolerance: Number(el.tolerance.value) }, panel.parts, "
+            "panel.choices && panel.choices.rope)") in body
+    assert '<div class="cablenet-warning">${esc(line)}</div>' in body
+    assert "<p>" not in body
     assert "renderDemand();" in _function_body(JS, "refresh")
+    assert "renderDemand();" in _function_body(JS, "renderHolds")
+    assert "panel.strongest = scored.strongest || null;" in _function_body(JS, "score")
+
+
+def test_the_graphs_tab_is_the_models_and_follows_the_demand_and_the_machine():
+    body = _function_body(JS, "renderGraphs")
+    assert "el.graphs.innerHTML = graphsHtml(panel.demand, ceiling);" in body
+    assert "renderGraphs();" in _function_body(JS, "loadDemand")
+    assert "renderGraphs();" in _function_body(JS, "renderHolds")
+
+
+def test_the_menu_is_short_and_the_mechanism_cost_and_graphs_are_in_the_pop_up():
+    """Spec 2026-10-09 Cable net display, sections 3 and 4."""
+
+    html = (STATIC / "index.html").read_text(encoding="utf-8")
+    opening = '<details id="cablenet-section">'
+    section = html[html.index(opening):]
+    section = section[:section.index("</details>")]
+    order = ["cablenet-run", "cablenet-tolerance", "cablenet-wires",
+             "cablenet-demand", "cablenet-popup-toggle", "cablenet-lenses", "cablenet-stage"]
+    places = [section.index('id="{}"'.format(ident)) for ident in order]
+    assert places == sorted(places)
+    assert '<input id="cablenet-wires" type="range" min="1" max="7" step="1" value="1">' in section
+    for moved in ("cablenet-motor", "cablenet-recommend", "cablenet-machine", "cablenet-price",
+                  "cablenet-export", "cablenet-speed", "cablenet-graphs"):
+        assert 'id="{}"'.format(moved) not in section, moved
+    popup = html[html.index('<div id="cablenet-popup" class="hidden">'):]
+    popup = popup[:popup.index("<!-- the end of the cable net pop-up -->")]
+    assert html.index('<div id="cablenet-popup"') > html.index("</aside>"), "outside the side menu"
+    for tab, members in (("cn-mechanism", ("cablenet-motor", "cablenet-ratio", "cablenet-pulley",
+                                            "cablenet-rope", "cablenet-recommend",
+                                            "cablenet-limits", "cablenet-motors",
+                                            "cablenet-machine", "cablenet-holds",
+                                            "cablenet-travel", "cablenet-speed")),
+                         ("cn-cost", ("cablenet-price", "cablenet-buy", "cablenet-export")),
+                         ("cn-graphs", ("cablenet-graphs",))):
+        assert '<button data-cn-tab="{}"'.format(tab) in popup, tab
+        pane = popup[popup.index('<div id="{}"'.format(tab)):]
+        pane = pane[:pane.index("<!-- /{} -->".format(tab))]
+        for ident in members:
+            assert 'id="{}"'.format(ident) in pane, (tab, ident)
+
+
+def test_the_pop_up_opens_and_shuts_from_the_menu_and_remembers_its_tab():
+    body = _function_body(JS, "setPopup")
+    assert 'el.popup.classList.toggle("hidden", !open);' in body
+    assert "if (open) onPopup();" in body and "savePopup();" in body
+    assert 'el.popupToggle.addEventListener("click", () => setPopup(el.popup.classList.contains("hidden")));' in JS
+    assert 'el.popupClose.addEventListener("click", () => setPopup(false));' in JS
+    assert 'const POPUP_KEY = "vaulted-cablenet-popup";' in JS
+    tab = _function_body(JS, "showTab")
+    assert 'pane.classList.toggle("hidden", pane.id !== id)' in tab and "savePopup();" in tab
+    assert ("return { reload, clear, closePopup: () => setPopup(false), "
+            "choices: () => panel.choices };") in JS
+
+
+def test_the_pop_up_takes_the_left_from_the_data_sheet_and_the_live_graphs():
+    mount = STUDIO[STUDIO.index("const cableNet = mountCableNet({"):]
+    hand = mount[mount.index("onPopup: () => {"):]
+    hand = hand[:hand.index("\n  },")]
+    assert 'document.getElementById("data-panel").classList.add("hidden");' in hand
+    assert "setGraphsTucked(true);" in hand
+    data = STUDIO[STUDIO.index('document.getElementById("data-button").addEventListener("click"'):]
+    data = data[:data.index("});")]
+    assert "cableNet.closePopup();" in data
+
+
+def test_every_motor_is_scored_only_while_the_mechanism_tab_is_in_view():
+    body = _function_body(JS, "renderMotors")
+    assert 'el.popup.classList.contains("hidden") || panel.tab !== "cn-mechanism"' in body
+    assert "validChoices(panel.options, { ...panel.choices, motor: motor.key })" in body
+    assert "++panel.motorsTicket" in body and body.count("mine !== panel.motorsTicket") == 2
+    assert "motorsHtml(scored.rows, panel.choices.motor, panel.demand)" in body
+    assert "renderMotors();" in _function_body(JS, "renderHolds")
+    click = JS[JS.index('el.motors.addEventListener("click"'):]
+    click = click[:click.index("\n  });")]
+    assert 'event.target.closest("tr[data-motor]")' in click and "refresh();" in click
+
+
+def test_every_motor_is_scored_once_for_what_it_depends_on():
+    """Review 6: the rows depend on the study, its options, the choices but
+    the motor, and the demand; opening the pop-up again or choosing a motor
+    redraws them from what was scored, and clear() forgets it."""
+
+    body = _function_body(JS, "renderMotors")
+    assert "const key = JSON.stringify([studyName(), body, panel.demandTicket]);" in body
+    assert "if (key === panel.motorsKey && panel.motorsRows) {" in body
+    assert "panel.motorsKey = key;" in body and "panel.motorsRows = scored.rows;" in body
+    clear = _function_body(JS, "clear")
+    assert "panel.motorsKey = null;" in clear and "panel.motorsRows = null;" in clear
+
+
+def test_the_export_sends_the_machines_ceiling_and_the_most_for_the_holds_file():
+    # spec 2026-10-10 prestress and holds, section 8
+    start = JS.index("cablenet/exports`, {")
+    call = JS[start:JS.index("});", start)]
+    assert "ceiling_newtons: chosenCeiling()," in call
+    assert "most_newtons: panel.strongest ? panel.strongest.ceiling_newtons : null," in call
+
+
+def test_the_wires_slider_chooses_wires_a_motor():
+    listener = JS[JS.index('el.wires.addEventListener("change"'):]
+    listener = listener[:listener.index("\n  });")]
+    assert "wires_per_motor: Number(el.wires.value)" in listener
+    assert "refresh();" in listener
+    assert "el.wires.value = String(panel.choices.wires_per_motor);" in _function_body(
+        JS, "renderChoices")
+
+
+def test_the_chosen_motor_is_marked_by_more_than_a_tint():
+    # found on screen: the chosen row's colour alone read like every other row
+    css = (STATIC / "studio.css").read_text(encoding="utf-8")
+    rule = css[css.index("#cablenet-motors tr.chosen td {"):]
+    rule = rule[:rule.index("}")]
+    assert "background: var(--raised);" in rule and "font-weight: 600;" in rule
+
+
+def test_the_limits_and_the_eye_bolt_are_tables_and_no_readout_is_a_paragraph():
+    body = _function_body(JS, "renderHolds")
+    assert "limitsHtml(row.terms)" in body
+    assert "eyeBoltHtml(ASSUMED_ANGLE_DEGREES)" in body
+    assert "<p>" not in JS
 
 
 def test_a_late_demand_cannot_replace_a_newer_one():
@@ -222,13 +366,15 @@ def test_a_late_demand_cannot_replace_a_newer_one():
 
 
 def test_clear_empties_everything_that_belongs_to_the_study_on_screen():
-    assert "return { reload, clear };" in JS
+    assert ("return { reload, clear, closePopup: () => setPopup(false), "
+            "choices: () => panel.choices };") in JS
     # and a page without the section hands back one too, so the studio's call cannot throw
-    assert "return { reload: async () => {}, clear: () => {} };" in JS
+    assert "return { reload: async () => {}, clear: () => {}, closePopup: () => {} };" in JS
     body = _function_body(JS, "clear")
     for dropped in ("panel.demand = null", "panel.row = null", "panel.demandNote = null"):
         assert dropped + ";" in body, dropped
-    for emptied in ('el.demand.innerHTML = ""', 'el.holds.innerHTML = ""', 'el.grab.innerHTML = ""',
+    for emptied in ('el.demand.innerHTML = ""', 'el.holds.innerHTML = ""', 'el.graphs.innerHTML = ""',
+                    'el.limits.innerHTML = ""', 'el.motors.innerHTML = ""',
                     'el.runStatus.textContent = ""', 'el.recommendNote.innerHTML = ""',
                     'el.result.innerHTML = ""'):
         assert emptied + ";" in body, emptied
@@ -253,7 +399,7 @@ def test_export_is_off_while_it_writes_and_given_back_with_its_reason():
 
 def test_every_server_string_is_escaped_and_nothing_is_rounded_to_whole_newtons():
     # the tables escape inside the model (test_cablenet_choices.py)
-    assert JS.count("esc(") >= 11
+    assert JS.count("esc(") >= 9
     assert not re.search(r"toFixed\(\d\)\}? N\b", JS)
 
 

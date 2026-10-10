@@ -121,7 +121,21 @@ def test_a_row_goes_on_in_four_quarters_in_the_order_the_animation_drops_its_pie
         for node, z in zip(quarter["nodes"], quarter["z"]):
             got[node] = z
         assert got == pytest.approx([load[2] for load in expected])
+    # each quarter names the faces it placed, for the Formwork tab's skin
+    # (spec 2026-10-10 formwork tab, section 4)
+    assert [q["faces"] for q in quarters] == [[2], [0], [3], [1]]
     # and together the four add exactly the row's weight
     whole = cablenet.stage_node_loads(arrays["vertices"], arrays["faces"], plan[:1], 0.02,
                                       2000.0)[0]
     assert sum(quarters[-1]["z"]) == pytest.approx(sum(load[2] for load in whole))
+
+
+def test_the_request_carries_the_cut_meshs_faces():
+    # the faces the skin goes on, every one of the cut's, as node ids (spec
+    # 2026-10-10 formwork tab, section 4)
+    arrays = geometry.mesh_arrays(tiny_contract())
+    inputs = formwork_sim.Inputs([], [], [], [], [], [], [])
+    request = formwork_sim.request_from(inputs, arrays, {"keys": [], "order": [], "assignment": []},
+                                        [], 0.02, 2000.0, EA, 0.01, 300.0, 1, 3.2)
+    assert request["faces"] == [[int(i) for i in face] for face in arrays["faces"]]
+    assert request["faces"] and all(isinstance(i, int) for face in request["faces"] for i in face)

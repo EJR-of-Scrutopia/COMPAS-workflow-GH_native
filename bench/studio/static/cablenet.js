@@ -1,7 +1,7 @@
 // The Cable net section's controller: it fetches, fills the skeleton in
-// index.html, runs the analysis and writes the exports. Every judgement and
-// every sentence comes from cablenet_model.js, which runs under node; this
-// file only wires them to the page. studio.js owns the lenses and is told
+// index.html, runs the analysis and writes the exports. Every figure and table
+// comes from cablenet_model.js, which runs under node; this file only wires
+// them to the page. studio.js owns the lenses and is told
 // through onDemand when a demand document arrives.
 //
 // The speed dial annotates and never judges: no prototype has said what rope
@@ -11,9 +11,9 @@
 // text: numbers, marks, tables and part names.
 
 import {
-  buyHtml, choiceOptions, curveSvg, demandSentences, grabText, isStale, machineHtml,
-  prestressNote, priceHtml, recommendHtml, ropeMismatch, ropeWound, rpmText,
-  toleranceNote, travelHtml, validChoices, verdictHtml,
+  answersHtml, buyHtml, choiceOptions, eyeBoltHtml, graphsHtml, limitsHtml, machineHtml,
+  menuAnswers, motorsHtml, priceHtml, recommendHtml, ropeWound, rpmText, runWarnings,
+  travelHtml, validChoices, verdictHtml,
 } from "./cablenet_model.js";
 
 // The wire's angle to its eye bolt's axis is not recorded in the export, so
@@ -71,19 +71,21 @@ function sentOptions(options) {
   return sent;
 }
 
-export function mountCableNet({ studyName, studyOptions, onDemand, onCeiling }) {
+export function mountCableNet({ studyName, studyOptions, onDemand, onCeiling, onPopup = () => {} }) {
   const el = {
     run: byId("cablenet-run"), runStatus: byId("cablenet-run-status"),
-    prestress: byId("cablenet-prestress"), prestressValue: byId("cablenet-prestress-value"),
     tolerance: byId("cablenet-tolerance"), toleranceValue: byId("cablenet-tolerance-value"),
     speed: byId("cablenet-speed"), speedValue: byId("cablenet-speed-value"),
     speedNote: byId("cablenet-speed-note"), demand: byId("cablenet-demand"),
     motor: byId("cablenet-motor"), ratio: byId("cablenet-ratio"), pulley: byId("cablenet-pulley"),
     rope: byId("cablenet-rope"), wires: byId("cablenet-wires"),
+    wiresValue: byId("cablenet-wires-value"),
     recommend: byId("cablenet-recommend"), recommendNote: byId("cablenet-recommend-note"),
     machine: byId("cablenet-machine"), holds: byId("cablenet-holds"),
     travel: byId("cablenet-travel"), buy: byId("cablenet-buy"), price: byId("cablenet-price"),
-    grab: byId("cablenet-grab"),
+    graphs: byId("cablenet-graphs"), limits: byId("cablenet-limits"), motors: byId("cablenet-motors"),
+    popup: byId("cablenet-popup"), popupToggle: byId("cablenet-popup-toggle"),
+    popupClose: byId("cablenet-popup-close"),
     exportButton: byId("cablenet-export"), choose: byId("cablenet-export-choose"),
     path: byId("cablenet-export-path"), result: byId("cablenet-export-result"),
   };
@@ -92,16 +94,19 @@ export function mountCableNet({ studyName, studyOptions, onDemand, onCeiling }) 
   const missing = Object.keys(el).filter((name) => !el[name]);
   if (missing.length) {
     console.warn(`the cable net section is not on this page: no element for ${missing.join(", ")}`);
-    return { reload: async () => {}, clear: () => {} };
+    return { reload: async () => {}, clear: () => {}, closePopup: () => {} };
   }
+  const tabs = [...document.querySelectorAll("#cablenet-tabs [data-cn-tab]")];
+  const panes = [...document.querySelectorAll("#cablenet-popup .cn-tab")];
 
   // A ticket for each kind of answer keeps a late one from overwriting a newer:
   // the verdict's (which the parts and the demand move), the speed note's, and
   // the demand's own. watcher is the interval watching a run, if one is.
   const panel = {
     parts: null, options: null, choices: null,
-    demand: null, demandNote: null, row: null, watcher: null,
-    ticket: 0, speedTicket: 0, demandTicket: 0, speed: Number(el.speed.value),
+    demand: null, demandNote: null, row: null, strongest: null, watcher: null,
+    ticket: 0, speedTicket: 0, demandTicket: 0, motorsTicket: 0, speed: Number(el.speed.value),
+    tab: "cn-mechanism",
   };
 
   async function loadParts() {
@@ -128,8 +133,9 @@ export function mountCableNet({ studyName, studyOptions, onDemand, onCeiling }) 
     } catch (_) { /* a private window */ }
   }
 
+  // the four choices in the pop-up; wires a motor is the menu's slider
   const SELECTS = [["motor", "motor"], ["ratio", "ratio"], ["pulley", "pulley"],
-                   ["rope", "rope"], ["wires", "wires_per_motor"]];
+                   ["rope", "rope"]];
 
   function renderChoices() {
     const offered = choiceOptions(panel.options, panel.parts, panel.choices);
@@ -144,6 +150,8 @@ export function mountCableNet({ studyName, studyOptions, onDemand, onCeiling }) 
         control.appendChild(option);
       }
     }
+    el.wires.value = String(panel.choices.wires_per_motor);
+    el.wiresValue.textContent = el.wires.value;
   }
 
   function readChoice(key, value) {
@@ -163,6 +171,91 @@ export function mountCableNet({ studyName, studyOptions, onDemand, onCeiling }) 
     });
   }
 
+  el.wires.addEventListener("input", () => {
+    showDials();
+  });
+  el.wires.addEventListener("change", () => {
+    if (!panel.choices) return;
+    panel.choices = validChoices(panel.options,
+                                 { ...panel.choices, wires_per_motor: Number(el.wires.value) });
+    saveChoices();
+    renderChoices();
+    refresh();
+  });
+
+  // The pop-up on the left (spec 2026-10-09 Cable net display, section 4), open
+  // or shut and on the tab this browser last left it. Opening it takes the
+  // left from the data sheet and the live graphs (onPopup).
+  const POPUP_KEY = "vaulted-cablenet-popup";
+
+  function savePopup() {
+    try {
+      localStorage.setItem(POPUP_KEY, JSON.stringify(
+        { open: !el.popup.classList.contains("hidden"), tab: panel.tab }));
+    } catch (_) { /* a private window */ }
+  }
+
+  function showTab(id) {
+    panel.tab = id;
+    for (const button of tabs) button.classList.toggle("active", button.dataset.cnTab === id);
+    for (const pane of panes) pane.classList.toggle("hidden", pane.id !== id);
+    savePopup();
+    renderMotors();
+  }
+
+  function setPopup(open) {
+    el.popup.classList.toggle("hidden", !open);
+    el.popupToggle.classList.toggle("active", open);
+    if (open) onPopup();
+    savePopup();
+    renderMotors();
+  }
+
+  for (const button of tabs) button.addEventListener("click", () => showTab(button.dataset.cnTab));
+  el.popupToggle.addEventListener("click", () => setPopup(el.popup.classList.contains("hidden")));
+  el.popupClose.addEventListener("click", () => setPopup(false));
+
+  // Every motor at the other choices, scored only while the Mechanism tab is in
+  // view; a click on a row chooses its motor.
+  async function renderMotors() {
+    if (el.popup.classList.contains("hidden") || panel.tab !== "cn-mechanism") return;
+    if (!panel.choices || !panel.options || !studyName()) { el.motors.innerHTML = ""; return; }
+    const mine = ++panel.motorsTicket;
+    const choices = panel.options.motors.map((motor) =>
+      validChoices(panel.options, { ...panel.choices, motor: motor.key }));
+    const options = studyOptions();
+    const body = { choices, angle_degrees: ASSUMED_ANGLE_DEGREES };
+    if (options) body.options = sentOptions(options);
+    // scored once for what the rows depend on (the study, its options, every
+    // choice but the motor, the demand): opening the tab again or choosing a
+    // motor redraws them from what was scored
+    const key = JSON.stringify([studyName(), body, panel.demandTicket]);
+    if (key === panel.motorsKey && panel.motorsRows) {
+      el.motors.innerHTML = motorsHtml(panel.motorsRows, panel.choices.motor, panel.demand);
+      return;
+    }
+    try {
+      const scored = await postJson(
+        `/api/studies/${encodeURIComponent(studyName())}/cablenet/configurations`, body);
+      if (mine !== panel.motorsTicket) return;
+      panel.motorsKey = key;
+      panel.motorsRows = scored.rows;
+      el.motors.innerHTML = motorsHtml(scored.rows, panel.choices.motor, panel.demand);
+    } catch (error) {
+      if (mine !== panel.motorsTicket) return;
+      el.motors.innerHTML = `<div class="cablenet-warning">${esc(error.message)}</div>`;
+    }
+  }
+
+  el.motors.addEventListener("click", (event) => {
+    const line = event.target.closest("tr[data-motor]");
+    if (!line || !panel.choices) return;
+    panel.choices = validChoices(panel.options, { ...panel.choices, motor: line.dataset.motor });
+    saveChoices();
+    renderChoices();
+    refresh();
+  });
+
   // Export is there while there is a demand to describe, and says why when not.
   function showExport() {
     el.exportButton.disabled = !panel.demand;
@@ -171,31 +264,35 @@ export function mountCableNet({ studyName, studyOptions, onDemand, onCeiling }) 
       : "No cable net demand";
   }
 
-  // The demand in sentences, then what the chosen rope and the dial say about
-  // the analysis on screen. All of it is the model's words, escaped there; the
-  // rope note follows the system chosen, so every change of system redraws this.
+  // The ceiling a run is designed for (spec 2026-10-10 prestress and holds,
+  // section 4): the chosen machine's worst wire, or the strongest machine's
+  // while none is scored, or none.
+  function chosenCeiling() {
+    if (panel.row && !panel.row.refused && panel.row.verdict && panel.row.verdict.worst) {
+      return panel.row.verdict.worst.ceiling;
+    }
+    return panel.strongest ? panel.strongest.ceiling_newtons : null;
+  }
+
+  // The menu's answers (Needed, Gives, Most, Holds, Roof), then one line for
+  // each thing the run on screen differs from. Values only: the model writes them.
   function renderDemand() {
     const demand = panel.demand;
-    const sentences = panel.demandNote
-      ? [`The cable net demand could not be read: ${esc(String(panel.demandNote).replace(/\.+$/, ""))}.`]
-      : demandSentences(demand);
-    for (const note of [ropeMismatch(panel.parts, demand, { rope: panel.choices && panel.choices.rope }),
-                        prestressNote(demand, Number(el.prestress.value)),
-                        toleranceNote(demand, Number(el.tolerance.value))]) {
-      if (note) sentences.push(note);
-    }
-    el.demand.innerHTML = sentences.map((s) => `<p>${s.replace(/<(?!\/?b>)/g, "&lt;")}</p>`).join("");
+    const warnings = panel.demandNote
+      ? ["Cable net demand: " + String(panel.demandNote).replace(/\.+$/, "")]
+      : runWarnings(demand, { ceiling: chosenCeiling(), tolerance: Number(el.tolerance.value) }, panel.parts, panel.choices && panel.choices.rope);
+    el.demand.innerHTML = answersHtml(menuAnswers(demand, panel.row, panel.strongest)) +
+      warnings.map((line) => `<div class="cablenet-warning">${esc(line)}</div>`).join("");
     showExport();
   }
 
-  function renderGrab() {
-    const demand = panel.demand;
-    if (!demand || isStale(demand)) { el.grab.innerHTML = ""; return; }
-    const acceptance = demand.acceptance == null ? null : Number(demand.acceptance);
-    el.grab.innerHTML = `<p>${esc(grabText(demand.placement, demand.held, acceptance))}</p>` +
-      (demand.placement ? curveSvg(demand.placement.curve, acceptance) : "") +
-      (demand.held && demand.held.actuators && demand.held.actuators.length
-        ? `<p>The grabbed nodes light in the accent colour under the Sag and Node force lenses.</p>` : "");
+  // The Graphs tab: the run's stages, the walk and the net, against the chosen
+  // machine's ceiling.
+  function renderGraphs() {
+    const row = panel.row;
+    const ceiling = row && !row.refused && row.verdict && row.verdict.worst
+      ? row.verdict.worst.ceiling : null;
+    el.graphs.innerHTML = graphsHtml(panel.demand, ceiling);
   }
 
   async function score(speed) {
@@ -207,6 +304,7 @@ export function mountCableNet({ studyName, studyOptions, onDemand, onCeiling }) 
     if (options) body.options = sentOptions(options);
     const scored = await postJson(
       `/api/studies/${encodeURIComponent(studyName())}/cablenet/configurations`, body);
+    panel.strongest = scored.strongest || null;
     return scored.rows[0];
   }
 
@@ -216,12 +314,15 @@ export function mountCableNet({ studyName, studyOptions, onDemand, onCeiling }) 
     const row = panel.row;
     const ok = row && !row.refused;
     el.machine.innerHTML = machineHtml(row, panel.parts);
-    el.holds.innerHTML = ok ? verdictHtml(row.verdict) +
-      `<p>Eye bolt at ${ASSUMED_ANGLE_DEGREES.toFixed(0)} degrees off its axis, assumed</p>` : "";
+    el.limits.innerHTML = ok ? limitsHtml(row.terms) : "";
+    el.holds.innerHTML = ok ? verdictHtml(row.verdict, panel.demand) + eyeBoltHtml(ASSUMED_ANGLE_DEGREES) : "";
     el.travel.innerHTML = ok ? travelHtml(row.travel) : "";
     el.buy.innerHTML = ok ? buyHtml(row.price, row.cut_lengths) : "";
     el.price.innerHTML = ok ? priceHtml(row.price) : "";
-    onCeiling(ok && row.verdict.worst ? row.verdict.worst.ceiling : null);
+    renderDemand();
+    renderGraphs();
+    renderMotors();
+    onCeiling(ok && row.verdict.worst ? row.verdict.worst.ceiling : null, ok ? row.verdict : null, panel.strongest ? panel.strongest.ceiling_newtons : null);
   }
 
   // The parts changed, or the demand did: the verdict is redrawn, and the demand
@@ -249,7 +350,7 @@ export function mountCableNet({ studyName, studyOptions, onDemand, onCeiling }) 
       if (mine !== panel.ticket) return;
       panel.row = null;
       renderHolds();
-      el.holds.innerHTML = `<p>${esc(error.message)}</p>`;
+      el.holds.innerHTML = `<div class="cablenet-warning">${esc(error.message)}</div>`;
     }
   }
 
@@ -273,19 +374,13 @@ export function mountCableNet({ studyName, studyOptions, onDemand, onCeiling }) 
   }
 
   // Each dial states the value it has: its reading follows the track, and the
-  // prestress and tolerance dials also re-say whether they still match the
-  // analysis on screen.
+  // tolerance dial also re-says whether it still matches the analysis on screen.
   function showDials() {
-    el.prestressValue.textContent = el.prestress.value;
     el.toleranceValue.textContent = el.tolerance.value;
     el.speedValue.textContent = el.speed.value;
+    el.wiresValue.textContent = el.wires.value;
   }
   showDials();
-
-  el.prestress.addEventListener("input", () => {
-    showDials();
-    renderDemand();
-  });
 
   el.tolerance.addEventListener("input", () => {
     showDials();
@@ -317,7 +412,7 @@ export function mountCableNet({ studyName, studyOptions, onDemand, onCeiling }) 
         await refresh();
       }
     } catch (error) {
-      el.recommendNote.innerHTML = `<p>${esc(error.message)}</p>`;
+      el.recommendNote.innerHTML = `<div class="cablenet-warning">${esc(error.message)}</div>`;
     } finally {
       el.recommend.disabled = false;
     }
@@ -345,7 +440,7 @@ export function mountCableNet({ studyName, studyOptions, onDemand, onCeiling }) 
     panel.demand = demand;
     panel.demandNote = note;
     renderDemand();
-    renderGrab();
+    renderGraphs();
     onDemand(panel.demand);
     return true;
   }
@@ -394,14 +489,19 @@ export function mountCableNet({ studyName, studyOptions, onDemand, onCeiling }) 
     stopWatching();
     panel.demand = null;
     panel.row = null;
+    panel.strongest = null;
+    panel.motorsKey = null;
+    panel.motorsRows = null;
     panel.demandNote = null;
     el.demand.innerHTML = "";
+    el.limits.innerHTML = "";
+    el.motors.innerHTML = "";
     el.machine.innerHTML = "";
     el.holds.innerHTML = "";
     el.travel.innerHTML = "";
     el.buy.innerHTML = "";
     el.price.innerHTML = "";
-    el.grab.innerHTML = "";
+    el.graphs.innerHTML = "";
     el.runStatus.textContent = "";
     el.recommendNote.innerHTML = "";
     el.result.innerHTML = "";
@@ -417,7 +517,10 @@ export function mountCableNet({ studyName, studyOptions, onDemand, onCeiling }) 
     el.run.disabled = true;
     el.runStatus.textContent = "starting";
     try {
-      const body = { ...sentOptions(options), prestress: Number(el.prestress.value),
+      // the engine works the prestress out from the load, under the
+      // ceiling of the machine chosen
+      const body = { ...sentOptions(options),
+                     ceiling_newtons: chosenCeiling() == null ? undefined : chosenCeiling(),
                      tolerance_mm: Number(el.tolerance.value),
                      rope: panel.choices ? panel.choices.rope : undefined };
       const response = await fetch(`/api/studies/${encodeURIComponent(studyName())}/cablenet/run`,
@@ -469,7 +572,7 @@ export function mountCableNet({ studyName, studyOptions, onDemand, onCeiling }) 
         el.result.innerHTML = "";
       }
     } catch (error) {
-      el.result.innerHTML = `<p>${esc(error.message)}</p>`;
+      el.result.innerHTML = `<div class="cablenet-warning">${esc(error.message)}</div>`;
     } finally {
       el.choose.disabled = false;
     }
@@ -485,13 +588,16 @@ export function mountCableNet({ studyName, studyOptions, onDemand, onCeiling }) 
       const done = await postJson(`/api/studies/${encodeURIComponent(studyName())}/cablenet/exports`, {
         ...sentOptions(options), configuration: panel.row.configuration, angle_degrees: ASSUMED_ANGLE_DEGREES,
         ...(wound != null ? { rope_wound_mm: wound } : {}),
+        // the holds file is for the machine chosen (spec 2026-10-10, section 8)
+        ceiling_newtons: chosenCeiling(),
+        most_newtons: panel.strongest ? panel.strongest.ceiling_newtons : null,
       });
-      el.result.innerHTML = `<p>Written to ${esc(done.folder)}:</p><ul>` +
+      el.result.innerHTML = `<div>Written to ${esc(done.folder)}:</div><ul>` +
         (done.paths || []).map((p) => `<li>${esc(p)}</li>`).join("") + "</ul>" +
-        (done.note ? `<p>${esc(done.note)}</p>` : "");
+        (done.note ? `<div class="cablenet-warning">${esc(done.note)}</div>` : "");
       loadFolder();
     } catch (error) {
-      el.result.innerHTML = `<p>${esc(error.message)}</p>`;
+      el.result.innerHTML = `<div class="cablenet-warning">${esc(error.message)}</div>`;
     } finally {
       showExport();
     }
@@ -504,11 +610,15 @@ export function mountCableNet({ studyName, studyOptions, onDemand, onCeiling }) 
       restoreChoices();
       if (await loadDemand()) await refresh();
     } catch (error) {
-      el.holds.innerHTML = `<p>${esc(error.message)}</p>`;
+      el.holds.innerHTML = `<div class="cablenet-warning">${esc(error.message)}</div>`;
     }
   }
 
+  let remembered = {};
+  try { remembered = JSON.parse(localStorage.getItem(POPUP_KEY) || "{}") || {}; } catch (_) { remembered = {}; }
+  showTab(panes.some((pane) => pane.id === remembered.tab) ? remembered.tab : "cn-mechanism");
+  if (remembered.open) setPopup(true);
   loadFolder();
   reload();
-  return { reload, clear };
+  return { reload, clear, closePopup: () => setPopup(false), choices: () => panel.choices };
 }

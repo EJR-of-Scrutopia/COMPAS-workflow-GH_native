@@ -121,6 +121,38 @@ def test_the_exports_name_the_machine_by_its_parts_and_list_each_cabinet(
     assert not re.search(r"\brigs?\b", text, re.IGNORECASE)
 
 
+def test_the_exports_judge_the_drum_as_the_panel_does(tmp_path, monkeypatch):
+    """Spec 2026-10-10 prestress and holds, section 9: the exports' ladder
+    judged the drum by one wound figure without the reeving; it takes each
+    wire's own take-up and reeving now, so the documents and the panel agree."""
+
+    import exports
+
+    client, _ = make_client(tmp_path, monkeypatch)
+    _plant(tmp_path)
+    folder = tmp_path / "out"
+    folder.mkdir()
+    assert client.post("/api/cablenet/exports/folder",
+                       json={"path": str(folder)}).status_code == 200
+    row = client.post("/api/studies/Tiny/cablenet/configurations",
+                      json={"choices": [CHOICE], "options": OPTIONS}).json()["rows"][0]
+    seen = {}
+    real = exports.export_model
+
+    def spy(*args, **kwargs):
+        seen["row"] = args[2]
+        seen["ladder"] = kwargs.get("ladder_rows")
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(exports, "export_model", spy)
+    done = client.post("/api/studies/Tiny/cablenet/exports",
+                       json={**OPTIONS, "configuration": row["configuration"]})
+    assert done.status_code == 200, done.text
+    assert seen["row"]["travel"] == row["travel"]
+    assert "rope_path" not in seen["row"]
+    assert all("travel" in rung for rung in seen["ladder"][1:] if not rung.get("refused"))
+
+
 def test_the_scoring_route_takes_the_five_choices_and_nothing_else(tmp_path, monkeypatch):
     client, _ = make_client(tmp_path, monkeypatch)
     _plant(tmp_path)
@@ -284,3 +316,35 @@ def test_the_lightest_chain_is_worked_out_once_per_wire_and_angle(monkeypatch):
     # another catalogue, as a reload gives, is worked out afresh
     machine.lightest_chain(catalogue.load_parts(), "rope-4mm", 10.0)
     assert len(calls) == 3 * worked
+
+
+def test_the_scoring_route_gives_the_most_any_machine_makes_and_each_limit(tmp_path, monkeypatch):
+    """The Cable net menu's "Most", and the Mechanism tab's limits a wire (spec
+    2026-10-09 Cable net display, sections 3, 4.1 and 7)."""
+
+    import catalogue
+
+    client, _ = make_client(tmp_path, monkeypatch)
+    _plant(tmp_path)
+    body = client.post("/api/studies/Tiny/cablenet/configurations",
+                       json={"choices": [CHOICE], "options": OPTIONS}).json()
+    parts = catalogue.load_parts()
+    most = body["strongest"]
+    # no catalogued wire carries more than the 8 mm wire's working load, a fifth
+    # of its breaking load, whatever motor, gearbox or pulleys hold it
+    assert most["ceiling_newtons"] == pytest.approx(parts["rope"]["rope-8mm"]["rope_mbl"] / 5.0)
+    assert (most["limit"], most["part"]) == ("rope tension", "rope-8mm")
+    assert "8 mm" in most["described"]
+    terms = body["rows"][0]["terms"]
+    assert [term["name"] for term in terms] == [
+        "rope tension", "anchor", "spool rope tension", "sheave", "gearbox torque",
+        "motor torque"]
+    assert sum(term["binds"] for term in terms) == 1
+    efficiency = parts["sheave"]["Pfaff-DSRB-90-4"]["sheave_efficiency"]
+    advantage = (1.0 - efficiency ** 4) / (1.0 - efficiency)
+    motor = next(term for term in terms if term["name"] == "motor torque")
+    # 3 N m through 20:1 at 94 per cent, half of it, on four falls, over the
+    # 33.9 mm spool turning two wires
+    assert motor["newtons"] == pytest.approx(3000.0 * 20 * 0.94 * 0.5 * advantage / (33.9 * 2))
+    assert motor["part"] == "23HS45-4204D-E1000"
+    assert next(term for term in terms if term["name"] == "rope tension")["part"] == "rope-4mm"

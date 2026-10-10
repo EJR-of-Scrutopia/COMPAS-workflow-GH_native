@@ -12,7 +12,10 @@ from conftest_data import tiny_contract  # noqa: E402
 from test_app import make_client, wait_for  # noqa: E402
 from test_cablenet_routes import _tiny_formwork, _tiny_mechanism  # noqa: E402
 
-RUN = {"material": "concrete", "pattern": "bonded-courses", "size": 0.9}
+# a body that names its prestress, as scripts and these tests do; the tab
+# never sends one, and then the cable net run's is taken (spec 2026-10-10
+# formwork tab, section 6)
+RUN = {"material": "concrete", "pattern": "bonded-courses", "size": 0.9, "prestress": 300.0}
 
 
 def _plant(tmp_path, formwork=True):
@@ -53,6 +56,64 @@ def test_the_formwork_run_writes_the_captures_where_the_studio_reads_them(tmp_pa
     got = client.get("/api/studies/Tiny/formwork/sim", params=RUN)
     assert got.status_code == 200, got.text
     assert got.json()["schema"] == "bench.formwork-sim/1"
+
+
+def _plant_demand(prestress):
+    import bundle
+    import geometry
+    import staging
+
+    pairs = geometry.available_exports(bundle.UPLOAD_DIR)
+    slot = staging.cut_slot(pairs["Tiny"], RUN["pattern"], None)
+    path = bundle.cablenet_path("tiny", RUN["material"], slot.key_pattern, RUN["size"], 0.02,
+                                None)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"schema": "bench.cablenet/2", "prestress": prestress}),
+                    encoding="utf-8")
+
+
+def test_the_run_takes_the_cable_net_runs_design_prestress(tmp_path, monkeypatch):
+    # the owner's answer of 2026-10-10: the net is cut for the prestress the
+    # cable net run designed for the chosen machine, and the run's options say
+    # where it came from
+    seen = {}
+
+    def fake(request, progress=None):
+        seen.update(request)
+        return {"schema": "bench.formwork-sim/1", "captures": []}
+
+    client, _ = make_client(tmp_path, monkeypatch, formwork_runner=fake)
+    _plant(tmp_path)
+    _plant_demand(723.4)
+    body = {key: value for key, value in RUN.items() if key != "prestress"}
+    started = client.post("/api/studies/Tiny/formwork/run", json=body)
+    assert started.status_code == 202, started.text
+    assert wait_for(client, started.json()["run"])["state"] == "done"
+    assert seen["prestress"] == 723.4
+    assert seen["options"]["prestress"] == 723.4
+    assert seen["options"]["prestress_from"] == "cable net"
+    # a body that names one keeps it, and says so
+    seen.clear()
+    started = client.post("/api/studies/Tiny/formwork/run", json=RUN)
+    assert wait_for(client, started.json()["run"])["state"] == "done"
+    assert seen["prestress"] == 300.0 and seen["options"]["prestress_from"] == "request"
+
+
+def test_with_no_cable_net_run_the_formwork_run_is_refused_in_one_line(tmp_path, monkeypatch):
+    client, _ = make_client(tmp_path, monkeypatch, formwork_runner=_idle)
+    _plant(tmp_path)
+    body = {key: value for key, value in RUN.items() if key != "prestress"}
+    response = client.post("/api/studies/Tiny/formwork/run", json=body)
+    assert response.status_code == 400
+    assert response.json()["detail"] == "Run the cable net analysis first"
+    # a cable net document that names no prestress is no better
+    _plant_demand(None)
+    response = client.post("/api/studies/Tiny/formwork/run", json=body)
+    assert response.status_code == 400
+    assert response.json()["detail"] == "Run the cable net analysis again: no prestress"
+    # and a study that is not there is still a 404 that says so
+    response = client.post("/api/studies/Nowhere/formwork/run", json=body)
+    assert response.status_code == 404 and "Nowhere" in response.json()["detail"]
 
 
 def test_a_study_with_no_formwork_document_is_refused_before_the_cut(tmp_path, monkeypatch):

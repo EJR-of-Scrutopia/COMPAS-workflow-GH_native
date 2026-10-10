@@ -333,6 +333,46 @@ def judge(parts, configuration, demands, machines, angle_degrees, motors=None, r
             "holds": all(row["holds"] for row in judged)}
 
 
+def limit_terms(parts, configuration, angle_degrees):
+    """The machine's ceiling terms, N a wire, in the order checks() tests them,
+    each with its part's name; the tightest binds (spec 2026-10-09 Cable net
+    display, section 4.1)."""
+
+    mechanism = catalogue.mechanism_for(parts, configuration, angle_degrees)
+    terms = catalogue.ceiling_terms(mechanism)
+    tightest = min(terms, key=terms.get)
+    return [{"name": name, "newtons": float(value),
+             "part": _term_part(parts, configuration, name, angle_degrees),
+             "binds": name == tightest} for name, value in terms.items()]
+
+
+def strongest(parts, facts, angle_degrees):
+    """The strongest wire ceiling any combination makes on the exported machine,
+    at one wire a motor since sharing a motor only lowers a ceiling:
+    {ceiling_newtons, described, limit, part}, the first in the catalogue's
+    order among equals; None when the catalogue builds nothing."""
+
+    best = None
+    for motor in offered_motors(parts):
+        for option in ratio_options(parts, motor):
+            for rope in parts["rope"]:
+                for pulley in [None] + pulleys_for(parts, rope):
+                    choices = {"motor": motor, "ratio": option["ratio"], "pulley": pulley,
+                               "rope": rope, "wires_per_motor": 1}
+                    try:
+                        built = derive(parts, choices, facts, angle_degrees)
+                        terms = limit_terms(parts, built, angle_degrees)
+                    except (MachineError, catalogue.CatalogueError):
+                        continue
+                    top = next(term for term in terms if term["binds"])
+                    if best is None or top["newtons"] > best[0]:
+                        best = (top["newtons"], built, top)
+    if best is None:
+        return None
+    return {"ceiling_newtons": best[0], "described": describe(parts, best[1]),
+            "limit": best[2]["name"], "part": best[2]["part"]}
+
+
 def take_ups_from_commands(stage_commands):
     """Each wire's rope taken in at its anchor, stage by stage, from the cable
     net run's reel commands (changes of each wire's rest length, negative

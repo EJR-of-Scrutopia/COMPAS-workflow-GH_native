@@ -1502,6 +1502,19 @@ def test_the_cable_net_modules_are_remapped_to_their_versioned_addresses(
             page), "{} must be remapped to its versioned address".format(module)
 
 
+def test_the_formwork_modules_are_remapped_to_their_versioned_addresses(
+        tmp_path, monkeypatch):
+    # the Formwork tab's controller, model and view (spec 2026-10-10), each
+    # its own cache entry
+    client, _ = make_client(tmp_path, monkeypatch)
+    page = client.get("/").text
+    for module in ("formwork.js", "formwork_model.js", "formwork_view.js"):
+        escaped = re.escape(module)
+        assert re.search(
+            r'"/static/' + escaped + r'": "/static/' + escaped + r'\?v=[0-9a-f]{6,}"',
+            page), "{} must be remapped to its versioned address".format(module)
+
+
 def test_a_still_goes_to_the_output_folder_and_leaves_no_tiles(tmp_path, monkeypatch):
     """Param, 2026-09-13: "the output folder for the image still is not
     taking the output folder we set, its got its own random location? the

@@ -395,7 +395,7 @@ def instants_of(request):
 
 
 def hold_analysis(built, heads, instants, vertex_count, ea, prestress, acceptance,
-                  acceptance_source, wire_nodes=(), batch=20, steps=40):
+                  acceptance_source, wire_nodes=(), batch=20, steps=40, ceiling=None):
     """Fit the net at every instant, place the actuators at the heaviest, and
     return the bench.cablenet/2 demand document (study and wires added by solve).
 
@@ -416,6 +416,15 @@ def hold_analysis(built, heads, instants, vertex_count, ea, prestress, acceptanc
     only a document written before the block carried the two figures has its
     floor taken by the same rule from what it does carry. The stages keep the
     fit's own wire tensions, which the lenses draw.
+
+    The needs block (spec 2026-10-10 prestress and holds, section 4) tables,
+    at the heaviest instant, the least prestress each step of the walk needs
+    to keep the worst sag within the line, and the sag and the roof at a
+    ladder of prestresses with the column heads alone. A prestress of None is
+    worked out from it: the least that the fewest held nodes need within
+    `ceiling` (the machine's, N), or the column heads' own with no ceiling; for
+    a ceiling no step meets, what the walk's last step needs (MOST_NEWTONS when
+    even that is none), so the machine's verdict reads the shortfall.
     """
 
     import numpy as np
@@ -423,16 +432,25 @@ def hold_analysis(built, heads, instants, vertex_count, ea, prestress, acceptanc
     from tree_forest_compas.hold import HoldError
     from tree_forest_compas.hold import fit_tension_state
     from tree_forest_compas.hold import nodes_needing_support
+    from tree_forest_compas.placement import MOST_NEWTONS
     from tree_forest_compas.placement import greedy_actuators
+    from tree_forest_compas.placement import prestress_ladder
+    from tree_forest_compas.placement import prestress_walk
     from tree_forest_compas.stiffness import StiffnessError
     from tree_forest_compas.stiffness import first_order_sag
 
     if not float(ea) > 0.0:
         raise CableNetError("EA must be greater than zero.")
-    if not float(prestress) > 0.0:
+    if prestress is None and acceptance is None:
+        raise CableNetError(
+            "The prestress is worked out from the tolerance, so a run with no "
+            "tolerance needs a prestress.")
+    if prestress is not None and not float(prestress) > 0.0:
         raise CableNetError(
             "The prestress must be greater than zero: it is the floor every "
             "member's stiffness is judged at, and a slack flat net is a mechanism.")
+    if ceiling is not None and not float(ceiling) > 0.0:
+        raise CableNetError("The machine's ceiling must be greater than zero.")
     problem = built.problem
     base = np.asarray(problem.source_vertices, dtype=float)
     count = len(base)
@@ -462,14 +480,50 @@ def hold_analysis(built, heads, instants, vertex_count, ea, prestress, acceptanc
     def engine_loads(instant):
         return np.asarray(to_engine(instant["loads"], node_of, count), dtype=float)
 
-    # the floor every member is given, as a force density at the finished shape
-    floor = float(prestress) / lengths(base)
-
     heaviest = max(range(len(instants)),
                    key=lambda k: sum(-row[2] for row in instants[k]["loads"]))
     here = positions(instants[heaviest])
     loads = engine_loads(instants[heaviest])
     stranded = nodes_needing_support(here, edges, held_base, loads)
+
+    # what the prestress needs to be, step by step along the walk, and what it
+    # gives with the column heads alone
+    member_lengths = lengths(base)
+    needs = None
+    if acceptance is not None:
+        try:
+            walked = prestress_walk(here, edges, held_base, loads, float(ea), member_lengths,
+                                    float(acceptance), batch=batch, steps=steps)
+            start = fit_tension_state(here, edges, held_base, loads)
+            rungs = prestress_ladder(here, edges, held_base, start.force_densities,
+                                     start.residual, float(ea), member_lengths,
+                                     float(acceptance))
+        except (HoldError, StiffnessError) as error:
+            raise CableNetError(
+                "The prestress the net needs cannot be worked out at {}: {}".format(
+                    instants[heaviest]["name"], error)) from error
+        needs = {
+            "stage": instants[heaviest]["name"],
+            "tolerance_mm": float(acceptance),
+            "ceiling_newtons": None if ceiling is None else float(ceiling),
+            "steps": [
+                {"count": int(s.count), "added": [int(vertex_of[v]) for v in s.added],
+                 "prestress_newtons": None if s.prestress is None else float(s.prestress)}
+                for s in walked],
+            "ladder": [
+                {"prestress_newtons": float(r.prestress), "worst_sag_mm": float(r.worst_sag),
+                 "roof": float(r.roof)}
+                for r in rungs],
+        }
+        if prestress is None:
+            covered = [s.prestress for s in walked if s.prestress is not None
+                       and (ceiling is None or s.prestress <= float(ceiling))]
+            last = walked[-1].prestress
+            prestress = (covered[0] if covered
+                         else last if last is not None else MOST_NEWTONS)
+
+    # the floor every member is given, as a force density at the finished shape
+    floor = float(prestress) / member_lengths
     try:
         placement = greedy_actuators(here, edges, held_base, loads, float(ea), floor,
                                      acceptance, batch=batch, steps=steps)
@@ -643,6 +697,7 @@ def hold_analysis(built, heads, instants, vertex_count, ea, prestress, acceptanc
             "actuators": [int(vertex_of[v]) for v in actuators_p],
         },
         "placement": placement_block,
+        "needs": needs,
         "sizing": sizing,
         "sizing_stage": sizing["stage"],
         "stages": stages,
@@ -669,16 +724,17 @@ def solve(request: dict) -> dict:
     acceptance_source = request.get("acceptance_source")
     document = hold_analysis(
         built, request.get("column_heads") or [], instants_of(request),
-        len(vertices), request["ea"], request["prestress"], acceptance,
+        len(vertices), request["ea"], request.get("prestress"), acceptance,
         acceptance_source, wire_nodes=[w.net_vertex for w in wires],
         batch=int(request.get("batch", 20)), steps=int(request.get("steps", 40)),
+        ceiling=request.get("ceiling_newtons"),
     )
     if request.get("forward"):
         names = {int(k): v for k, v in request["stage_names"].items()}
         try:
             document["forward"] = walk_stages(
                 built, request["loads_by_stage"], request["net_weight"],
-                request["ea"], request["prestress"], acceptance,
+                request["ea"], document["prestress"], acceptance,
                 acceptance_source, target=None, stage_names=names,
                 placed_weights=request.get("placed_weights"))
         except CableNetError as error:

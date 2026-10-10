@@ -6,7 +6,12 @@ import { GroundedSkybox } from "three/addons/objects/GroundedSkybox.js";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 import { buildLiveSeries, liveSpecs, liveCut, seriesToCsv } from "./live_graphs.js";
 import { mountCableNet } from "./cablenet.js";
-import { instantAt, sagBand, stageCaption } from "./cablenet_model.js";
+import { mountFormwork } from "./formwork.js";
+import { createFormworkView } from "./formwork_view.js";
+import {
+  escapeHtml, holdsFor, instantAt, labelTargets, lensLegend, pickHtml, sagBand, spreadLabels,
+  stageCaption,
+} from "./cablenet_model.js";
 import {
   upgradeSliders, paintScrub, repaintScrubs, settleRangeFills,
   buildSegmented, paintSegmented,
@@ -172,6 +177,12 @@ const state = {
   // lens is up, which is what ghosts the skin in applyShowMode.
   cablenet: null,
   cablenetCeiling: null,
+  // the scored row's verdict, each wire's own ceiling and margin for the card
+  cablenetVerdict: null,
+  // the most any machine makes, which says why nodes need holding
+  cablenetMost: null,
+  // which Cable net lenses draw their arrows (spec 2026-10-09 Cable net display, 5.2)
+  cablenetArrows: { nodeforce: false, prestress: true, reel: true },
   cablenetGhost: false,
   // Whether the demand fits the net on screen, worked out once per demand
   // and bundle (demandFitsNet), and what the lenses last drew: the instant
@@ -1095,6 +1106,9 @@ function clampCameraAboveFloor() {
 // every frame, and a `let` declared down there would sit in its temporal
 // dead zone if a render ever happened during boot.
 let propGumball = null;
+// The Formwork tab's controller, mounted far below; declared up here because
+// renderView places its labels every frame, a render during boot included.
+let formworkTab = null;
 // The instanced props' batches, declared up here for the same reason:
 // renderView settles them every frame (see "the instanced props").
 const propBatches = new Map();
@@ -1116,6 +1130,8 @@ function renderView() {
   // One projection of one point: the badge rides its prop as the camera
   // moves, rather than sitting where the prop used to be on screen.
   placeHoverBadge();
+  placeModelLabels();
+  if (formworkTab) formworkTab.place();
   settleAtmosphereFloor();
   armShafts();
   composer.render();
@@ -7173,6 +7189,7 @@ function activateTab(sectionId) {
     section.classList.toggle("hidden", !active);
     if (active) section.open = true;
   }
+  if (formworkTab) formworkTab.setActive(sectionId === "formwork-section");
   try {
     localStorage.setItem("vaulted-tab", sectionId);
   } catch (error) {
@@ -11300,8 +11317,11 @@ const CABLENET_LAYERS = [
   ["sag", "Sag"],
   ["prestress", "Prestress"],
   ["reel", "Reel"],
+  ["holds", "Holds"],
 ];
 const CABLENET_LENS_NAMES = CABLENET_LAYERS.map(([name]) => name);
+// the lenses whose arrows stand behind a tick of their own
+const CABLENET_ARROW_LENSES = ["nodeforce", "prestress", "reel"];
 const THRUST_NOTE = "The push each springing gives the ground, the reaction "
   + "reversed: green stands near vertical, amber leans, red past 35 degrees is "
   + "a push the abutment or a tie must hold.";
@@ -11463,6 +11483,9 @@ function layerAvailability(name) {
       return { on: false,
         why: "this demand is from an earlier geometry; run the cable net analysis again" };
     }
+    if (name === "holds" && !(state.cablenet.needs && Array.isArray(state.cablenet.needs.steps))) {
+      return { on: false, why: "no prestress table: run the cable net analysis again" };
+    }
     if (name === "prestress" && state.cablenetCeiling == null) {
       return { on: true, why: "no system scored yet: the tags show tension alone" };
     }
@@ -11521,6 +11544,23 @@ function buildLensButtons(holder, table, notes, alwaysShown) {
       row.appendChild(caption);
       row.appendChild(slider);
       holder.appendChild(row);
+    }
+    if (CABLENET_ARROW_LENSES.includes(name)) {
+      const tick = document.createElement("label");
+      tick.className = "layer-slider" + (state.layers[name] ? "" : " hidden");
+      tick.title = "Arrows";
+      const box = document.createElement("input");
+      box.type = "checkbox";
+      box.checked = !!state.cablenetArrows[name];
+      box.addEventListener("change", () => {
+        state.cablenetArrows[name] = box.checked;
+        paintCableNetLenses(true);
+      });
+      const caption = document.createElement("span");
+      caption.textContent = "Arrows";
+      tick.appendChild(box);
+      tick.appendChild(caption);
+      holder.appendChild(tick);
     }
   }
 }
@@ -11696,6 +11736,7 @@ function paintForceLegend(magnitude) {
     return;
   }
   legend.classList.remove("hidden");
+  legend.classList.remove("bands");
   legend.classList.remove("deflection");
   document.getElementById("legend-title").textContent =
     "member force, kN (extremes clamped)";
@@ -11893,6 +11934,7 @@ function updateLegend(stressMagnitude, deflectionMax, deflectionPeakOnly, stage)
     return;
   }
   legend.classList.remove("hidden");
+  legend.classList.remove("bands");
   const surface = document.getElementById("stress-surface").value;
   const surfaceLabels = {
     per: "top and bottom skins",
@@ -12121,7 +12163,7 @@ function paintCableNetStageLine() {
   const line = document.getElementById("cablenet-stage");
   if (!line) return;
   const stage = cableNetLensUp() ? cablenetStageAt(state.timeline ? state.timeline.t : 0) : null;
-  line.textContent = stage ? stageCaption(stage) + " Drawn on the finished net." : "";
+  line.textContent = stage ? stageCaption(stage) : "";
 }
 
 // The lenses are drawn for one instant and one set of raised lenses. The
@@ -12138,6 +12180,7 @@ function paintCableNetLenses(force = false) {
   applyCableNetPaint();
   updateCableNetVectors();
   paintCableNetStageLine();
+  updateModelLabels(stage);
 }
 
 // forceMagnitude's rule over any list: the 95th percentile of the sizes,
@@ -12177,6 +12220,7 @@ function resetNodeColours() {
 function paintScalarLegend(title, low, zero, high) {
   const legend = document.getElementById("legend");
   legend.classList.remove("hidden");
+  legend.classList.remove("bands");
   legend.classList.add("deflection");
   document.getElementById("legend-title").textContent = title;
   document.getElementById("legend-min").textContent = low;
@@ -12199,19 +12243,118 @@ function wiresPainted() {
 // instance colours with the force lens, which EXCLUSIVE_LAYERS keeps to one
 // at a time; applyWireForces resets the wires to white when it is down, so
 // this only ever paints, and only ever resets the nodes.
+// Node force colours the nodes by the size of each node's unbalanced force,
+// pale to red (spec 2026-10-09 Cable net display, section 5.2).
+function paintNodeForces(stage) {
+  const nodes = state.objects.nodes;
+  if (!nodes || !nodes.instanceColor) return;
+  const sizes = (stage.node_residual || []).map((v) => (v ? Math.hypot(v[0], v[1], v[2]) : 0));
+  const top = Math.max(1e-9, ...sizes);
+  for (let i = 0; i < nodes.count; i++) nodes.setColorAt(i, TENSION_SCALE(sizes[i] || 0, top));
+  nodes.instanceColor.needsUpdate = true;
+}
+
+// The legend of a lens that keys its own figures: Node force, Prestress, Reel.
+// Holds (spec 2026-10-10 prestress and holds, section 7): the nodes the chosen
+// machine needs held in red, the column heads in blue, every other node grey.
+const HOLD_COLOURS = { hold: new THREE.Color(0xc24936), head: new THREE.Color(0x66aaff),
+                       other: new THREE.Color(0x9aa4b2) };
+
+function paintHoldNodes() {
+  const nodes = state.objects.nodes;
+  if (!nodes || !nodes.instanceColor) return;
+  const held = holdsFor(state.cablenet, state.cablenetCeiling);
+  const hold = new Set(held ? held.nodes : []);
+  const heads = new Set(((state.cablenet && state.cablenet.held) || {}).column_heads || []);
+  for (let i = 0; i < nodes.count; i++) {
+    nodes.setColorAt(i, hold.has(i) ? HOLD_COLOURS.hold : heads.has(i) ? HOLD_COLOURS.head
+      : HOLD_COLOURS.other);
+  }
+  nodes.instanceColor.needsUpdate = true;
+  paintHoldMarkers(hold, heads);
+}
+
+// The held nodes and the column heads drawn HOLD_MARKER_SCALE times a node's
+// size, so the nodes to hold read at a whole-vault framing: the net's own
+// node spheres, enlarged in place, with the net's lift.
+const HOLD_MARKER_SCALE = 3;
+
+function clearHoldMarkers() {
+  const markers = state.objects.holdMarkers;
+  if (!markers) return;
+  if (markers.parent) markers.parent.remove(markers);
+  markers.material.dispose();
+  markers.dispose();
+  state.objects.holdMarkers = null;
+}
+
+function paintHoldMarkers(hold, heads) {
+  clearHoldMarkers();
+  const nodes = state.objects.nodes;
+  if (!nodes || !nodes.parent) return;
+  const marked = [...hold, ...[...heads].filter((i) => !hold.has(i))].filter((i) => i < nodes.count);
+  if (!marked.length) return;
+  const markers = new THREE.InstancedMesh(nodes.geometry,
+    new THREE.MeshBasicMaterial({ color: 0xffffff }), marked.length);
+  const at = new THREE.Matrix4();
+  const grow = new THREE.Matrix4().makeScale(HOLD_MARKER_SCALE, HOLD_MARKER_SCALE, HOLD_MARKER_SCALE);
+  marked.forEach((node, k) => {
+    nodes.getMatrixAt(node, at);
+    markers.setMatrixAt(k, at.clone().multiply(grow));
+    markers.setColorAt(k, hold.has(node) ? HOLD_COLOURS.hold : HOLD_COLOURS.head);
+  });
+  markers.position.copy(nodes.position);
+  markers.quaternion.copy(nodes.quaternion);
+  markers.scale.copy(nodes.scale);
+  markers.instanceMatrix.needsUpdate = true;
+  markers.instanceColor.needsUpdate = true;
+  nodes.parent.add(markers);
+  state.objects.holdMarkers = markers;
+}
+
+function paintLensLegend(lens, stage) {
+  const legend = lensLegend(lens, state.cablenet, stage, state.cablenetCeiling, state.cablenetMost);
+  if (!legend) return;
+  if (legend.bands) paintBandLegend(legend.title, legend.bands, legend.min, legend.max);
+  else paintScalarLegend(legend.title, legend.min, "", legend.max);
+}
+
+// A banded lens's key (Prestress, Reel): a swatch a band in the colours its
+// arrows are drawn in, in place of the ramp, which would key nothing on the
+// model. Every other legend takes the class back off.
+function paintBandLegend(title, bands, low, high) {
+  const legend = document.getElementById("legend");
+  legend.classList.remove("hidden");
+  legend.classList.add("bands");
+  document.getElementById("legend-title").textContent = title;
+  document.getElementById("legend-bands").innerHTML = bands.map((band) =>
+    `<span style="background:${band.colour}">${escapeHtml(band.name)}</span>`).join("");
+  document.getElementById("legend-min").textContent = low;
+  document.getElementById("legend-zero").textContent = "";
+  document.getElementById("legend-max").textContent = high;
+}
+
 function applyCableNetPaint() {
   const wires = state.objects.wires, nodes = state.objects.nodes;
   if (!wires || !nodes || !wires.userData.baseMatrices || !state.bundle) return;
-  // The instant is read only for a painter that can draw: a document that
-  // does not fit the net (demandFitsNet) is never walked, so it cannot throw.
+  // The instant is read only for a lens that can draw: a document that does
+  // not fit the net (demandFitsNet) is never walked, so it cannot throw.
   const tensionUp = !!(state.layers.tension && layerAvailability("tension").on);
   const sagUp = !!(state.layers.sag && layerAvailability("sag").on);
-  const stage = tensionUp || sagUp ? cablenetStageAt(state.timeline ? state.timeline.t : 0) : null;
+  const up = (name) => !!(state.layers[name] && layerAvailability(name).on);
+  const keyed = ["holds", "nodeforce", "prestress", "reel"].filter(up);
+  const stage = tensionUp || sagUp || keyed.length ? cablenetStageAt(state.timeline ? state.timeline.t : 0) : null;
   const tensionOn = tensionUp && !!stage;
   const sagOn = sagUp && !!stage;
+  const holdNodes = !sagOn && !!stage && keyed.includes("holds");
+  if (!holdNodes) clearHoldMarkers();
+  const forceNodes = !sagOn && !!stage && !holdNodes && keyed.includes("nodeforce");
   if (!tensionOn && !sagOn) {
-    resetNodeColours();
-    if (!state.layers.stress && !state.layers.deflection && !state.layers.forces) {
+    if (holdNodes) paintHoldNodes();
+    else if (forceNodes) paintNodeForces(stage);
+    else resetNodeColours();
+    if (stage && keyed.length) paintLensLegend(keyed[0], stage);
+    else if (!state.layers.stress && !state.layers.deflection && !state.layers.forces) {
       document.getElementById("legend").classList.add("hidden");
     }
     return;
@@ -12224,7 +12367,9 @@ function applyCableNetPaint() {
     for (let i = 0; i < wires.count; i++) {
       wires.setColorAt(i, TENSION_SCALE(Number(values[i]) || 0, magnitude));
     }
-    resetNodeColours();
+    if (holdNodes) paintHoldNodes();
+    else if (forceNodes) paintNodeForces(stage);
+    else resetNodeColours();
     // One decimal, the panel's way with a force: under the net's own weight
     // the whole scale is under a newton, and a key reading 0 to 0 over red
     // wires would contradict itself.
@@ -12274,7 +12419,7 @@ function updateCableNetVectors() {
     const length = Math.hypot(d[0], d[1], d[2]) || 1;
     return d.map((c) => c / length);
   };
-  if (state.layers.nodeforce && Array.isArray(stage.node_residual)) {
+  if (state.layers.nodeforce && state.cablenetArrows.nodeforce && Array.isArray(stage.node_residual)) {
     // A balanced node has no direction to draw, as a reel that did not turn
     // has none below: arrowField would stand a zero vector straight down.
     const entries = [];
@@ -12298,7 +12443,7 @@ function updateCableNetVectors() {
       scene.add(state.objects.sagArrows);
     }
   }
-  if (state.layers.reel && Array.isArray(demand.wires)) {
+  if (state.layers.reel && state.cablenetArrows.reel && Array.isArray(demand.wires)) {
     const paysOut = [], takesIn = [], travel = [];
     let magnitudeMax = 1e-9;
     demand.wires.forEach((wire, i) => {
@@ -12324,7 +12469,7 @@ function updateCableNetVectors() {
     state.objects.reelArrows = group;
     scene.add(group);
   }
-  if (state.layers.prestress && Array.isArray(demand.wires)) {
+  if (state.layers.prestress && state.cablenetArrows.prestress && Array.isArray(demand.wires)) {
     const ceiling = state.cablenetCeiling;
     const buckets = { within: [], near: [], over: [], plain: [] };
     let magnitudeMax = 1e-9;
@@ -12348,6 +12493,180 @@ function updateCableNetVectors() {
     scene.add(group);
   }
 }
+
+// ---------- numbers on the model, and the card a click opens ----------
+// Each lens's labels (spec 2026-10-09 Cable net display, section 5.3), from the
+// model's targets, recomputed with the lenses and placed every frame by
+// projecting each point, as the hover badge is: one behind the eye or off the
+// view is not drawn. At most MODEL_LABEL_MAX at once. The instant is the one
+// the lenses were painted at, kept for the card a click opens.
+const MODEL_LABEL_MAX = 125;
+// A label is about this wide and tall, in pixels: one nearer than that to a
+// label already drawn is not drawn (spreadLabels).
+const LABEL_GAP_X = 44;
+const LABEL_GAP_Y = 16;
+const modelLabels = { items: [], stage: null, projected: new THREE.Vector3() };
+
+// The card a click on a node opens: where the press went down, and the node it
+// is for, which it rides with as the view moves.
+const cablenetPick = { down: null, at: null };
+// The room the card leaves at the foot of the window for the bottom shelf, and
+// its width.
+const CARD_CLEAR_BOTTOM = 70;
+const CARD_WIDTH = 220;
+
+// The right edge of the view the model is seen in: the side menu's left edge,
+// or the window's when the menu is tucked away. Nothing drawn on the model
+// goes over the menu.
+function viewRight() {
+  const panel = document.getElementById("panel");
+  if (!panel || document.body.classList.contains("panel-collapsed")) return innerWidth;
+  return panel.getBoundingClientRect().left;
+}
+
+function cablenetLabelPoint(target, vertices, edges) {
+  if (target.kind === "member") {
+    const edge = edges[target.index];
+    if (!edge) return null;
+    const p = vertices[edge[0]], q = vertices[edge[1]];
+    return [(p[0] + q[0]) / 2, (p[1] + q[1]) / 2, (p[2] + q[2]) / 2];
+  }
+  return vertices[target.kind === "wire" ? target.node : target.index] || null;
+}
+
+function updateModelLabels(stage) {
+  const holder = document.getElementById("model-labels");
+  if (!holder) return;
+  holder.innerHTML = "";
+  modelLabels.items = [];
+  modelLabels.stage = stage && state.bundle && state.cablenet ? stage : null;
+  if (!modelLabels.stage) {
+    const card = document.getElementById("cablenet-pick");
+    if (card) card.classList.add("hidden");
+    return;
+  }
+  const { vertices, edges } = state.bundle.analysis_mesh;
+  const targets = [];
+  for (const lens of ["prestress", "reel", "holds", "nodeforce", "tension"]) {
+    if (state.layers[lens] && layerAvailability(lens).on) {
+      targets.push(...labelTargets(lens, state.cablenet, stage, state.cablenetCeiling));
+    }
+  }
+  for (const target of targets.slice(0, MODEL_LABEL_MAX)) {
+    const point = cablenetLabelPoint(target, vertices, edges);
+    if (!point) continue;
+    const label = document.createElement("div");
+    label.className = "model-label" + (target.band ? " " + target.band : "")
+      + (target.side ? " " + target.side : "");
+    label.textContent = target.text;
+    holder.appendChild(label);
+    modelLabels.items.push({ label, at: new THREE.Vector3(point[0], point[1], point[2]) });
+  }
+}
+
+function placeModelLabels() {
+  if (!modelLabels.items.length && !cablenetPick.at) return;
+  const rect = canvas.getBoundingClientRect();
+  // the net is drawn lifted clear of the skin; its labels ride with it
+  const lift = state.objects.nodes ? state.objects.nodes.position.z : 0;
+  placeCablenetPick(rect, lift);
+  if (!modelLabels.items.length) return;
+  const right = viewRight();
+  const projected = modelLabels.projected;
+  const points = modelLabels.items.map((item) => {
+    projected.copy(item.at);
+    projected.z += lift;
+    projected.project(camera);
+    const x = projected.x * 0.5 + 0.5;
+    const y = -projected.y * 0.5 + 0.5;
+    if (!(projected.z <= 1 && x >= 0 && x <= 1 && y >= 0 && y <= 1)) return null;
+    const sx = Math.round(rect.left + x * rect.width);
+    const sy = Math.round(rect.top + y * rect.height);
+    return sx < right ? [sx, sy] : null;
+  });
+  const shown = spreadLabels(points, LABEL_GAP_X, LABEL_GAP_Y);
+  modelLabels.items.forEach((item, i) => {
+    item.label.style.display = shown[i] ? "" : "none";
+    if (shown[i]) {
+      item.label.style.left = points[i][0] + "px";
+      item.label.style.top = points[i][1] + "px";
+    }
+  });
+}
+
+// The card beside its node, inside the view and above the bottom shelf.
+function placeCard(card, x, y) {
+  card.style.left = Math.round(Math.min(viewRight() - CARD_WIDTH, x + 14)) + "px";
+  card.style.top = Math.round(Math.max(12,
+    Math.min(innerHeight - card.offsetHeight - CARD_CLEAR_BOTTOM, y - 20))) + "px";
+}
+
+// Every frame: the open card follows its node, and closes when the node
+// leaves the view (behind the eye, off the canvas, under the menu).
+function placeCablenetPick(rect, lift) {
+  const card = document.getElementById("cablenet-pick");
+  if (!card || !cablenetPick.at || card.classList.contains("hidden")) return;
+  const p = modelLabels.projected.copy(cablenetPick.at);
+  p.z += lift;
+  p.project(camera);
+  const x = rect.left + (p.x * 0.5 + 0.5) * rect.width;
+  const y = rect.top + (-p.y * 0.5 + 0.5) * rect.height;
+  if (p.z > 1 || x < rect.left || x >= viewRight() || y < rect.top || y > rect.bottom) {
+    card.classList.add("hidden");
+    cablenetPick.at = null;
+    return;
+  }
+  placeCard(card, x, y);
+}
+
+// A click on a node while a Cable net lens is up shows its numbers beside it;
+// a click anywhere else closes the card. A drag (an orbit) is not a click, and
+// a press a stamp, an aim, a carry, prop editing or a scatter tool owns is not
+// one either: taken at the press, before the studio's own handler acts on it.
+function pickCableNetNode(event) {
+  const card = document.getElementById("cablenet-pick");
+  if (!card) return;
+  card.classList.add("hidden");
+  cablenetPick.at = null;
+  const stage = modelLabels.stage;
+  if (!stage || !cableNetLensUp()) return;
+  const rect = canvas.getBoundingClientRect();
+  const lift = state.objects.nodes ? state.objects.nodes.position.z : 0;
+  const point = new THREE.Vector3();
+  let best = null;
+  let nearest = 14;
+  state.bundle.analysis_mesh.vertices.forEach((v, i) => {
+    point.set(v[0], v[1], v[2] + lift).project(camera);
+    if (point.z > 1) return;
+    const x = rect.left + (point.x * 0.5 + 0.5) * rect.width;
+    const y = rect.top + (-point.y * 0.5 + 0.5) * rect.height;
+    const distance = Math.hypot(x - event.clientX, y - event.clientY);
+    if (distance < nearest) { nearest = distance; best = { i, x, y }; }
+  });
+  if (!best) return;
+  card.innerHTML = pickHtml(state.cablenet, stage, best.i, state.cablenetVerdict);
+  card.classList.remove("hidden");
+  const v = state.bundle.analysis_mesh.vertices[best.i];
+  cablenetPick.at = new THREE.Vector3(v[0], v[1], v[2]);
+  placeCard(card, best.x, best.y);
+}
+
+function noteCableNetPress(event) {
+  const free = event.button === 0 && !stampRig && !aimingLight && !state.carrying && !state.propEdit
+    && !state.scatterArmed;
+  cablenetPick.down = free ? [event.clientX, event.clientY] : null;
+}
+
+function releaseCableNetPress(event) {
+  const down = cablenetPick.down;
+  cablenetPick.down = null;
+  if (!down || Math.hypot(event.clientX - down[0], event.clientY - down[1]) > 4) return;
+  if (formworkTab && formworkTab.active()) formworkTab.pick(event);
+  else pickCableNetNode(event);
+}
+
+canvas.addEventListener("pointerdown", noteCableNetPress);
+canvas.addEventListener("pointerup", releaseCableNetPress);
 
 // ---------- the build stage index ----------
 // How many courses have a piece down at build time: one past the highest
@@ -13045,6 +13364,7 @@ async function loadStudy(exportName) {
   // replaces: it lets go now, and reads the new study's demand once the
   // scene is built (below).
   cableNet.clear();
+  if (formworkTab) formworkTab.clear();
   // An immediate load supersedes a pending settle timer: without this, a
   // size commit followed within the settle window by a material, pattern
   // or study change fires two full server cuts instead of one.
@@ -13162,6 +13482,7 @@ async function loadStudy(exportName) {
     // The scene is built: the cable net section reads this study's demand
     // under the options just recorded, and the lenses paint from it.
     cableNet.reload();
+    if (formworkTab) formworkTab.reload();
     loaded = true;
     logStudio("loaded " + exportName + " (" + materialLabel + ", "
       + patternLabel(state.pattern) + ", " + state.size + " m) in "
@@ -13183,6 +13504,7 @@ async function loadStudy(exportName) {
     // screen is the one state.loadedOptions names (a refused load never
     // adopted its own), so the section reads that study's demand again.
     if (state.bundle) cableNet.reload();
+    if (state.bundle && formworkTab) formworkTab.reload();
   }
   return loaded;
 }
@@ -13374,6 +13696,7 @@ function clearScene() {
   // the section lets go of it, which reaches the lenses through onDemand.
   for (const name of CABLENET_LENS_NAMES) state.layers[name] = false;
   cableNet.clear();
+  if (formworkTab) formworkTab.clear();
   state.cablenet = null;
   state.cablenetCeiling = null;
   state.cablenetGhost = false;
@@ -15722,6 +16045,7 @@ const cableNet = mountCableNet({
   studyOptions: cablenetStudyOptions,
   onDemand: (demand) => {
     state.cablenet = demand;
+    if (formworkTab) formworkTab.refresh();
     state.cablenetGhost = cableNetLensUp();
     buildLayerToggles();
     if (!state.bundle || !state.objects.wires) return;
@@ -15731,14 +16055,133 @@ const cableNet = mountCableNet({
     paintCableNetLenses(true);
     applyShowMode();
   },
-  onCeiling: (ceiling) => {
+  onCeiling: (ceiling, verdict, most) => {
     state.cablenetCeiling = ceiling;
-    if (state.layers.prestress && state.bundle && state.objects.wires) paintCableNetLenses(true);
+    state.cablenetVerdict = verdict || null;
+    state.cablenetMost = most == null ? null : most;
+    if (formworkTab) formworkTab.refresh();
+    if ((state.layers.prestress || state.layers.holds) && state.bundle && state.objects.wires) {
+      paintCableNetLenses(true);
+    }
     buildLayerToggles();
+  },
+  onPopup: () => {
+    // the Cable net pop-up takes the left: the data sheet shuts, the live graphs tuck
+    document.getElementById("data-panel").classList.add("hidden");
+    if (formworkTab) formworkTab.closePopup();
+    document.getElementById("data-button").classList.remove("active");
+    if (!document.getElementById("graphs-panel").classList.contains("hidden")) setGraphsTucked(true);
+  },
+});
+// ---------- the Formwork tab ----------
+// The raise played from the physics engine (spec 2026-10-10 formwork tab).
+// While the tab is open the studio's timeline stands still, its own net,
+// shell, trees, lenses, labels and card are down, and the scene shows the
+// capture the player is at; leaving gives them back as they were.
+const formworkView = createFormworkView(THREE);
+formworkView.group.visible = false;
+scene.add(formworkView.group);
+const formworkHidden = new Set();
+// The take's clock as the tab found it: the machine is stood at its working
+// place while the tab is open, and the take is put back on leaving.
+let formworkTakeT = null;
+
+function studioFormworkObjects() {
+  const arrows = Object.keys(state.objects).filter((key) => key.endsWith("Arrows"))
+    .map((key) => state.objects[key]);
+  // the studio's own formwork act too: its net, nodes and columns
+  return [state.objects.shell, state.objects.falsework, state.objects.wires, state.objects.nodes,
+          state.objects.principal, state.objects.columns, state.objects.holdMarkers, ...arrows,
+          formworkObjects && formworkObjects.group]
+    .filter(Boolean);
+}
+
+// Every frame while the tab is open: whatever the studio has put back on
+// screen since (a lens repainted, a study loaded) is stood down again.
+function holdStudioForFormwork() {
+  for (const object of studioFormworkObjects()) {
+    if (object.visible) {
+      object.visible = false;
+      formworkHidden.add(object);
+    }
+  }
+}
+
+function enterFormworkTab() {
+  if (state.timeline && state.timeline.playing) {
+    state.timeline.playing = false;
+    paintPlayButtons("Play");
+  }
+  formworkTakeT = state.timeline ? state.timeline.t : null;
+  // the machine at its working place: the act's end, machine time 100
+  if (state.bundle && state.timeline && formworkSeconds() > 0) applySceneAtTime(formworkSeconds());
+  formworkView.group.visible = true;
+  holdStudioForFormwork();
+}
+
+function leaveFormworkTab() {
+  formworkView.group.visible = false;
+  for (const object of formworkHidden) object.visible = true;
+  formworkHidden.clear();
+  if (machineObjects) machineObjects.group.visible = true;
+  if (state.bundle && formworkTakeT != null) applySceneAtTime(formworkTakeT);
+  formworkTakeT = null;
+  applyShowMode();
+  if (state.bundle) applyWireForces();
+  if (state.bundle) recolourSegments();
+  if (cableNetLensUp()) paintCableNetLenses(true);
+}
+
+function paintFormworkLegend(key) {
+  if (!key) {
+    document.getElementById("legend").classList.add("hidden");
+    return;
+  }
+  if (key.bands) paintBandLegend(key.title, key.bands, key.min, key.max);
+  else paintScalarLegend(key.title, key.min, "", key.max);
+}
+
+// A worst table's row turns the camera onto its part, from where it stands.
+function aimFormworkAt(point) {
+  if (!point) return;
+  const target = new THREE.Vector3(point[0], point[1], point[2]);
+  camera.position.add(target.clone().sub(controls.target));
+  controls.target.copy(target);
+  controls.update();
+}
+
+formworkTab = mountFormwork({
+  studyName: cablenetStudyName,
+  studyOptions: cablenetStudyOptions,
+  machine: () => (cableNet.choices ? cableNet.choices() : null),
+  designPrestress: () => (state.cablenet && state.cablenet.prestress != null
+    && Number.isFinite(Number(state.cablenet.prestress)) ? Number(state.cablenet.prestress) : null),
+  tolerance: () => Number(document.getElementById("cablenet-tolerance").value),
+  view: formworkView,
+  hooks: {
+    enter: enterFormworkTab,
+    leave: leaveFormworkTab,
+    legend: paintFormworkLegend,
+    showMachine: (on) => { if (machineObjects) machineObjects.group.visible = on; },
+    aim: aimFormworkAt,
+    camera: () => camera,
+    canvasRect: () => canvas.getBoundingClientRect(),
+    viewRight,
+    onPopup: () => {
+      // the worst tables take the left: the data sheet and the Cable net pop-up shut
+      document.getElementById("data-panel").classList.add("hidden");
+      document.getElementById("data-button").classList.remove("active");
+      cableNet.closePopup();
+      if (!document.getElementById("graphs-panel").classList.contains("hidden")) setGraphsTucked(true);
+    },
   },
 });
 document.getElementById("data-button").addEventListener("click", () => {
   const panel = document.getElementById("data-panel");
+  if (panel.classList.contains("hidden")) {
+    cableNet.closePopup();
+    if (formworkTab) formworkTab.closePopup();
+  }
   renderDataPanel(state.bundle ? state.bundle.verification : null);
   renderAnalysisTab();
   showDataTab("data-analysis");
@@ -18023,6 +18466,12 @@ function applyShowMode() {
 // ghost is on (a heatmap, a new skin) is ghosted by the next applyShowMode.
 // The program is asked to change only when something did: transparent is
 // compiled into it, and applyShowMode runs on every frame of a take.
+// Under a Cable net lens the skin is light transparent grey, without its
+// texture, so the lens's colours read through it (spec 2026-10-09 Cable net
+// display, section 5.1); each piece's own look comes back after.
+const GHOST_GREY = 0xdcdcdc;
+const GHOST_OPACITY = 0.3;
+
 function ghostPiece(segment, on) {
   const material = segment.material;
   if (!material) return;
@@ -18032,16 +18481,24 @@ function ghostPiece(segment, on) {
     kept.ghostOpacity = material.opacity;
     kept.ghostTransparent = material.transparent;
     kept.ghostDepthWrite = material.depthWrite;
+    kept.ghostColor = material.color ? material.color.getHex() : null;
+    kept.ghostMap = material.map || null;
     material.transparent = true;
-    material.opacity = 0.35;
+    material.opacity = GHOST_OPACITY;
     material.depthWrite = false;
+    if (material.color) material.color.setHex(GHOST_GREY);
+    material.map = null;
   } else {
     material.opacity = kept.ghostOpacity;
     material.transparent = kept.ghostTransparent;
     material.depthWrite = kept.ghostDepthWrite;
+    if (kept.ghostColor != null && material.color) material.color.setHex(kept.ghostColor);
+    material.map = kept.ghostMap;
     delete kept.ghostOpacity;
     delete kept.ghostTransparent;
     delete kept.ghostDepthWrite;
+    delete kept.ghostColor;
+    delete kept.ghostMap;
   }
   material.needsUpdate = true;
 }
@@ -18537,6 +18994,7 @@ function startPlaying(fromTheTop) {
 }
 
 function togglePlay() {
+  if (formworkTab && formworkTab.active()) return;
   if (!state.timeline) return;
   if (state.timeline.playing) {
     state.timeline.playing = false;
@@ -18547,6 +19005,7 @@ function togglePlay() {
 }
 
 function restartTake() {
+  if (formworkTab && formworkTab.active()) return;
   if (!state.timeline) return;
   startPlaying(true);
 }
@@ -18556,6 +19015,7 @@ function restartTake() {
 // to nought through applyTimeline, so the scene and the camera both stand
 // where the take begins, and the view stays the animation's.
 function rewindTake() {
+  if (formworkTab && formworkTab.active()) return;
   if (!state.timeline) return;
   state.timeline.playing = false;
   paintPlayButtons("Play");
@@ -18929,6 +19389,16 @@ function frame(now) {
     lastRangeFill = now;
     settleRangeFills();
   }
+  // The Formwork tab holds the studio's own take still and keeps its objects
+  // down while the player runs (spec 2026-10-10 formwork tab, section 7).
+  if (formworkTab && formworkTab.active()) {
+    if (state.timeline && state.timeline.playing) {
+      state.timeline.playing = false;
+      paintPlayButtons("Play");
+    }
+    holdStudioForFormwork();
+    formworkTab.tick(delta);
+  }
   if (state.timeline && state.timeline.playing) {
     applyTimeline(Math.min(state.timeline.t + delta * state.timeline.speed, timelineDuration()));
     if (state.timeline.t >= timelineDuration()) {
@@ -19152,10 +19622,16 @@ window.__studio = { state, scene, controls, applyDayCycle, placeProp,
   get shaftsPass() { return shaftsPass; },
   // The clock, so a probe can photograph a named hour through the same
   // path the day track takes.
-  setSunMinutes };
+  setSunMinutes,
+  // The Formwork tab's drawing, so a probe can see what the tab draws, and
+  // the props, so it can put them out of view (bench/scripts/formwork_screens.mjs).
+  formworkView, propsGroup };
 // The page's boot-fault banner (index.html) stands down once evaluation has
 // made it to here: from this line on, a stray rejection is an incident for
 // the diagnostics log, not a "half-built panel" alarm.
 window.__studioReady = true;
+// The Formwork tab, if it is the tab this browser last left open, entered now
+// that the whole module has run: its hooks read objects declared below its mount.
+formworkTab.setActive(!document.getElementById("formwork-section").classList.contains("hidden"));
 
 export { state, buildScene, setLayer, applyCut, applyTimeline, timelineDuration, rebuildTimeline };
