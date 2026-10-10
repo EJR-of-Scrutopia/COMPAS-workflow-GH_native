@@ -1726,6 +1726,7 @@ body.stilling #model-labels, body.stilling #cablenet-pick { display: none; }
   padding: 1px 4px; border-radius: 3px; background: var(--scrim-thin); color: var(--ink);
   font-size: 10px; line-height: 1.3; white-space: nowrap; }
 body.stilling #formwork-labels, body.stilling #formwork-pick { display: none; }
+body.formwork-open #model-labels, body.formwork-open #cablenet-pick { display: none; }
 #formwork-pick { position: fixed; z-index: 27; min-width: 180px; padding: var(--s2) var(--s3);
   background: var(--scrim); -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px);
   border: 1px solid var(--line); border-radius: var(--radius); font-size: var(--t-2); }

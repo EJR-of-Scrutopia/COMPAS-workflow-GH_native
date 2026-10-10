@@ -6,6 +6,8 @@ import { GroundedSkybox } from "three/addons/objects/GroundedSkybox.js";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 import { buildLiveSeries, liveSpecs, liveCut, seriesToCsv } from "./live_graphs.js";
 import { mountCableNet } from "./cablenet.js";
+import { mountFormwork } from "./formwork.js";
+import { createFormworkView } from "./formwork_view.js";
 import {
   escapeHtml, holdsFor, instantAt, labelTargets, lensLegend, pickHtml, sagBand, spreadLabels,
   stageCaption,
@@ -1104,6 +1106,9 @@ function clampCameraAboveFloor() {
 // every frame, and a `let` declared down there would sit in its temporal
 // dead zone if a render ever happened during boot.
 let propGumball = null;
+// The Formwork tab's controller, mounted far below; declared up here because
+// renderView places its labels every frame, a render during boot included.
+let formworkTab = null;
 // The instanced props' batches, declared up here for the same reason:
 // renderView settles them every frame (see "the instanced props").
 const propBatches = new Map();
@@ -1126,6 +1131,7 @@ function renderView() {
   // moves, rather than sitting where the prop used to be on screen.
   placeHoverBadge();
   placeModelLabels();
+  if (formworkTab) formworkTab.place();
   settleAtmosphereFloor();
   armShafts();
   composer.render();
@@ -7183,6 +7189,7 @@ function activateTab(sectionId) {
     section.classList.toggle("hidden", !active);
     if (active) section.open = true;
   }
+  if (formworkTab) formworkTab.setActive(sectionId === "formwork-section");
   try {
     localStorage.setItem("vaulted-tab", sectionId);
   } catch (error) {
@@ -12654,7 +12661,8 @@ function releaseCableNetPress(event) {
   const down = cablenetPick.down;
   cablenetPick.down = null;
   if (!down || Math.hypot(event.clientX - down[0], event.clientY - down[1]) > 4) return;
-  pickCableNetNode(event);
+  if (formworkTab && formworkTab.active()) formworkTab.pick(event);
+  else pickCableNetNode(event);
 }
 
 canvas.addEventListener("pointerdown", noteCableNetPress);
@@ -13356,6 +13364,7 @@ async function loadStudy(exportName) {
   // replaces: it lets go now, and reads the new study's demand once the
   // scene is built (below).
   cableNet.clear();
+  if (formworkTab) formworkTab.clear();
   // An immediate load supersedes a pending settle timer: without this, a
   // size commit followed within the settle window by a material, pattern
   // or study change fires two full server cuts instead of one.
@@ -13473,6 +13482,7 @@ async function loadStudy(exportName) {
     // The scene is built: the cable net section reads this study's demand
     // under the options just recorded, and the lenses paint from it.
     cableNet.reload();
+    if (formworkTab) formworkTab.reload();
     loaded = true;
     logStudio("loaded " + exportName + " (" + materialLabel + ", "
       + patternLabel(state.pattern) + ", " + state.size + " m) in "
@@ -13494,6 +13504,7 @@ async function loadStudy(exportName) {
     // screen is the one state.loadedOptions names (a refused load never
     // adopted its own), so the section reads that study's demand again.
     if (state.bundle) cableNet.reload();
+    if (state.bundle && formworkTab) formworkTab.reload();
   }
   return loaded;
 }
@@ -13685,6 +13696,7 @@ function clearScene() {
   // the section lets go of it, which reaches the lenses through onDemand.
   for (const name of CABLENET_LENS_NAMES) state.layers[name] = false;
   cableNet.clear();
+  if (formworkTab) formworkTab.clear();
   state.cablenet = null;
   state.cablenetCeiling = null;
   state.cablenetGhost = false;
@@ -16033,6 +16045,7 @@ const cableNet = mountCableNet({
   studyOptions: cablenetStudyOptions,
   onDemand: (demand) => {
     state.cablenet = demand;
+    if (formworkTab) formworkTab.refresh();
     state.cablenetGhost = cableNetLensUp();
     buildLayerToggles();
     if (!state.bundle || !state.objects.wires) return;
@@ -16046,6 +16059,7 @@ const cableNet = mountCableNet({
     state.cablenetCeiling = ceiling;
     state.cablenetVerdict = verdict || null;
     state.cablenetMost = most == null ? null : most;
+    if (formworkTab) formworkTab.refresh();
     if ((state.layers.prestress || state.layers.holds) && state.bundle && state.objects.wires) {
       paintCableNetLenses(true);
     }
@@ -16054,13 +16068,112 @@ const cableNet = mountCableNet({
   onPopup: () => {
     // the Cable net pop-up takes the left: the data sheet shuts, the live graphs tuck
     document.getElementById("data-panel").classList.add("hidden");
+    if (formworkTab) formworkTab.closePopup();
     document.getElementById("data-button").classList.remove("active");
     if (!document.getElementById("graphs-panel").classList.contains("hidden")) setGraphsTucked(true);
   },
 });
+// ---------- the Formwork tab ----------
+// The raise played from the physics engine (spec 2026-10-10 formwork tab).
+// While the tab is open the studio's timeline stands still, its own net,
+// shell, trees, lenses, labels and card are down, and the scene shows the
+// capture the player is at; leaving gives them back as they were.
+const formworkView = createFormworkView(THREE);
+formworkView.group.visible = false;
+scene.add(formworkView.group);
+const formworkHidden = new Set();
+
+function studioFormworkObjects() {
+  const arrows = Object.keys(state.objects).filter((key) => key.endsWith("Arrows"))
+    .map((key) => state.objects[key]);
+  return [state.objects.shell, state.objects.falsework, state.objects.wires, state.objects.nodes,
+          state.objects.principal, state.objects.columns, state.objects.holdMarkers, ...arrows]
+    .filter(Boolean);
+}
+
+// Every frame while the tab is open: whatever the studio has put back on
+// screen since (a lens repainted, a study loaded) is stood down again.
+function holdStudioForFormwork() {
+  for (const object of studioFormworkObjects()) {
+    if (object.visible) {
+      object.visible = false;
+      formworkHidden.add(object);
+    }
+  }
+}
+
+function enterFormworkTab() {
+  if (state.timeline && state.timeline.playing) {
+    state.timeline.playing = false;
+    paintPlayButtons("Play");
+  }
+  formworkView.group.visible = true;
+  holdStudioForFormwork();
+}
+
+function leaveFormworkTab() {
+  formworkView.group.visible = false;
+  for (const object of formworkHidden) object.visible = true;
+  formworkHidden.clear();
+  if (machineObjects) machineObjects.group.visible = true;
+  if (state.bundle && state.timeline) applySceneAtTime(state.timeline.t);
+  applyShowMode();
+  if (state.bundle) recolourSegments();
+  if (cableNetLensUp()) paintCableNetLenses(true);
+}
+
+function paintFormworkLegend(key) {
+  if (!key) {
+    document.getElementById("legend").classList.add("hidden");
+    return;
+  }
+  if (key.bands) paintBandLegend(key.title, key.bands, key.min, key.max);
+  else paintScalarLegend(key.title, key.min, "", key.max);
+}
+
+// A worst table's row turns the camera onto its part, from where it stands.
+function aimFormworkAt(point) {
+  if (!point) return;
+  const target = new THREE.Vector3(point[0], point[1], point[2]);
+  camera.position.add(target.clone().sub(controls.target));
+  controls.target.copy(target);
+  controls.update();
+}
+
+formworkTab = mountFormwork({
+  studyName: cablenetStudyName,
+  studyOptions: cablenetStudyOptions,
+  machine: () => (cableNet.choices ? cableNet.choices() : null),
+  designPrestress: () => (state.cablenet && state.cablenet.prestress != null
+    && Number.isFinite(Number(state.cablenet.prestress)) ? Number(state.cablenet.prestress) : null),
+  tolerance: () => Number(document.getElementById("cablenet-tolerance").value),
+  view: formworkView,
+  hooks: {
+    enter: enterFormworkTab,
+    leave: leaveFormworkTab,
+    legend: paintFormworkLegend,
+    showMachine: (on) => { if (machineObjects) machineObjects.group.visible = on; },
+    aim: aimFormworkAt,
+    camera: () => camera,
+    canvasRect: () => canvas.getBoundingClientRect(),
+    viewRight,
+    onPopup: () => {
+      // the worst tables take the left: the data sheet and the Cable net pop-up shut
+      document.getElementById("data-panel").classList.add("hidden");
+      document.getElementById("data-button").classList.remove("active");
+      cableNet.closePopup();
+      if (!document.getElementById("graphs-panel").classList.contains("hidden")) setGraphsTucked(true);
+    },
+  },
+});
+formworkTab.setActive(!document.getElementById("formwork-section").classList.contains("hidden"));
+
 document.getElementById("data-button").addEventListener("click", () => {
   const panel = document.getElementById("data-panel");
-  if (panel.classList.contains("hidden")) cableNet.closePopup();
+  if (panel.classList.contains("hidden")) {
+    cableNet.closePopup();
+    if (formworkTab) formworkTab.closePopup();
+  }
   renderDataPanel(state.bundle ? state.bundle.verification : null);
   renderAnalysisTab();
   showDataTab("data-analysis");
@@ -19264,6 +19377,16 @@ function frame(now) {
   if (now - lastRangeFill > RANGE_FILL_MS) {
     lastRangeFill = now;
     settleRangeFills();
+  }
+  // The Formwork tab holds the studio's own take still and keeps its objects
+  // down while the player runs (spec 2026-10-10 formwork tab, section 7).
+  if (formworkTab && formworkTab.active()) {
+    if (state.timeline && state.timeline.playing) {
+      state.timeline.playing = false;
+      paintPlayButtons("Play");
+    }
+    holdStudioForFormwork();
+    formworkTab.tick(delta);
   }
   if (state.timeline && state.timeline.playing) {
     applyTimeline(Math.min(state.timeline.t + delta * state.timeline.speed, timelineDuration()));

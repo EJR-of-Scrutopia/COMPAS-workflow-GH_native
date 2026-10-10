@@ -282,7 +282,8 @@ def test_the_pop_up_opens_and_shuts_from_the_menu_and_remembers_its_tab():
     assert 'const POPUP_KEY = "vaulted-cablenet-popup";' in JS
     tab = _function_body(JS, "showTab")
     assert 'pane.classList.toggle("hidden", pane.id !== id)' in tab and "savePopup();" in tab
-    assert "return { reload, clear, closePopup: () => setPopup(false) };" in JS
+    assert ("return { reload, clear, closePopup: () => setPopup(false), "
+            "choices: () => panel.choices };") in JS
 
 
 def test_the_pop_up_takes_the_left_from_the_data_sheet_and_the_live_graphs():
@@ -365,7 +366,8 @@ def test_a_late_demand_cannot_replace_a_newer_one():
 
 
 def test_clear_empties_everything_that_belongs_to_the_study_on_screen():
-    assert "return { reload, clear, closePopup: () => setPopup(false) };" in JS
+    assert ("return { reload, clear, closePopup: () => setPopup(false), "
+            "choices: () => panel.choices };") in JS
     # and a page without the section hands back one too, so the studio's call cannot throw
     assert "return { reload: async () => {}, clear: () => {}, closePopup: () => {} };" in JS
     body = _function_body(JS, "clear")

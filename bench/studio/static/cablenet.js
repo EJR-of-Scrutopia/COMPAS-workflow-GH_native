@@ -620,5 +620,5 @@ export function mountCableNet({ studyName, studyOptions, onDemand, onCeiling, on
   if (remembered.open) setPopup(true);
   loadFolder();
   reload();
-  return { reload, clear, closePopup: () => setPopup(false) };
+  return { reload, clear, closePopup: () => setPopup(false), choices: () => panel.choices };
 }
