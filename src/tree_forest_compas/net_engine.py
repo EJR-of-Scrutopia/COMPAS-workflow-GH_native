@@ -478,14 +478,12 @@ def settle(x, net, loads, fixed, contacts, rounds=SETTLE_ROUNDS, wires=None, sli
             resting[node] = np.array([x[node, 0], x[node, 1], 0.0])
         changes = []
         released = set()
-        # the head or hold that would have to pull hardest lets go, one a round:
-        # freeing one changes what the others carry, and freeing them together
-        # let a node fall down through its own prop (found on the holds, spec
-        # 2026-10-10 formwork holds); a tied node pulls as well as pushes
-        pulled = [node for node in sorted(engaged) if node not in contacts.tied
-                  and rest.reaction[node, 2] < -LEFTOVER_N]
-        if pulled:
-            node = min(pulled, key=lambda n: (float(rest.reaction[n, 2]), n))
+        # every head or hold that would have to pull lets go (a tied node pulls
+        # as well as pushes); one let go that then comes down over its prop is
+        # taken back below, and one let go twice in this settle stays off
+        for node in sorted(engaged):
+            if node in contacts.tied or rest.reaction[node, 2] >= -LEFTOVER_N:
+                continue
             engaged.discard(node)
             released.add(node)
             left.add(node)
