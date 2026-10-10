@@ -9,7 +9,8 @@
 //   node bench/scripts/formwork_screens.mjs
 // Env: STUDIO_URL (default http://127.0.0.1:8601), BROWSER_EXE (the
 // Playwright Chromium), SCREENS_OUT, STUDY (default the 5 sided form), CUT
-// (JSON, default its tile cut), RUN=1 to press Run formwork analysis first:
+// (JSON, default its tile cut), GPU=1 to draw on the graphics card, RUN=1 to
+// press Run formwork analysis first:
 // about two minutes on the real study, and it rewrites the cut's capture
 // document under bench/studies, so copy that aside first.
 
@@ -149,7 +150,10 @@ const browser = await puppeteer.launch({
   executablePath: BROWSER_EXE,
   headless: true,
   protocolTimeout: 900000,
-  args: ["--no-sandbox", "--enable-unsafe-swiftshader", "--use-gl=angle", "--use-angle=swiftshader"],
+  // GPU=1 draws on the graphics card (a picture in seconds); otherwise SwiftShader
+  args: process.env.GPU === "1"
+    ? ["--no-sandbox", "--use-gl=angle", "--use-angle=d3d11", "--ignore-gpu-blocklist", "--enable-gpu"]
+    : ["--no-sandbox", "--enable-unsafe-swiftshader", "--use-gl=angle", "--use-angle=swiftshader"],
   defaultViewport: { width: 1600, height: 900 },
 });
 try {
