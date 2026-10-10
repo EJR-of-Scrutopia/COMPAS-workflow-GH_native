@@ -129,7 +129,11 @@ export function mountFormwork({ studyName, studyOptions, machine, designPrestres
       + `<tr><th>Prestress</th><td>${prestress}</td></tr></table>`;
   }
 
+  // Nothing is said while the document is being looked for: "No formwork run"
+  // only once it is known there is none (found on screen: it showed while the
+  // 6 MB document loaded).
   function renderWarnings() {
+    if (tab.loading) { el.warnings.innerHTML = ""; return; }
     el.warnings.innerHTML = formworkWarnings(tab.sim, chosen())
       .map((line) => `<div class="cablenet-warning">${esc(line)}</div>`).join("");
   }
@@ -333,6 +337,8 @@ export function mountFormwork({ studyName, studyOptions, machine, designPrestres
     const mine = ++tab.ticket;
     const options = studyOptions();
     let sim = null;
+    tab.loading = true;
+    renderWarnings();
     if (options && studyName()) {
       try {
         sim = readSim(await getJson(simUrl(studyName(), options)));
@@ -341,6 +347,7 @@ export function mountFormwork({ studyName, studyOptions, machine, designPrestres
       }
     }
     if (mine !== tab.ticket) return;
+    tab.loading = false;
     tab.sim = sim;
     tab.times = sim ? captureTimes(sim.captures) : [];
     tab.worst = sim ? worstTables(sim) : null;

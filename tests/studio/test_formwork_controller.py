@@ -65,6 +65,18 @@ def test_the_run_sends_the_cut_the_machine_and_the_wall_and_never_a_prestress():
     assert 'named ? run.message.split(": ")[0] + ": " + counter : counter' in watch
 
 
+def test_no_run_is_said_only_once_the_document_has_been_looked_for():
+    # found on screen: opening the tab drew "No formwork run: Run formwork
+    # analysis" while the 6 MB document was still loading, an invitation to
+    # start a search of several minutes for nothing
+    load = _inner(JS, "load")
+    assert load.index("tab.loading = true;") < load.index("await getJson(simUrl(")
+    assert load.index("if (mine !== tab.ticket) return;") < load.index("tab.loading = false;")
+    warnings = _inner(JS, "renderWarnings")
+    assert warnings.startswith('function renderWarnings() {\n'
+                               '    if (tab.loading) { el.warnings.innerHTML = ""; return; }')
+
+
 def test_the_machine_is_the_cable_net_tabs_one_a_study():
     chosen = _inner(JS, "chosen")
     assert "const choices = machine();" in chosen and "choices.pulley != null" in chosen
