@@ -254,6 +254,121 @@ def rows_from(arrays, binding, plan, thickness, density):
     return rows
 
 
+def hold_bands(faces, heads):
+    """Each node's band (spec 2026-10-10 formwork holds, section 2): the quads
+    sorted into two families from the principal lines out, an edge joining two
+    head nodes running along, across a quad an opposite edge keeping its family
+    and a side edge taking the other; a node's band is its steps across, along
+    across edges only, to the nearest head node. Returns {node: band} for every
+    node the across edges reach. A net that does not sort is refused."""
+
+    message = ("the holds need a quad net in which every line runs parallel to a principal "
+               "line")
+    if any(len(face) != 4 for face in faces):
+        raise FormworkError(message + ": this net has faces that are not quads")
+    heads = {int(node) for node in heads}
+    key = lambda a, b: (a, b) if a < b else (b, a)
+    face_edges = [[key(int(f[i]), int(f[(i + 1) % 4])) for i in range(4)] for f in faces]
+    edge_faces = {}
+    for index, edges in enumerate(face_edges):
+        for k, edge in enumerate(edges):
+            edge_faces.setdefault(edge, []).append((index, k))
+    along = [edge for edge in edge_faces if edge[0] in heads and edge[1] in heads]
+    if not along:
+        raise FormworkError(message + ": no two head nodes are joined, so there is no "
+                                      "principal line")
+    family = {edge: "along" for edge in along}
+    queue = list(along)
+    while queue:
+        edge = queue.pop()
+        for index, k in edge_faces[edge]:
+            edges = face_edges[index]
+            other = "across" if family[edge] == "along" else "along"
+            for neighbour, wanted in ((edges[(k + 2) % 4], family[edge]),
+                                      (edges[(k + 1) % 4], other), (edges[(k + 3) % 4], other)):
+                if neighbour not in family:
+                    family[neighbour] = wanted
+                    queue.append(neighbour)
+                elif family[neighbour] != wanted:
+                    raise FormworkError(message + ": the lines cross themselves at nodes {} "
+                                                  "and {}".format(*neighbour))
+    across = {}
+    for (a, b), kind in family.items():
+        if kind == "across":
+            across.setdefault(a, []).append(b)
+            across.setdefault(b, []).append(a)
+    bands = {node: 0 for node in heads}
+    frontier = sorted(heads)
+    while frontier:
+        reached = []
+        for a in frontier:
+            for b in across.get(a, []):
+                if b not in bands:
+                    bands[b] = bands[a] + 1
+                    reached.append(b)
+        frontier = reached
+    return bands
+
+
+def hold_spacings(bands):
+    """The spacings the search tries, widest first: the divisors of the widest
+    band, so the held lines are evenly spaced from the principal line to the
+    open edge (10, 5, 2, 1 on the 5 sided form)."""
+
+    widest = max(bands.values(), default=0)
+    return [s for s in range(widest, 0, -1) if widest % s == 0]
+
+
+def holds_at(bands, spacing, exclude=()):
+    """The held nodes at a spacing: every node in a band that is a multiple of
+    it, never a head or a node in exclude (the rim's wire nodes)."""
+
+    exclude = set(int(node) for node in exclude)
+    return sorted(node for node, band in bands.items()
+                  if band > 0 and band % spacing == 0 and node not in exclude)
+
+
+def spacing_name(spacing, widest):
+    """A spacing as the tab says it: the open edges, every 5th line, every line."""
+
+    if spacing == widest:
+        return "the open edges"
+    if spacing == 1:
+        return "every line"
+    suffix = {1: "st", 2: "nd", 3: "rd"}.get(spacing % 10 if spacing % 100 not in (11, 12, 13)
+                                              else 0, "th")
+    return "every {}{} line".format(spacing, suffix)
+
+
+def search_holds(request, bands, exclude, tolerance_mm, runner, progress=None):
+    """The search (spec 2026-10-10 formwork holds, section 4): each spacing in
+    turn, widest first, one engine run each, stopping at the first whose worst
+    deviation from the jacking on is within the tolerance; with none, the
+    every-line run is kept. Returns the chosen run's document with its holds
+    block."""
+
+    widest = max(bands.values())
+    tried = []
+    for spacing in hold_spacings(bands):
+        nodes = holds_at(bands, spacing, exclude)
+        name = spacing_name(spacing, widest)
+
+        def told(done, total, what, name=name):
+            if progress is not None:
+                progress(done, total, "{}: {}".format(name, what))
+
+        document = runner({**request, "holds": nodes}, told)
+        worst = (document.get("summary") or {}).get("holds_deviation_max_mm")
+        tried.append({"spacing": spacing, "count": len(nodes), "deviation_max_mm": worst})
+        if worst is not None and worst <= tolerance_mm:
+            break
+    met = tried[-1]["deviation_max_mm"] is not None and tried[-1]["deviation_max_mm"] <= tolerance_mm
+    document["holds"] = {"spacing": spacing, "bands": list(range(spacing, widest + 1, spacing)),
+                         "count": len(nodes), "tolerance_mm": float(tolerance_mm), "met": met,
+                         "tried": tried}
+    return document
+
+
 def request_from(inputs, arrays, binding, plan, thickness, density, ea, mass_per_metre,
                  prestress, wires_per_motor, wall, study=None, options=None, note=None):
     """The engine's request, every length in millimetres and every force in
@@ -308,7 +423,8 @@ def _subprocess_runner(python_exe: Path) -> Callable:
 
 def run_formwork(inputs, arrays, binding, plan, thickness, density, out_path, ea,
                  mass_per_metre, prestress, wires_per_motor, wall, study=None, options=None,
-                 note=None, runner=None, python_exe=None, progress=None):
+                 note=None, runner=None, python_exe=None, progress=None, holds="none",
+                 tolerance_mm=20.0):
     """From a checked study and its cut to a written capture document. runner,
     when given, replaces the subprocess: it takes the request and progress and
     returns the document. progress, when given, is called with (captures done,
@@ -318,6 +434,14 @@ def run_formwork(inputs, arrays, binding, plan, thickness, density, out_path, ea
                            mass_per_metre, prestress, wires_per_motor, wall, study, options, note)
     if runner is None:
         runner = _subprocess_runner(python_exe or FORMWORK_PYTHON)
-    document = runner(request, progress)
+    if holds == "search":
+        # the holds in whole bands from the principal lines, the wires' nodes
+        # never among them (spec 2026-10-10 formwork holds)
+        bands = hold_bands(arrays["faces"], [net for net, _ in inputs.heads])
+        document = search_holds(request, bands, {wire["node"] for wire in inputs.rim},
+                                tolerance_mm, runner, progress)
+    else:
+        document = runner(request, progress)
+        document["holds"] = None
     bundle.write_json_atomically(Path(out_path), document)
     return {"path": str(out_path), "captures": len(document.get("captures") or [])}

@@ -6,8 +6,8 @@
 
 import {
   captureLabel, captureTimes, colourKey, formworkLabels, formworkPickHtml, formworkWarnings,
-  frameLine, frameLineHtml, labelKindsInView, paintOverlay, playhead, readSim, recordingCaption,
-  worstHtml, worstTables,
+  frameLine, frameLineHtml, holdsHtml, labelKindsInView, paintOverlay, playhead, readSim,
+  recordingCaption, worstHtml, worstTables,
 } from "./formwork_model.js";
 import { spreadLabels } from "./cablenet_model.js";
 
@@ -74,6 +74,7 @@ export function mountFormwork({ studyName, studyOptions, machine, designPrestres
     popupClose: byId("formwork-popup-close"), worst: byId("formwork-worst"),
     labels: byId("formwork-labels"), pick: byId("formwork-pick"),
     record: byId("formwork-record"),
+    holdsChoice: byId("formwork-holds-choice"), holds: byId("formwork-holds"),
   };
   const api = { active: () => false, setActive: () => {}, tick: () => {}, place: () => {},
                 pick: () => {}, clear: () => {}, reload: () => {}, refresh: () => {},
@@ -112,6 +113,13 @@ export function mountFormwork({ studyName, studyOptions, machine, designPrestres
              wall: Number(el.wall.value), prestress: designPrestress() };
   }
 
+  // The holds the run is asked for (spec 2026-10-10 formwork holds): a search
+  // of evenly spaced whole lines to the tolerance, or none.
+  function holdsChoice() {
+    const picked = el.holdsChoice.querySelector("input[name=formwork-holds]:checked");
+    return picked ? picked.value : "search";
+  }
+
   function renderMachine() {
     const c = chosen();
     const name = c.rope == null ? "none chosen"
@@ -121,7 +129,11 @@ export function mountFormwork({ studyName, studyOptions, machine, designPrestres
       + `<tr><th>Prestress</th><td>${prestress}</td></tr></table>`;
   }
 
+  // Nothing is said while the document is being looked for: "No formwork run"
+  // only once it is known there is none (found on screen: it showed while the
+  // 6 MB document loaded).
   function renderWarnings() {
+    if (tab.loading) { el.warnings.innerHTML = ""; return; }
     el.warnings.innerHTML = formworkWarnings(tab.sim, chosen())
       .map((line) => `<div class="cablenet-warning">${esc(line)}</div>`).join("");
   }
@@ -325,6 +337,8 @@ export function mountFormwork({ studyName, studyOptions, machine, designPrestres
     const mine = ++tab.ticket;
     const options = studyOptions();
     let sim = null;
+    tab.loading = true;
+    renderWarnings();
     if (options && studyName()) {
       try {
         sim = readSim(await getJson(simUrl(studyName(), options)));
@@ -333,9 +347,11 @@ export function mountFormwork({ studyName, studyOptions, machine, designPrestres
       }
     }
     if (mine !== tab.ticket) return;
+    tab.loading = false;
     tab.sim = sim;
     tab.times = sim ? captureTimes(sim.captures) : [];
     tab.worst = sim ? worstTables(sim) : null;
+    el.holds.innerHTML = sim ? holdsHtml(sim) : "";
     tab.at = 0;
     tab.shown = -1;
     setPlaying(false);
@@ -367,7 +383,11 @@ export function mountFormwork({ studyName, studyOptions, machine, designPrestres
       try {
         const run = await getJson(`/api/runs/${encodeURIComponent(runId)}`);
         if (tab.watcher !== poll) return;
-        el.runStatus.textContent = run.of > 0 ? `capture ${run.stage} of ${run.of}`
+        // a search names its try: the server's message is "<try>: <what>"
+        const counter = `capture ${run.stage} of ${run.of}`;
+        const named = tab.searching && typeof run.message === "string" && run.message.includes(": ");
+        el.runStatus.textContent = run.of > 0
+          ? (named ? run.message.split(": ")[0] + ": " + counter : counter)
           : `${run.state} (${run.phase})`;
         if (run.state === "done") {
           stopWatching();
@@ -397,10 +417,11 @@ export function mountFormwork({ studyName, studyOptions, machine, designPrestres
     if (!options || !studyName()) { el.runStatus.textContent = "open a study first"; return; }
     const c = chosen();
     el.run.disabled = true;
-    el.runStatus.textContent = "starting: about two minutes";
+    tab.searching = holdsChoice() === "search";
+    el.runStatus.textContent = tab.searching ? "starting: a few minutes, one run a spacing tried" : "starting: about two minutes";
     try {
       const body = { ...sentOptions(options), wires_per_motor: c.wires_per_motor,
-                     pulleys: c.pulleys, wall: c.wall };
+                     pulleys: c.pulleys, wall: c.wall, holds: holdsChoice(), tolerance_mm: Number(tolerance()) };
       if (c.rope != null) body.rope = c.rope;
       const response = await fetch(`/api/studies/${encodeURIComponent(studyName())}/formwork/run`,
         { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
@@ -496,6 +517,7 @@ export function mountFormwork({ studyName, studyOptions, machine, designPrestres
     el.labels.innerHTML = "";
     el.pick.classList.add("hidden");
     el.line.innerHTML = "";
+    el.holds.innerHTML = "";
     el.label.textContent = "";
     el.runStatus.textContent = "";
     el.run.disabled = false;

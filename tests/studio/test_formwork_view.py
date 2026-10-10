@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 
-from test_formwork_model import document
+from test_formwork_model import document, with_holds
 
 STATIC = Path(__file__).resolve().parents[2] / "bench" / "studio" / "static"
 
@@ -87,8 +87,60 @@ out.nearest = [view.nearestNode(camera, rect, 302, 99), view.nearestNode(camera,
 out.placed = [0, 1, 2, 3].map((i) => m.placedFaces(sim, i));
 view.clear();
 out.cleared = [view.group.children.length, view.parts(), view.point({ kind: "node", index: 0 })];
+// the holds' props (spec 2026-10-10 formwork holds, section 5): node 2 held
+const held = m.readSim(%(held)s);
+view.build(held);
+const props = () => view.parts().props;
+const withHolds = { ...every, holds: true };
+out.propsCount = view.group.children.length;
+view.show({ from: 0, to: 0, blend: 0, nearer: 0 }, { show: withHolds, colour: "off", tolerance: 20 });
+out.propsBefore = props().visible;
+view.show({ from: 2, to: 2, blend: 0, nearer: 2 }, { show: withHolds, colour: "off", tolerance: 20 });
+out.propPushing = [props().visible, props().count, at(props(), 0), colourAt(props(), 0)];
+view.show({ from: 3, to: 3, blend: 0, nearer: 3 }, { show: withHolds, colour: "off", tolerance: 20 });
+out.propPulling = [at(props(), 0), colourAt(props(), 0)];
+view.show({ from: 3, to: 3, blend: 0, nearer: 3 }, { show: every, colour: "off", tolerance: 20 });
+out.propUnticked = props().visible;
+view.clear();
+// a hold set leaning: pulling 50 N down and sideways after the jacking
+view.build(m.readSim(%(leaning)s));
+view.show({ from: 2, to: 2, blend: 0, nearer: 2 }, { show: withHolds, colour: "off", tolerance: 20 });
+out.propLeaning = [at(props(), 0), colourAt(props(), 0)];
+view.show({ from: 3, to: 3, blend: 0, nearer: 3 }, { show: withHolds, colour: "off", tolerance: 20 });
+out.propIdle = [at(props(), 0), colourAt(props(), 0)];
+view.clear();
+// a run with the capture after the jacking, after the hold at the same time
+view.build(m.readSim(%(jacked)s));
+view.show({ from: 1, to: 1, blend: 0, nearer: 1 }, { show: withHolds, colour: "off", tolerance: 20 });
+out.jackedHold = props().visible;
+view.show({ from: 2, to: 2, blend: 0, nearer: 2 }, { show: withHolds, colour: "off", tolerance: 20 });
+out.jackedSet = [props().visible, at(props(), 0), colourAt(props(), 0)];
+view.clear();
 console.log(JSON.stringify(out));
 """
+
+
+def _held():
+    doc = with_holds(document())
+    doc["net"]["holds"] = [2]                      # a node with a height, for its prop
+    return doc
+
+
+def _jacked():
+    # the hold, then the capture after the jacking at the same machine time,
+    # the hold pushing 40 N straight up
+    doc = _held()
+    jacked = json.loads(json.dumps(doc["captures"][2]))
+    jacked.update({"phase": "holds", "time": 100.0, "row": None, "quarter": None})
+    doc["captures"].insert(2, jacked)
+    return doc
+
+
+def _leaning():
+    doc = _held()
+    doc["captures"][2]["hold_push"] = doc["captures"][3]["hold_push"]     # 30, 0, -40
+    doc["captures"][3]["hold_push"] = doc["captures"][0]["hold_push"]     # nothing
+    return doc
 
 
 @pytest.fixture(scope="module")
@@ -100,7 +152,8 @@ def out(tmp_path_factory):
         "three": (STATIC / "vendor" / "three.module.js").resolve().as_uri(),
         "model": (STATIC / "formwork_model.js").resolve().as_uri(),
         "view": (STATIC / "formwork_view.js").resolve().as_uri(),
-        "doc": json.dumps(document())}, encoding="utf-8")
+        "doc": json.dumps(document()), "held": json.dumps(_held()),
+        "leaning": json.dumps(_leaning()), "jacked": json.dumps(_jacked())}, encoding="utf-8")
     result = subprocess.run(["node", str(script)], capture_output=True, text=True,
                             encoding="utf-8")
     assert result.returncode == 0, result.stderr
@@ -108,8 +161,9 @@ def out(tmp_path_factory):
 
 
 def test_the_view_builds_its_own_objects_and_the_still_ones_once(out):
-    # net, design, wires, push, its heads, trees, heads, anchors, ground and skin
-    assert out["children"] == 10
+    # net, design, wires, push, its heads, trees, heads, anchors, ground, skin
+    # and the holds' props
+    assert out["children"] == 11
     # the designed form as a light line net: the second member, node 1 to 2
     assert out["design"] == pytest.approx([1.0, 0.0, 0.0, 1.0, 1.0, 0.5])
     first, second, count = out["anchors"]
@@ -206,3 +260,44 @@ def test_a_click_finds_the_nearest_node_on_screen(out):
 
 def test_closing_the_tab_removes_everything(out):
     assert out["cleared"] == [0, None, None]
+
+
+GREEN = linear([0x3f / 255, 0x9e / 255, 0x57 / 255])
+BLUE = linear([0x2f / 255, 0x6f / 255, 0xd0 / 255])
+GREY = linear([0x9a / 255, 0xa4 / 255, 0xb2 / 255])
+
+
+def test_each_hold_is_a_rod_from_the_ground_along_its_force_from_the_jacking_on(out):
+    # ten objects with the holds' rods
+    assert out["propsCount"] == 11
+    # not in before the jacking
+    assert out["propsBefore"] is False
+    visible, count, prop, colour = out["propPushing"]
+    assert visible is True and count == 1
+    # node 2's design point is (1, 1, 0.5), pushed straight up after the
+    # jacking: a strut half a metre tall standing under it, green
+    assert prop["p"] == pytest.approx([1.0, 1.0, 0.25]) and prop["s"][1] == pytest.approx(0.5)
+    assert colour == pytest.approx(GREEN)
+    # later it pulls: the rod stays where it was set, blue
+    later, pulling = out["propPulling"]
+    assert later["p"] == pytest.approx([1.0, 1.0, 0.25]) and pulling == pytest.approx(BLUE)
+    # the tick hides them
+    assert out["propUnticked"] is False
+
+
+def test_the_rods_stand_from_the_capture_after_the_jacking_and_not_at_the_hold(out):
+    assert out["jackedHold"] is False
+    visible, rod, colour = out["jackedSet"]
+    assert visible is True and colour == pytest.approx(GREEN)
+    assert rod["p"] == pytest.approx([1.0, 1.0, 0.25]) and rod["s"][1] == pytest.approx(0.5)
+
+
+def test_a_hold_set_pulling_sideways_is_a_tie_down_along_its_pull(out):
+    # 30, 0, -40 N at (1, 1, 0.5): the tie runs 0.6 out and 0.8 down a unit,
+    # 0.625 m to the ground at (1.375, 1, 0), its middle at (1.1875, 1, 0.25)
+    rod, colour = out["propLeaning"]
+    assert rod["p"] == pytest.approx([1.1875, 1.0, 0.25]) and rod["s"][1] == pytest.approx(0.625)
+    assert colour == pytest.approx(BLUE)
+    # carrying nothing later: grey, still set at its angle
+    idle, grey = out["propIdle"]
+    assert idle["p"] == pytest.approx([1.1875, 1.0, 0.25]) and grey == pytest.approx(GREY)

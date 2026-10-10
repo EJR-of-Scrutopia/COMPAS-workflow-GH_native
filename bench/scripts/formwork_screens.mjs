@@ -9,7 +9,8 @@
 //   node bench/scripts/formwork_screens.mjs
 // Env: STUDIO_URL (default http://127.0.0.1:8601), BROWSER_EXE (the
 // Playwright Chromium), SCREENS_OUT, STUDY (default the 5 sided form), CUT
-// (JSON, default its tile cut), RUN=1 to press Run formwork analysis first:
+// (JSON, default its tile cut), GPU=1 to draw on the graphics card, RUN=1 to
+// press Run formwork analysis first:
 // about two minutes on the real study, and it rewrites the cut's capture
 // document under bench/studies, so copy that aside first.
 
@@ -29,7 +30,7 @@ const STUDY = process.env.STUDY || "5 sided form";
 const CUT = JSON.parse(process.env.CUT ||
   '{"material": "tile", "pattern": "bonded-courses", "source": "authored", "size": 1.0, "thickness": 0.02}');
 const RUN = process.env.RUN === "1";
-const TICKS = ["net", "trees", "heads", "wires", "anchors", "ground", "skin", "design"];
+const TICKS = ["net", "trees", "heads", "wires", "anchors", "ground", "skin", "design", "holds"];
 const COLOURS = ["tension", "deviation", "utilisation", "wire", "off"];
 const PARTS = ["ropes", "wires", "trees", "nodes", "machines"];
 
@@ -149,7 +150,10 @@ const browser = await puppeteer.launch({
   executablePath: BROWSER_EXE,
   headless: true,
   protocolTimeout: 900000,
-  args: ["--no-sandbox", "--enable-unsafe-swiftshader", "--use-gl=angle", "--use-angle=swiftshader"],
+  // GPU=1 draws on the graphics card (a picture in seconds); otherwise SwiftShader
+  args: process.env.GPU === "1"
+    ? ["--no-sandbox", "--use-gl=angle", "--use-angle=d3d11", "--ignore-gpu-blocklist", "--enable-gpu"]
+    : ["--no-sandbox", "--enable-unsafe-swiftshader", "--use-gl=angle", "--use-angle=swiftshader"],
   defaultViewport: { width: 1600, height: 900 },
 });
 try {
@@ -218,6 +222,11 @@ try {
     note("run " + JSON.stringify(report.run));
     await shot(page, "02-after-run");
   }
+  report.holds = await page.evaluate(() => {
+    const el = document.getElementById("formwork-holds");
+    return el ? el.innerText : null;
+  });
+  note("holds " + JSON.stringify(report.holds));
 
   // Which capture is which, read off the document the tab plays.
   const captures = await page.evaluate(async (study, cut) => {
@@ -236,6 +245,8 @@ try {
     ["03-raise", first((c) => c.phase === "raise" && c.time >= 46)],
     ["04-finish", first((c) => c.phase === "finish" && c.time >= 76)],
     ["05-hold", captures.map((c) => c.phase).lastIndexOf("hold")],
+    ...(captures.some((c) => c.phase === "holds")
+      ? [["05b-jacked", captures.findIndex((c) => c.phase === "holds")]] : []),
     ["06-tiling", tiling[Math.floor(tiling.length / 2)] ?? captures.length - 1],
     ["07-end", captures.length - 1],
   ];

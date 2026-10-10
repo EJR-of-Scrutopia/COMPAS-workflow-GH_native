@@ -51,9 +51,30 @@ def test_the_run_sends_the_cut_the_machine_and_the_wall_and_never_a_prestress():
     body = _inner(JS, "startRun")
     assert "...sentOptions(options), wires_per_motor: c.wires_per_motor," in body
     assert "pulleys: c.pulleys, wall: c.wall" in body and "body.rope = c.rope" in body
+    # the holds' choice, and the Cable net tab's tolerance the search meets
+    assert "holds: holdsChoice(), tolerance_mm: Number(tolerance())" in body
     assert "/formwork/run" in body and "prestress" not in body
     watch = _inner(JS, "watch")
     assert "`capture ${run.stage} of ${run.of}`" in watch and "await load();" in watch
+    # a search says which try it is on, and that it takes longer (found by the
+    # final review: the counter climbed to 101 and dropped back with no word)
+    assert 'tab.searching = holdsChoice() === "search";' in body
+    assert ('el.runStatus.textContent = tab.searching ? "starting: a few minutes, one run a '
+            'spacing tried" : "starting: about two minutes";') in body
+    assert 'const named = tab.searching && typeof run.message === "string" && run.message.includes(": ");' in watch
+    assert 'named ? run.message.split(": ")[0] + ": " + counter : counter' in watch
+
+
+def test_no_run_is_said_only_once_the_document_has_been_looked_for():
+    # found on screen: opening the tab drew "No formwork run: Run formwork
+    # analysis" while the 6 MB document was still loading, an invitation to
+    # start a search of several minutes for nothing
+    load = _inner(JS, "load")
+    assert load.index("tab.loading = true;") < load.index("await getJson(simUrl(")
+    assert load.index("if (mine !== tab.ticket) return;") < load.index("tab.loading = false;")
+    warnings = _inner(JS, "renderWarnings")
+    assert warnings.startswith('function renderWarnings() {\n'
+                               '    if (tab.loading) { el.warnings.innerHTML = ""; return; }')
 
 
 def test_the_machine_is_the_cable_net_tabs_one_a_study():
@@ -77,6 +98,8 @@ def test_the_player_draws_blended_and_shows_the_nearer_capture():
     load = _inner(JS, "load")
     assert "tab.times = sim ? captureTimes(sim.captures) : [];" in load
     assert "tab.worst = sim ? worstTables(sim) : null;" in load and "view.build(sim);" in load
+    assert 'el.holds.innerHTML = sim ? holdsHtml(sim) : "";' in load
+    assert 'el.holds.innerHTML = "";' in _inner(JS, "clear")
 
 
 def test_a_worst_header_sorts_and_a_row_moves_the_player_and_the_camera():

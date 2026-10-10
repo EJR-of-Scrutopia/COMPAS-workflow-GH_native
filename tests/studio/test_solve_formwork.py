@@ -109,6 +109,28 @@ def test_the_document_carries_the_faces_the_skin_goes_on_and_the_grounds_nodes()
     assert document["captures"][0]["ground"] == [1, 3, 5, 7]
 
 
+def test_the_document_carries_the_holds_and_what_each_pushes():
+    # spec 2026-10-10 formwork holds, section 3: the held nodes, each hold's
+    # push in every capture, the capture after the jacking, and the worst
+    # deviation the search judges by (that capture and every tiling capture)
+    request = _request()
+    request["holds"] = [1, 3, 5, 7]
+    document = solve_formwork.solve(request)
+    assert document["net"]["holds"] == [1, 3, 5, 7]
+    captures = document["captures"]
+    assert [c["phase"] for c in captures] == ["raise", "finish", "hold", "holds"] + ["tiling"] * 4
+    assert captures[3]["time"] == 100.0 and captures[3]["added_faces"] is None
+    for c in captures:
+        assert solve_formwork.unpack(c["hold_push"]).shape == (4, 3)
+    judged = max(float(solve_formwork.unpack(c["deviation"]).max()) for c in captures[3:])
+    assert document["summary"]["holds_deviation_max_mm"] == pytest.approx(judged, rel=1.0e-6)
+    # a run with no holds names none and judges nothing
+    plain = solve_formwork.solve(_request())
+    assert plain["net"]["holds"] == []
+    assert solve_formwork.unpack(plain["captures"][0]["hold_push"]).shape == (0, 3)
+    assert plain["summary"]["holds_deviation_max_mm"] is None
+
+
 def test_the_entry_runs_as_its_own_process_reporting_progress(tmp_path):
     (tmp_path / "request.json").write_text(json.dumps(_request()), encoding="utf-8")
     done = subprocess.run([sys.executable, str(STUDIO / "solve_formwork.py"),

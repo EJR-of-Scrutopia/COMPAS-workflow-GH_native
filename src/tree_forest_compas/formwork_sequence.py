@@ -60,6 +60,9 @@ class Model(NamedTuple):
     machines: list          # [[rim nodes in spool order]], one list per machine instance
     wires_per_motor: int
     wall: float             # the tree tube's wall, mm
+    holds: tuple = ()       # net nodes jacked to their design points after the raise and
+                            # gripped there in every direction from then on, like a head:
+                            # a rod along its own force (spec 2026-10-10 formwork holds)
 
 
 class Capture(NamedTuple):
@@ -71,6 +74,9 @@ class Capture(NamedTuple):
     tension: np.ndarray     # (m,) every rope, N
     deviation: np.ndarray   # (n,) from where the frame (tiling: the design) puts each node, mm
     head_push: np.ndarray   # (heads, 3) each head's push on its node, zero when not touching
+    hold_push: np.ndarray   # (holds, 3) the force each hold puts on its node, N: up where
+                            # it pushes (a strut), down where it pulls (a tie); zero
+                            # before the jacking
     anchor_force: np.ndarray  # (rim, 3) the force each rim node puts on its anchor: its
                               # wire's pull, the foundation's push and the sideways hold, N
     wire_tension: np.ndarray  # (rim,) N
@@ -141,6 +147,8 @@ def _capture(model, rest, contacts, reel, target, tree_x, phase, time, row, quar
         deviation=np.linalg.norm(rest.x - np.asarray(target, dtype=float), axis=1),
         head_push=np.array([rest.reaction[n] if n in contacts.engaged else np.zeros(3)
                             for n in heads]).reshape(-1, 3),
+        hold_push=np.array([rest.reaction[int(n)] if int(n) in contacts.engaged else np.zeros(3)
+                            for n in model.holds]).reshape(-1, 3),
         anchor_force=np.array([-rest.reaction[n] for n in rim]).reshape(-1, 3),
         wire_tension=stiffness * np.maximum(let_out + reels, 0.0),
         reel=reels, let_out=let_out,
@@ -181,7 +189,8 @@ def _run(model, net, plan, progress):
     reel = {node: 0.0 for node in rim}
     needs = []
     captures = []
-    total = len(model.frames) + sum(len(row.quarters) for row in model.rows)
+    total = (len(model.frames) + (1 if model.holds else 0)
+             + sum(len(row.quarters) for row in model.rows))
     previous = None
     rest = None
     done_steps = 0
@@ -212,6 +221,30 @@ def _run(model, net, plan, progress):
     # from the hold frame on, the reels hold where they are (spec section 4.2)
     wires = _wires(model, reel)
     tree_x = model.frames[-1].trees
+    # the holds (spec 2026-10-10 formwork holds, section 3): once the net is up,
+    # each hold is put under its node and jacked to the node's design point, at
+    # most SUB_STEP_MM a step, gripping it; it keeps its grip from then on,
+    # like a column head (his ruling: a hold is a gripped rod along its own
+    # force; props that only pushed were pulled off, held the net sideways and
+    # let it slide out of their cradles at every spacing on the real study)
+    holds = [int(node) for node in model.holds]
+    if holds:
+        start = {node: np.array(x[node], dtype=float) for node in holds}
+        target = {node: np.asarray(model.design[node], dtype=float) for node in holds}
+        move = max(float(np.linalg.norm(target[node] - start[node])) for node in holds)
+        steps = max(1, int(np.ceil(move / SUB_STEP_MM)))
+        for step in range(1, steps + 1):
+            jacks = {node: start[node] + (target[node] - start[node]) * step / steps
+                     for node in holds}
+            contacts = contacts._replace(heads={**contacts.heads, **jacks},
+                                         engaged=contacts.engaged | frozenset(holds),
+                                         tied=contacts.tied | frozenset(holds))
+            rest, contacts = ne.settle(x, net, model.weight, {}, contacts, wires=wires)
+            x = rest.x
+        captures.append(_capture(model, rest, contacts, reel, model.design, tree_x,
+                                 "holds", 100.0, None, None))
+        if progress is not None:
+            progress(len(captures), total, "the holds jacked to the design")
     for row in model.rows:
         for quarter, skin in enumerate(row.quarters, start=1):
             loads = model.weight + np.asarray(skin, dtype=float)
@@ -246,7 +279,8 @@ def simulate(model, progress=None):
                                  "them".format(missing))
     rest_lengths, cut_force = cut(model)
     net = ne.ropes(model.edges, rest_lengths, model.ea)
-    per_run = len(model.frames) + sum(len(row.quarters) for row in model.rows)
+    per_run = (len(model.frames) + (1 if model.holds else 0)
+               + sum(len(row.quarters) for row in model.rows))
     total = per_run * (2 if shared else 1)
 
     def report(offset):

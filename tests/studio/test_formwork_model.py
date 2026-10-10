@@ -42,6 +42,22 @@ def capture(phase, time, row, quarter, lift, tension, deviation, push, wire, uti
             "added_faces": added}
 
 
+def with_holds(doc):
+    # node 3 held from the jacking on: the capture after the hold, pushing
+    # 40 N straight up (a strut), then pulling 50 N down and sideways (a tie),
+    # and the search that chose it
+    doc = json.loads(json.dumps(doc))
+    doc["net"]["holds"] = [3]
+    pushes = [[0, 0, 0], [0, 0, 0], [0, 0, 40], [30, 0, -40]]
+    for c, push in zip(doc["captures"], pushes):
+        c["hold_push"] = pack([push])
+    doc["holds"] = {"spacing": 5, "bands": [5, 10], "count": 190, "tolerance_mm": 20.0,
+                    "met": True, "tried": [
+                        {"spacing": 10, "count": 95, "deviation_max_mm": 412.3},
+                        {"spacing": 5, "count": 190, "deviation_max_mm": 14.2}]}
+    return doc
+
+
 def document(older=False):
     # a square of four nodes: two on wires of one machine, one on a tree's head
     # that lifts it 500 mm, and one row of skin going on in two quarters
@@ -78,6 +94,7 @@ def document(older=False):
 HARNESS = """
 import * as m from %(module)r;
 const doc = %(doc)s;
+const holdsDoc = %(holds)s;
 const older = %(older)s;
 const out = {};
 const sim = m.readSim(doc);
@@ -147,6 +164,32 @@ out.many = m.worstTables({ captures: [{ tension: Float32Array.from({ length: 60 
   edges: [], rim: { nodes: [], names: [], machines: [] }, trees: { members: [], heads: [] } }).ropes;
 out.noTables = m.worstTables(null);
 out.worstRows = m.WORST_ROWS;
+// the holds (spec 2026-10-10 formwork holds, section 5)
+const held = m.readSim(holdsDoc);
+out.heldRead = { holds: held.holds, search: held.search,
+                 push: held.captures.map((c) => Array.from(c.holdPush)) };
+out.plainHolds = [sim.holds, sim.search, Array.from(sim.captures[0].holdPush)];
+out.heldLine = [m.frameLine(held, 2), m.frameLineHtml(m.frameLine(held, 2)), m.frameLineHtml(m.frameLine(held, 3))];
+out.plainLine = m.frameLineHtml(m.frameLine(sim, 2));
+out.heldPick = [m.formworkPickHtml(held, 2, 3), m.formworkPickHtml(held, 3, 3), m.formworkPickHtml(held, 2, 2)];
+out.holdsTable = m.holdsHtml(held);
+out.holdsMissed = m.holdsHtml({ ...held, search: { ...held.search, met: false, spacing: 1, count: 950,
+  tried: [{ spacing: 10, count: 95, deviation_max_mm: 412.3 }, { spacing: 1, count: 950, deviation_max_mm: 31.5 }] } });
+out.holdsNone = [m.holdsHtml(sim), m.holdsHtml(null)];
+// each hold a rod along its own force (his ruling of 10 October 2026)
+out.rods = [[0, 0, 40], [30, 0, -40], [100, 0, 1], [0, 0, 0], [0, 0, -1e-9]].map((f) => m.holdRod(f));
+// a run with holds: the hold and the capture after the jacking both at
+// machine time 100 (found by the final review: the player could not reach the
+// hold, and Back stuck at the jacking)
+const jackRun = [{ phase: "raise", time: 30 }, { phase: "finish", time: 60 }, { phase: "hold", time: 100 },
+  { phase: "holds", time: 100 }, { phase: "tiling" }, { phase: "tiling" }];
+out.jackTimes = m.captureTimes(jackRun);
+out.jackNearer = [2, 3, 4].map((i) => m.playhead(out.jackTimes, out.jackTimes[i]).nearer);
+out.jackLabel = m.captureLabel(jackRun[3]);
+out.heldCaption = [m.recordingCaption(held, 2), m.recordingCaption(held, 3)];
+out.jackedAt = [m.jackedAt(held), m.jackedAt(sim),
+  m.jackedAt({ captures: [{ phase: "hold" }, { phase: "holds" }, { phase: "tiling" }] })];
+out.names = [10, 5, 2, 1, 3].map((s) => m.spacingName(s, s === 3 ? 9 : 10));
 // what a recorded frame carries over the picture (the owner's choice of
 // 10 October 2026: record the raise with the tab's labels and key)
 out.caption = m.recordingCaption(sim, 1);
@@ -188,6 +231,7 @@ def out(tmp_path_factory):
     script = tmp_path_factory.mktemp("formwork") / "harness.mjs"
     module = (STATIC / "formwork_model.js").resolve().as_uri()
     script.write_text(HARNESS % {"module": module, "doc": json.dumps(document()),
+                                 "holds": json.dumps(with_holds(document())),
                                  "older": json.dumps(document(older=True)),
                                  "packed": json.dumps(pack([1.5, -2.25, 3.0]))},
                       encoding="utf-8")
@@ -416,3 +460,80 @@ def test_a_recorded_frame_carries_the_labels_and_the_key(out):
     assert [text for text, _, _ in ramp["texts"]] == ["rope tension, kN", "0", "3.0"]
     assert ramp["gradients"] == 1
     assert out["overlayNone"]["texts"] == [] and out["overlayNone"]["rects"] == 0
+
+
+def test_the_holds_are_read_with_each_holds_push(out):
+    read = out["heldRead"]
+    assert read["holds"] == [3]
+    assert read["search"]["spacing"] == 5 and read["search"]["met"] is True
+    assert read["push"] == [[0, 0, 0], [0, 0, 0], [0, 0, 40], [30, 0, -40]]
+    # a run with no holds reads none
+    holds, search, push = out["plainHolds"]
+    assert holds == [] and search is None and push == []
+
+
+def test_the_frame_line_and_the_card_count_the_struts_and_the_ties(out):
+    line, html, pulling = out["heldLine"]
+    assert (line["holds"], line["struts"], line["ties"]) == (1, 1, 0)
+    assert "<th>Struts</th><td>1/1</td>" in html and "<th>Ties</th><td>0/1</td>" in html
+    assert "<th>Struts</th><td>0/1</td>" in pulling and "<th>Ties</th><td>1/1</td>" in pulling
+    assert "Struts" not in out["plainLine"] and "Ties" not in out["plainLine"]
+    pushing, pulled, other = out["heldPick"]
+    assert "<th>Hold</th><td>strut 40 N</td>" in pushing
+    assert "<th>Hold</th><td>tie 50 N</td>" in pulled
+    assert "<th>Hold</th>" not in other
+
+
+def test_each_hold_is_a_rod_along_its_own_force(out):
+    strut, tie, level, idle, residue = out["rods"]
+    # pushing straight up: a strut standing straight under its node
+    assert strut["kind"] == "strut" and strut["u"] == pytest.approx([0, 0, 1])
+    assert strut["lean"] == pytest.approx(0)
+    # pulling down and sideways: a tie running down from its node along the
+    # pull; u points from its foot up to the node
+    assert tie["kind"] == "tie" and tie["u"] == pytest.approx([-0.6, 0, 0.8])
+    assert tie["lean"] == pytest.approx(36.8699, abs=1e-3)
+    # a force near level is drawn at 80 degrees; its true lean is kept
+    assert level["kind"] == "strut" and level["lean"] == pytest.approx(89.427, abs=1e-3)
+    assert level["u"] == pytest.approx([0.98481, 0, 0.17365], abs=1e-5)
+    # carrying nothing, or only the engine's residue (under its 0.01 N): upright
+    assert idle["kind"] == "none" and idle["u"] == pytest.approx([0, 0, 1])
+    assert residue["kind"] == "none"
+    # the rods are set at the capture after the jacking: its own, or the
+    # first of the tiling in a document from before it had one
+    assert out["jackedAt"] == [2, 2, 1]
+
+
+def test_the_hold_and_the_capture_after_the_jacking_each_have_their_own_beat(out):
+    # both at machine time 100: the jacking takes JACK_SECONDS of its own, so
+    # the player reaches the net as it hangs and the net jacked up, and Back
+    # from the jacking reaches the hold
+    times = out["jackTimes"]
+    assert times == pytest.approx([0, 3.6, 8.4, 10.4, 10.9, 11.4])
+    assert out["jackNearer"] == [2, 3, 4]
+    assert out["jackLabel"] == "t 100 holds"
+
+
+def test_a_recorded_frame_counts_the_struts_and_the_ties(out):
+    pushing, pulling = out["heldCaption"]
+    assert pushing.endswith("   Struts 1/1   Ties 0/1")
+    assert pulling.endswith("   Struts 0/1   Ties 1/1")
+    assert "Struts" not in out["caption"]
+
+
+def test_the_search_is_one_table_kept_spacing_first_then_each_try(out):
+    table = out["holdsTable"]
+    assert "<th>Holds</th><td>every 5th line, 190</td>" in table
+    assert "<th>Worst</th><td>14 mm ✓</td>" in table
+    assert "<th>Tried</th><td>the open edges, 95: 412 mm</td>" in table
+    assert "<td>every 5th line, 190: 14 mm</td>" in table
+    # then the rods as they are set, from the capture after the jacking
+    assert "<th>Struts</th><td>1</td>" in table and "<th>Ties</th><td>0</td>" in table
+    assert "<th>Push max</th><td>40 N</td>" in table and "<th>Pull max</th><td>0 N</td>" in table
+    assert "<th>Lean max</th><td>0°</td>" in table
+    missed = out["holdsMissed"]
+    assert "<th>Holds</th><td>every line, 950</td>" in missed
+    assert "<th>Worst</th><td>32 mm ✗</td>" in missed or "<th>Worst</th><td>31 mm ✗</td>" in missed
+    assert out["holdsNone"] == ["", ""]
+    assert out["names"] == ["the open edges", "every 5th line", "every 2nd line", "every line",
+                            "every 3rd line"]

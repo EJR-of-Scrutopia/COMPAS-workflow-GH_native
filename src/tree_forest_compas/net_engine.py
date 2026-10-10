@@ -432,9 +432,13 @@ def settle(x, net, loads, fixed, contacts, rounds=SETTLE_ROUNDS, wires=None, sli
     where it crossed; one its wire would pull into the anchor is taken by the
     foundation. A node let go in a round is not taken back in the same round,
     and a node its head lets go of is not taken back by that head until it
-    has been above the head again, over it and higher than its top: it left
-    the notch sideways, so only coming down onto the head from above puts it
-    back.
+    has been above the head again, over it and higher than its top (or still
+    at its top where it was let go): it left the notch sideways, so only
+    coming down onto the head from above puts it back. A node let go twice in
+    one settle stays off for the rest of it, so a node snapping through its
+    head and back cannot stop the contacts settling. These rules are for an
+    untied head; the formwork sequence ties its heads and its holds, so it
+    never lets one go.
     With slide, the ground holds its nodes up but not in place, as when the
     net is laid out by hand: they slide until nothing pulls them along it,
     and rest where they came to. Returns (Rest, Contacts)."""
@@ -447,6 +451,9 @@ def settle(x, net, loads, fixed, contacts, rounds=SETTLE_ROUNDS, wires=None, sli
     resting = {int(node): np.asarray(point, dtype=float) for node, point in contacts.resting.items()}
     seated = set(int(node) for node in contacts.seated)
     left = set(int(node) for node in contacts.left)
+    let_go = set()      # the nodes a head or hold has let go of in this settle
+    gone = set()        # let go twice in it: it stays off, so a node that snaps through
+                        # its prop cannot be taken back and let go round after round
     iterations = 0
     changes = []
     for _ in range(rounds):
@@ -475,13 +482,18 @@ def settle(x, net, loads, fixed, contacts, rounds=SETTLE_ROUNDS, wires=None, sli
             resting[node] = np.array([x[node, 0], x[node, 1], 0.0])
         changes = []
         released = set()
+        # every head or hold that would have to pull lets go (a tied node pulls
+        # as well as pushes); one let go that then comes down over its prop is
+        # taken back below, and one let go twice in this settle stays off
         for node in sorted(engaged):
-            if node in contacts.tied:                      # tied: it pulls as well as pushes
+            if node in contacts.tied or rest.reaction[node, 2] >= -LEFTOVER_N:
                 continue
-            if rest.reaction[node, 2] < -LEFTOVER_N:       # the head would have to pull
-                engaged.discard(node)
-                released.add(node)
-                left.add(node)
+            engaged.discard(node)
+            released.add(node)
+            left.add(node)
+            if node in let_go:
+                gone.add(node)
+            let_go.add(node)
         for node in sorted(resting):
             if rest.reaction[node, 2] < -LEFTOVER_N:       # the ground would have to pull
                 del resting[node]
@@ -497,8 +509,12 @@ def settle(x, net, loads, fixed, contacts, rounds=SETTLE_ROUNDS, wires=None, sli
         for node, point in contacts.heads.items():
             node = int(node)
             top = float(point[2]) + 1.0e-6
-            if node in left and any(_over(p, point) and p[2] > top for p in (before[node], x[node])):
-                left.discard(node)                         # above its head again
+            # above its head again, or still at its top where it was let go: a
+            # node let go that then comes down over its prop is taken back, not
+            # passed through it (found on the holds)
+            if node in left and node not in gone and any(_over(p, point) and p[2] > top - 2.0e-6
+                                                         for p in (before[node], x[node])):
+                left.discard(node)
             if (node not in engaged and node not in fixed and node not in released
                     and node not in left and x[node, 2] <= top
                     and _over(_onto(before[node], x[node], top), point)):

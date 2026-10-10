@@ -11,6 +11,10 @@ export const SCHEMA = "bench.formwork-sim/1";
 // (the owner's answer of 10 October 2026).
 export const ACT_SECONDS = 12;
 export const TILING_BEAT = 0.5;
+// The jacking of the holds, at machine time 100 like the hold before it, takes
+// this long, so the player reaches both (found by the final review: the hold
+// could not be reached and Back stuck at the jacking).
+export const JACK_SECONDS = 2;
 
 // One packed array (solve_formwork.pack): base64 of little-endian float32,
 // read through a DataView so the byte order is the document's on any machine.
@@ -69,6 +73,7 @@ export function readSim(doc) {
     treeUtilisation: decodeF32(c.tree_utilisation),
     ground: Array.isArray(c.ground) ? c.ground : null,
     addedFaces: Array.isArray(c.added_faces) ? c.added_faces : null,
+    holdPush: decodeF32(c.hold_push) || new Float32Array(0),
   }));
   // a capture with no positions cannot be drawn: the document is not read
   // (final review 9)
@@ -95,6 +100,10 @@ export function readSim(doc) {
     trees: { members: trees.members || [], heads: trees.heads || [], feet: trees.feet || [],
              diameter: Number(trees.diameter) || 60.3, wall: trees.wall },
     captures,
+    // the holds (spec 2026-10-10 formwork holds): the held nodes, and the
+    // search that chose them, or none
+    holds: Array.isArray(net.holds) ? net.holds : [],
+    search: doc.holds || null,
     scales: { tension: scale("tension"), wire: scale("wireTension"),
               deviation: scale("deviation"), utilisation: scale("treeUtilisation"), push },
     older: !Array.isArray(net.faces) || doc.captures.some((c) => !Array.isArray(c.ground)),
@@ -110,16 +119,20 @@ export function captureLabel(capture) {
 }
 
 // When the player reaches each capture, in seconds at 1x: the raise, finish
-// and hold at the act's rate from the first capture's machine time, each
-// tiling quarter TILING_BEAT after the capture before it.
+// and hold at the act's rate from the first capture's machine time, the
+// capture after the jacking JACK_SECONDS after the hold, each tiling quarter
+// TILING_BEAT after the capture before it.
 export function captureTimes(captures) {
   const at = [];
   let t = 0;
   let machine = null;
   (captures || []).forEach((c, i) => {
     if (i > 0) {
-      t += c.phase !== "tiling" && c.time != null && machine != null
-        ? (Number(c.time) - machine) * ACT_SECONDS / 100 : TILING_BEAT;
+      if (c.phase === "holds") t += JACK_SECONDS;
+      else {
+        t += c.phase !== "tiling" && c.time != null && machine != null
+          ? (Number(c.time) - machine) * ACT_SECONDS / 100 : TILING_BEAT;
+      }
     }
     at.push(t);
     if (c.time != null) machine = Number(c.time);
@@ -176,15 +189,66 @@ export function frameLine(sim, index) {
   const heads = sim.trees.heads.length;
   let touching = 0;
   for (let h = 0; h < heads; h++) if (pushOf(c, h) > 0) touching += 1;
+  const holds = sim.holds.length;
+  let struts = 0;
+  let ties = 0;
+  for (let h = 0; h < holds; h++) {
+    const kind = holdRod(holdForce(c, h)).kind;
+    if (kind === "strut") struts += 1;
+    else if (kind === "tie") ties += 1;
+  }
   return { rope: largestOf(c.tension), wire: largestOf(c.wireTension),
-           trees: largestOf(c.treeUtilisation), deviation: largestOf(c.deviation), touching, heads };
+           trees: largestOf(c.treeUtilisation), deviation: largestOf(c.deviation), touching, heads,
+           holds, struts, ties };
+}
+
+// The force a hold puts on its node at a capture, newtons; nought before the
+// jacking.
+export function holdForce(capture, hold) {
+  const p = capture && capture.holdPush;
+  return p && 3 * hold + 2 < p.length ? [p[3 * hold], p[3 * hold + 1], p[3 * hold + 2]] : [0, 0, 0];
+}
+
+// A hold's rod (his ruling of 10 October 2026: a hold is a gripped rod along
+// its own force): u, a unit along the rod from its foot on the ground up to
+// its node; a strut where the hold pushes, a tie where it pulls, none while it
+// carries nothing; lean, the force's true angle from vertical in degrees.
+// Ruling: a rod leaning more than ROD_LEAN_MAX is drawn at it, so a force
+// near level does not run off the picture. A force under HOLD_FLOOR_N, the
+// engine's own rest (net_engine.LEFTOVER_N), is the engine's residue: none.
+export const ROD_LEAN_MAX = 80;
+export const HOLD_FLOOR_N = 0.01;
+
+export function holdRod(force) {
+  const [fx, fy, fz] = force;
+  const size = Math.hypot(fx, fy, fz);
+  if (!(size > HOLD_FLOOR_N)) return { kind: "none", u: [0, 0, 1], lean: 0 };
+  const sign = fz < 0 ? -1 : 1;
+  let u = [sign * fx / size, sign * fy / size, sign * fz / size];
+  const lean = Math.atan2(Math.hypot(fx, fy), Math.abs(fz)) * 180 / Math.PI;
+  if (lean > ROD_LEAN_MAX) {
+    const level = Math.hypot(u[0], u[1]);
+    const out = Math.sin(ROD_LEAN_MAX * Math.PI / 180);
+    u = [u[0] / level * out, u[1] / level * out, Math.cos(ROD_LEAN_MAX * Math.PI / 180)];
+  }
+  return { kind: fz < 0 ? "tie" : "strut", u, lean };
+}
+
+// The capture the rods are set at: the one after the jacking, or in a
+// document from before it had one, the first of the tiling; -1 with none.
+export function jackedAt(sim) {
+  const captures = (sim && sim.captures) || [];
+  const own = captures.findIndex((c) => c.phase === "holds");
+  return own >= 0 ? own : captures.findIndex((c) => c.phase === "tiling");
 }
 
 export function frameLineHtml(line) {
   if (!line) return "";
   return keyed([["Rope max", kilonewtons(line.rope)], ["Wire max", newtons(line.wire)],
     ["Trees", line.trees.toFixed(2)], ["Deviation max", millimetres(line.deviation)],
-    ["Heads touching", line.touching + "/" + line.heads]]);
+    ["Heads touching", line.touching + "/" + line.heads],
+    ...(line.holds ? [["Struts", line.struts + "/" + line.holds], ["Ties", line.ties + "/" + line.holds]]
+      : [])]);
 }
 
 export const COLOUR_BY = [["tension", "Rope tension"], ["deviation", "Deviation"],
@@ -330,6 +394,12 @@ export function formworkPickHtml(sim, index, node) {
   if (c.ground) rows.push(["Ground", c.ground.includes(node) ? "yes" : "no"]);
   const head = sim.trees.heads.findIndex(([net]) => net === node);
   if (head >= 0) rows.push(["Head push", newtons(pushOf(c, head))]);
+  const hold = sim.holds.indexOf(node);
+  if (hold >= 0) {
+    const force = holdForce(c, hold);
+    const kind = holdRod(force).kind;
+    rows.push(["Hold", (kind === "none" ? "" : kind + " ") + newtons(Math.hypot(...force))]);
+  }
   const wire = sim.rim.nodes.indexOf(node);
   if (wire >= 0) {
     rows.push(["Wire", escapeHtml(sim.rim.names[wire] || "#" + wire)],
@@ -390,7 +460,9 @@ export function recordingCaption(sim, index) {
   return [captureLabel(sim.captures[index]), "Rope max " + kilonewtons(line.rope),
     "Wire max " + newtons(line.wire), "Trees " + line.trees.toFixed(2),
     "Deviation max " + millimetres(line.deviation),
-    "Heads touching " + line.touching + "/" + line.heads].join("   ");
+    "Heads touching " + line.touching + "/" + line.heads,
+    ...(line.holds ? ["Struts " + line.struts + "/" + line.holds, "Ties " + line.ties + "/" + line.holds]
+      : [])].join("   ");
 }
 
 const OVERLAY_INK = "#f2efe8";
@@ -557,4 +629,48 @@ export function placedFaces(sim, index) {
     for (const face of sim.captures[k].addedFaces || []) out.push(face);
   }
   return out;
+}
+
+// ---------- the holds' search ----------
+
+// A spacing as the tab says it (formwork_sim.spacing_name): the open edges,
+// every 5th line, every line.
+export function spacingName(spacing, widest) {
+  if (spacing === widest) return "the open edges";
+  if (spacing === 1) return "every line";
+  const tens = spacing % 100;
+  const suffix = tens >= 11 && tens <= 13 ? "th" : ({ 1: "st", 2: "nd", 3: "rd" }[spacing % 10] || "th");
+  return "every " + spacing + suffix + " line";
+}
+
+// The search as one table (spec 2026-10-10 formwork holds, section 5): the
+// spacing kept and its holds, the worst deviation marked against the
+// tolerance, then each try. A run with no search shows nothing.
+export function holdsHtml(sim) {
+  const search = sim && sim.search;
+  if (!search || !Array.isArray(search.tried) || !search.tried.length) return "";
+  const widest = Math.max(...search.tried.map((t) => t.spacing));
+  const worstOf = (t) => (t.deviation_max_mm == null ? "none" : Number(t.deviation_max_mm).toFixed(0) + " mm");
+  const kept = search.tried.find((t) => t.spacing === search.spacing) || search.tried[search.tried.length - 1];
+  const rows = [["Holds", escapeHtml(spacingName(search.spacing, widest)) + ", " + search.count],
+                ["Worst", worstOf(kept) + " " + (search.met ? "✓" : "✗")]];
+  search.tried.forEach((t, i) => {
+    rows.push([i === 0 ? "Tried" : "", escapeHtml(spacingName(t.spacing, widest)) + ", " + t.count + ": " + worstOf(t)]);
+  });
+  // then the rods as they are set, at the capture after the jacking
+  const set = sim.captures && sim.captures[jackedAt(sim)];
+  if (set && sim.holds.length) {
+    let struts = 0, ties = 0, push = 0, pull = 0, lean = 0;
+    sim.holds.forEach((_, h) => {
+      const force = holdForce(set, h);
+      const rod = holdRod(force);
+      const size = Math.hypot(...force);
+      if (rod.kind === "strut") { struts += 1; push = Math.max(push, size); }
+      if (rod.kind === "tie") { ties += 1; pull = Math.max(pull, size); }
+      lean = Math.max(lean, rod.lean);
+    });
+    rows.push(["Struts", String(struts)], ["Ties", String(ties)], ["Push max", newtons(push)],
+              ["Pull max", newtons(pull)], ["Lean max", lean.toFixed(0) + "°"]);
+  }
+  return keyed(rows);
 }
