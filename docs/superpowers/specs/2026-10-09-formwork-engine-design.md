@@ -222,6 +222,13 @@ needed.
 
 ### 3.5 Heads, holds and the ground
 
+Amended 2026-10-10 on the owner's ruling ("the principle line nodes are an
+absolute must ... they are essential to keeping the form shape"): the net is
+fixed to the column ends. Each head is tied to its node from the layout on and
+holds it in every direction, pulling as well as pushing; its tree takes the
+pull. What follows in this paragraph now describes the extra holds of part 3
+only, which are props from below that push and never pull.
+
 Where a tree's head meets its net node, the net rests on the head: the head
 pushes and never pulls. While it pushes, it holds its node in its notch, in
 every direction, as the columns' "every notch held" means; the moment

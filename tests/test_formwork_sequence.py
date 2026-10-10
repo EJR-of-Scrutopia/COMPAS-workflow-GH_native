@@ -95,6 +95,33 @@ def test_the_sequence_captures_every_frame_and_every_quarter():
     _held_by_wire_and_foundation(model, hold)
 
 
+def test_every_head_holds_its_node_through_the_whole_sequence():
+    # the owner's ruling of 10 October 2026: the column heads are tied to their
+    # nodes from the layout on, so each head node is where its head is in every
+    # capture, raise, finish, hold and tiling alike
+    model = _toy()
+    result = fs.simulate(model)
+    for c in result.captures:
+        assert c.x[4] == pytest.approx(c.tree_x[1], abs=1.0e-6)
+        assert np.linalg.norm(c.head_push[0]) > 0.0
+
+
+def test_the_sequence_ties_every_head_to_its_node_from_the_layout_on(monkeypatch):
+    # in the toy every rope pulls its one head down, so a head that could only
+    # push would hold it anyway: what is asked of the sequence is that every
+    # settle it makes has the heads tied
+    seen = []
+    real = ne.settle
+
+    def spy(*args, **kwargs):
+        seen.append(args[4].tied)
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(ne, "settle", spy)
+    fs.simulate(_toy())
+    assert seen and all(tied == frozenset({4}) for tied in seen)
+
+
 def test_every_capture_names_the_nodes_the_ground_holds():
     # laid out, every node but the rim's and the head's rests on the ground
     # (spec 2026-10-10 formwork tab, section 4); raised, the tree lifts the

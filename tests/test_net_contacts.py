@@ -25,6 +25,26 @@ def test_a_head_lets_go_when_holding_its_node_would_mean_pulling_it():
     assert rest.x[0, 2] == pytest.approx(1000.0 - rest_length * (1.0 + weight / ea), abs=0.001)
 
 
+def test_a_tied_head_holds_its_node_and_pulls_it_down_when_the_net_pulls_up():
+    # the owner's ruling of 10 October 2026: the net is fixed to the column
+    # ends ("the principle line nodes are an absolute must ... essential to
+    # keeping the form shape"). The same rope as above pulls the node up off
+    # its head; a tied head holds it where it is, pulling it down, and never
+    # lets it go
+    ea, rest_length, weight = 1.0e5, 900.0, 10.0
+    x0 = np.array([[0.0, 0.0, 0.0], [0.0, 0.0, 1000.0]])
+    net = ne.ropes([(0, 1)], [rest_length], ea)
+    loads = np.array([[0.0, 0.0, -weight], [0.0, 0.0, 0.0]])
+    contacts = ne.Contacts(heads={0: np.zeros(3)}, engaged=frozenset({0}), resting={},
+                           tied=frozenset({0}))
+    rest, after = ne.settle(x0, net, loads, {1: np.array([0.0, 0.0, 1000.0])}, contacts)
+    assert after.engaged == frozenset({0}) and after.tied == frozenset({0})
+    assert after.left == frozenset()
+    assert rest.x[0] == pytest.approx([0.0, 0.0, 0.0])
+    tension = ea * (1000.0 - rest_length) / rest_length
+    assert rest.reaction[0, 2] == pytest.approx(-(tension - weight), rel=1.0e-3)
+
+
 def test_a_head_holds_its_node_in_its_notch_while_it_pushes():
     # the same node with no rope pulling it up: its weight presses it on the
     # head, which holds it there and pushes back exactly its weight, sideways
