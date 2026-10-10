@@ -6,7 +6,12 @@ import pytest
 pytest.importorskip("scipy")
 
 from tree_forest_compas.hold import HoldError
+from tree_forest_compas.hold import fit_tension_state
+from tree_forest_compas.placement import LADDER_NEWTONS
 from tree_forest_compas.placement import greedy_actuators
+from tree_forest_compas.placement import least_prestress
+from tree_forest_compas.placement import prestress_ladder
+from tree_forest_compas.placement import prestress_walk
 
 
 def _vee():
@@ -200,3 +205,87 @@ def test_a_residual_within_a_millionth_of_the_largest_load_ends_the_walk(monkeyp
     # 1e-4 N on the vee: a millionth is 1e-10 N, so the 1e-9 N floor is the line
     assert walk(1.0e-7, 5.0e-10).actuators == ()
     assert walk(1.0e-7, 2.0e-9).actuators == (2,)
+
+
+# The prestress the form needs (spec 2026-10-10 prestress and holds, section 4).
+# On the flat 3 x 3 grid the fit carries nothing, so the centre's 10 N is all
+# residual, and four members floored at P / 1000 N/mm stiffen it by 4P/1000
+# N/mm: its sag is 2500 / P mm exactly, and the load on it scales the same way.
+
+def _members(vertices, edges):
+    xyz = np.asarray(vertices, dtype=float)
+    return np.asarray([np.linalg.norm(xyz[v] - xyz[u]) for u, v in edges])
+
+
+def _grid_state(side=3):
+    vertices, edges, rim, loads = _flat_grid(side)
+    fit = fit_tension_state(vertices, edges, rim, loads)
+    return vertices, edges, rim, loads, fit
+
+
+def test_the_least_prestress_keeps_the_worst_sag_on_the_line():
+    vertices, edges, rim, loads, fit = _grid_state()
+    lengths = _members(vertices, edges)
+    found = least_prestress(vertices, edges, rim, fit.force_densities, fit.residual, 2.0e5,
+                            lengths, acceptance=1.0)
+    # 2500 / P <= 1 mm from P = 2500 N; the bisection stops within 1 percent above it
+    assert 2500.0 <= found <= 2500.0 * 1.01
+
+
+def test_a_net_held_well_enough_needs_only_the_least_prestress_and_one_never_reached_none():
+    vertices, edges, rim, loads, fit = _grid_state()
+    lengths = _members(vertices, edges)
+    centre_held = fit_tension_state(vertices, edges, rim + [4], loads)
+    assert least_prestress(vertices, edges, rim + [4], centre_held.force_densities,
+                           centre_held.residual, 2.0e5, lengths, acceptance=1.0) == 1.0
+    # 2500 / P <= 0.001 mm needs 2.5 MN, past the 1 MN the search reaches
+    assert least_prestress(vertices, edges, rim, fit.force_densities, fit.residual, 2.0e5,
+                           lengths, acceptance=0.001) is None
+
+
+def test_the_walk_records_the_prestress_each_step_needs_and_it_never_rises():
+    vertices, edges, rim, loads = _flat_grid(3)
+    lengths = _members(vertices, edges)
+    steps = prestress_walk(vertices, edges, rim, loads, 2.0e5, lengths, acceptance=1.0,
+                           batch=1, steps=5)
+    assert [s.count for s in steps] == [0, 1]
+    assert steps[1].added == (4,)
+    assert 2500.0 <= steps[0].prestress <= 2525.0
+    # held, the centre has no sag: the least prestress searched is enough, and
+    # the walk stops there, since no further hold can need less
+    assert steps[1].prestress == 1.0
+    vertices, edges, rim, loads = _flat_grid(6)
+    steps = prestress_walk(vertices, edges, rim, loads, 2.0e5, _members(vertices, edges),
+                           acceptance=0.5, batch=3, steps=10)
+    needs = [s.prestress for s in steps]
+    assert all(b <= a * 1.01 for a, b in zip(needs, needs[1:]))
+    assert [s.count for s in steps] == sorted(s.count for s in steps)
+
+
+def test_the_walk_picks_the_nodes_greedy_actuators_picks():
+    vertices, edges, rim, loads = _flat_grid(6)
+    lengths = _members(vertices, edges)
+    steps = prestress_walk(vertices, edges, rim, loads, 2.0e5, lengths, acceptance=None,
+                           batch=3, steps=4)
+    walked = greedy_actuators(vertices, edges, rim, loads, 2.0e5, 0.5, None, batch=3, steps=4)
+    assert [s.added for s in steps] == [p.added for p in walked.points]
+
+
+def test_the_ladder_gives_the_sag_and_the_roof_at_each_prestress():
+    vertices, edges, rim, loads, fit = _grid_state()
+    lengths = _members(vertices, edges)
+    rungs = prestress_ladder(vertices, edges, rim, fit.force_densities, fit.residual, 2.0e5,
+                             lengths, acceptance=1.0, prestresses=[100.0, 2500.0, 10000.0])
+    assert [r.prestress for r in rungs] == [100.0, 2500.0, 10000.0]
+    assert [r.worst_sag for r in rungs] == pytest.approx([25.0, 1.0, 0.25], rel=1e-9)
+    # the load that sags it to the line: P / 2500 times this one, found to 1 percent
+    assert [r.roof for r in rungs] == pytest.approx([0.04, 1.0, 4.0], rel=0.011)
+    assert all(r.roof * 2500.0 <= r.prestress * 1.0 + 1e-9 for r in rungs)
+
+
+def test_the_ladder_runs_from_100_n_to_100_kn_evenly_in_the_logarithm():
+    assert len(LADDER_NEWTONS) == 25
+    assert LADDER_NEWTONS[0] == pytest.approx(100.0) and LADDER_NEWTONS[-1] == pytest.approx(1.0e5)
+    ratios = [b / a for a, b in zip(LADDER_NEWTONS, LADDER_NEWTONS[1:])]
+    assert max(ratios) == pytest.approx(min(ratios))
+
