@@ -163,6 +163,12 @@ def test_the_check_on_screen_reaches_the_drawing_and_never_his_studio():
         assert step in script, step
 
 
+def test_the_capture_label_keeps_to_one_line():
+    # found on screen: "t 100 hold" wrapped onto three lines beside the buttons
+    assert ("#panel #formwork-label { color: var(--ink); font-size: var(--t-2); "
+            "margin-left: var(--s2);\n  white-space: nowrap; }") in CSS
+
+
 def test_the_cable_net_labels_and_card_stand_down_while_the_tab_is_open():
     assert ("body.formwork-open #model-labels, body.formwork-open #cablenet-pick "
             "{ display: none; }") in CSS

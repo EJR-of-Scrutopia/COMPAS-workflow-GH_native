@@ -1691,7 +1691,8 @@ body.stilling #model-labels, body.stilling #cablenet-pick { display: none; }
    the card as the Cable net tab draws them. */
 #panel #formwork-run-status { color: var(--ink-2); min-height: 1.2em; }
 #panel #formwork-player { display: flex; align-items: center; gap: var(--s1); margin: var(--s2) 0; }
-#panel #formwork-label { color: var(--ink); font-size: var(--t-2); margin-left: var(--s2); }
+#panel #formwork-label { color: var(--ink); font-size: var(--t-2); margin-left: var(--s2);
+  white-space: nowrap; }
 #panel .formwork-ticks { display: flex; flex-wrap: wrap; gap: var(--s1) var(--s3);
   margin: var(--s2) 0; color: var(--ink-2); font-size: var(--t-2); }
 #panel .formwork-ticks > span { width: 100%; color: var(--ink-3); }
