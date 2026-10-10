@@ -139,3 +139,50 @@ def test_the_request_carries_the_cut_meshs_faces():
                                         [], 0.02, 2000.0, EA, 0.01, 300.0, 1, 3.2)
     assert request["faces"] == [[int(i) for i in face] for face in arrays["faces"]]
     assert request["faces"] and all(isinstance(i, int) for face in request["faces"] for i in face)
+
+
+def _strip_net(rows=2, columns=4):
+    # a quad net of 5 nodes along x and 2 rows of quads either side of a
+    # principal line on y = 0: node (i, j) is i + 5 * (j + rows)
+    width = columns + 1
+    node = lambda i, j: i + width * (j + rows)
+    faces = [[node(i, j), node(i + 1, j), node(i + 1, j + 1), node(i, j + 1)]
+             for j in range(-rows, rows) for i in range(columns)]
+    heads = [node(i, 0) for i in range(width)]
+    return faces, heads, node
+
+
+def test_each_node_s_band_is_its_steps_across_from_the_principal_line():
+    # spec 2026-10-10 formwork holds, section 2: the quads sorted into the
+    # two families from the principal line out, a node's band its steps across
+    faces, heads, node = _strip_net()
+    bands = formwork_sim.hold_bands(faces, heads)
+    for i in range(5):
+        for j in range(-2, 3):
+            assert bands[node(i, j)] == abs(j), (i, j)
+    # the widest band is the open edge; the spacings divide it evenly
+    assert formwork_sim.hold_spacings(bands) == [2, 1]
+
+
+def test_holds_at_a_spacing_are_whole_bands_and_never_a_rim_or_head_node():
+    faces, heads, node = _strip_net()
+    bands = formwork_sim.hold_bands(faces, heads)
+    rim = {node(4, j) for j in range(-2, 3)}            # the far end on its wires
+    edge = formwork_sim.holds_at(bands, 2, rim)
+    assert edge == sorted(node(i, j) for i in range(4) for j in (-2, 2))
+    every = formwork_sim.holds_at(bands, 1, rim)
+    assert every == sorted(node(i, j) for i in range(4) for j in (-2, -1, 1, 2))
+    assert not set(every) & set(heads)
+
+
+def test_a_net_that_does_not_sort_into_two_families_is_refused():
+    faces, heads, node = _strip_net()
+    # a head off the line, so one quad has two neighbouring edges running along
+    with pytest.raises(formwork_sim.FormworkError, match="parallel to a principal line"):
+        formwork_sim.hold_bands(faces, heads + [node(0, 1)])
+    # a triangle among the quads
+    with pytest.raises(formwork_sim.FormworkError, match="quad"):
+        formwork_sim.hold_bands(faces + [[node(0, 0), node(1, 0), node(1, 1)]], heads)
+    # no principal line at all
+    with pytest.raises(formwork_sim.FormworkError, match="principal line"):
+        formwork_sim.hold_bands(faces, [node(0, 0)])

@@ -254,6 +254,80 @@ def rows_from(arrays, binding, plan, thickness, density):
     return rows
 
 
+def hold_bands(faces, heads):
+    """Each node's band (spec 2026-10-10 formwork holds, section 2): the quads
+    sorted into two families from the principal lines out, an edge joining two
+    head nodes running along, across a quad an opposite edge keeping its family
+    and a side edge taking the other; a node's band is its steps across, along
+    across edges only, to the nearest head node. Returns {node: band} for every
+    node the across edges reach. A net that does not sort is refused."""
+
+    message = ("the holds need a quad net in which every line runs parallel to a principal "
+               "line")
+    if any(len(face) != 4 for face in faces):
+        raise FormworkError(message + ": this net has faces that are not quads")
+    heads = {int(node) for node in heads}
+    key = lambda a, b: (a, b) if a < b else (b, a)
+    face_edges = [[key(int(f[i]), int(f[(i + 1) % 4])) for i in range(4)] for f in faces]
+    edge_faces = {}
+    for index, edges in enumerate(face_edges):
+        for k, edge in enumerate(edges):
+            edge_faces.setdefault(edge, []).append((index, k))
+    along = [edge for edge in edge_faces if edge[0] in heads and edge[1] in heads]
+    if not along:
+        raise FormworkError(message + ": no two head nodes are joined, so there is no "
+                                      "principal line")
+    family = {edge: "along" for edge in along}
+    queue = list(along)
+    while queue:
+        edge = queue.pop()
+        for index, k in edge_faces[edge]:
+            edges = face_edges[index]
+            other = "across" if family[edge] == "along" else "along"
+            for neighbour, wanted in ((edges[(k + 2) % 4], family[edge]),
+                                      (edges[(k + 1) % 4], other), (edges[(k + 3) % 4], other)):
+                if neighbour not in family:
+                    family[neighbour] = wanted
+                    queue.append(neighbour)
+                elif family[neighbour] != wanted:
+                    raise FormworkError(message + ": the lines cross themselves at nodes {} "
+                                                  "and {}".format(*neighbour))
+    across = {}
+    for (a, b), kind in family.items():
+        if kind == "across":
+            across.setdefault(a, []).append(b)
+            across.setdefault(b, []).append(a)
+    bands = {node: 0 for node in heads}
+    frontier = sorted(heads)
+    while frontier:
+        reached = []
+        for a in frontier:
+            for b in across.get(a, []):
+                if b not in bands:
+                    bands[b] = bands[a] + 1
+                    reached.append(b)
+        frontier = reached
+    return bands
+
+
+def hold_spacings(bands):
+    """The spacings the search tries, widest first: the divisors of the widest
+    band, so the held lines are evenly spaced from the principal line to the
+    open edge (10, 5, 2, 1 on the 5 sided form)."""
+
+    widest = max(bands.values(), default=0)
+    return [s for s in range(widest, 0, -1) if widest % s == 0]
+
+
+def holds_at(bands, spacing, exclude=()):
+    """The held nodes at a spacing: every node in a band that is a multiple of
+    it, never a head or a node in exclude (the rim's wire nodes)."""
+
+    exclude = set(int(node) for node in exclude)
+    return sorted(node for node, band in bands.items()
+                  if band > 0 and band % spacing == 0 and node not in exclude)
+
+
 def request_from(inputs, arrays, binding, plan, thickness, density, ea, mass_per_metre,
                  prestress, wires_per_motor, wall, study=None, options=None, note=None):
     """The engine's request, every length in millimetres and every force in
