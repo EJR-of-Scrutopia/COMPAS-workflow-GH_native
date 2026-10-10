@@ -16,6 +16,15 @@ from test_formwork_model import document
 
 STATIC = Path(__file__).resolve().parents[2] / "bench" / "studio" / "static"
 
+
+def linear(rgb):
+    """An sRGB colour, 0 to 1, as three draws vertex and instance colours: in
+    the linear working space. The key is painted in sRGB, so the model must be
+    given these or it draws lighter than its key (found on screen: the net
+    orange where the key says red)."""
+
+    return [c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4 for c in rgb]
+
 HARNESS = """
 import * as THREE from %(three)r;
 import * as m from %(model)r;
@@ -108,8 +117,8 @@ def test_the_drawing_blends_the_positions_and_colours_from_the_nearer_capture(ou
     # the member's colour is the hold's 2.5 kN on the run's 3 kN scale
     cream, red = [0xf2, 0xef, 0xe8], [0xcc, 0x22, 0x11]
     f = 2500 / 3000
-    assert out["netColour"] == pytest.approx([(c + (r - c) * f) / 255 for c, r in zip(cream, red)],
-                                             abs=1e-6)
+    assert out["netColour"] == pytest.approx(
+        linear([(c + (r - c) * f) / 255 for c, r in zip(cream, red)]), abs=1e-6)
     # the tree member from its foot to its head, as long as the lift so far
     assert out["tree"]["p"] == pytest.approx([1.0, 1.0, 0.125])
     assert out["tree"]["s"][1] == pytest.approx(0.25)
@@ -120,20 +129,21 @@ def test_the_drawing_blends_the_positions_and_colours_from_the_nearer_capture(ou
 def test_a_head_is_marked_while_it_pushes_and_its_push_is_drawn(out):
     position, colour = out["head"]
     assert position == pytest.approx([1.0, 1.0, 0.25])
-    assert colour == pytest.approx([0x3f / 255, 0x9e / 255, 0x57 / 255])
+    assert colour == pytest.approx(linear([0x3f / 255, 0x9e / 255, 0x57 / 255]))
     # 800 N up, half a metre a kilonewton
     assert out["push"] == pytest.approx([1.0, 1.0, 0.25, 1.0, 1.0, 0.65])
     # and a head that has let go is drawn clear
-    assert out["utilisation"][2] == pytest.approx([0x9a / 255, 0xa4 / 255, 0xb2 / 255])
+    assert out["utilisation"][2] == pytest.approx(linear([0x9a / 255, 0xa4 / 255, 0xb2 / 255]))
 
 
 def test_each_wire_runs_from_its_node_the_way_it_runs_in(out):
     line, colour = out["wire"]
     assert line == pytest.approx([0, 0, 0, -0.3, 0, 0])
-    assert colour == pytest.approx([0.86, 0.86, 0.86])
+    assert colour == pytest.approx(linear([0.86, 0.86, 0.86]))
     f = 1200 / 1500
     assert out["wireColour"] == pytest.approx(
-        [(c + (r - c) * f) / 255 for c, r in zip([0xf2, 0xef, 0xe8], [0xcc, 0x22, 0x11])], abs=1e-6)
+        linear([(c + (r - c) * f) / 255 for c, r in zip([0xf2, 0xef, 0xe8], [0xcc, 0x22, 0x11])]),
+        abs=1e-6)
 
 
 def test_the_ground_contacts_are_the_nearer_captures(out):
@@ -152,11 +162,11 @@ def test_the_skin_is_the_faces_placed_riding_the_net(out):
 def test_each_colour_by_colours_its_own_part(out):
     within, near = out["deviation"]
     # node 0 at 5 mm is within 20; node 2 at 12 mm is near it
-    assert within == pytest.approx([0xf2 / 255, 0xef / 255, 0xe8 / 255])
-    assert near == pytest.approx([0xc9 / 255, 0x9a / 255, 0x2e / 255])
+    assert within == pytest.approx(linear([0xf2 / 255, 0xef / 255, 0xe8 / 255]))
+    assert near == pytest.approx(linear([0xc9 / 255, 0x9a / 255, 0x2e / 255]))
     tree, net, _ = out["utilisation"]
-    assert tree == pytest.approx([0xcc / 255, 0x22 / 255, 0x11 / 255], abs=1e-6)
-    assert net == pytest.approx([0.86, 0.86, 0.86])
+    assert tree == pytest.approx(linear([0xcc / 255, 0x22 / 255, 0x11 / 255]), abs=1e-6)
+    assert net == pytest.approx(linear([0.86, 0.86, 0.86]))
 
 
 def test_the_ticks_show_and_hide_each_part(out):

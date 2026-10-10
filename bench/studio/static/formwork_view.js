@@ -117,6 +117,18 @@ export function createFormworkView(THREE) {
     array[offset + 2] = values[2];
   }
 
+  // A key's colour, sRGB from 0 to 1, as three wants a vertex or an instance
+  // colour: in the linear working space, so the model wears its key's colours
+  // (found on screen: the net drew orange where the key says red).
+  function tone(rgb) {
+    return colour.setRGB(rgb[0], rgb[1], rgb[2], THREE.SRGBColorSpace);
+  }
+
+  function putColour(array, offset, rgb) {
+    const c = tone(rgb);
+    put(array, offset, [c.r, c.g, c.b]);
+  }
+
   function node(i) {
     return [at[3 * i], at[3 * i + 1], at[3 * i + 2]];
   }
@@ -147,8 +159,8 @@ export function createFormworkView(THREE) {
         cu = colourOf("deviation", near.deviation[u], sim, tolerance);
         cv = colourOf("deviation", near.deviation[v], sim, tolerance);
       }
-      put(net.color.array, 6 * e, cu || PLAIN);
-      put(net.color.array, 6 * e + 3, cv || PLAIN);
+      putColour(net.color.array, 6 * e, cu || PLAIN);
+      putColour(net.color.array, 6 * e + 3, cv || PLAIN);
     });
     net.position.needsUpdate = true;
     net.color.needsUpdate = true;
@@ -164,7 +176,7 @@ export function createFormworkView(THREE) {
       parts.trees.setMatrixAt(k, matrix);
       const tint = by === "utilisation"
         ? colourOf("utilisation", near.treeUtilisation[k], sim, tolerance) : TREE_PLAIN;
-      parts.trees.setColorAt(k, colour.setRGB(tint[0], tint[1], tint[2]));
+      parts.trees.setColorAt(k, tone(tint));
     });
     parts.trees.count = sim.trees.members.length;
     parts.trees.instanceMatrix.needsUpdate = true;
@@ -178,7 +190,7 @@ export function createFormworkView(THREE) {
         : [0, 0, 0];
       const touching = Math.hypot(force[0], force[1], force[2]) > 0;
       const tint = touching ? HEAD_TOUCHING : HEAD_CLEAR;
-      parts.heads.setColorAt(h, colour.setRGB(tint[0], tint[1], tint[2]));
+      parts.heads.setColorAt(h, tone(tint));
       const from = node(netNode);
       const scale = PUSH_M_PER_KN / 1000;
       put(push.array, 6 * h, from);
@@ -196,8 +208,8 @@ export function createFormworkView(THREE) {
       put(wires.position.array, 6 * w + 3,
           from.map((value, k) => value + sim.rim.into[3 * w + k] * WIRE_STUB_M));
       const tint = (by === "wire" ? colourOf("wire", near.wireTension[w], sim, tolerance) : null) || PLAIN;
-      put(wires.color.array, 6 * w, tint);
-      put(wires.color.array, 6 * w + 3, tint);
+      putColour(wires.color.array, 6 * w, tint);
+      putColour(wires.color.array, 6 * w + 3, tint);
     });
     wires.position.needsUpdate = true;
     wires.color.needsUpdate = true;
