@@ -1,6 +1,6 @@
 # The Formwork tab: the raise played from the physics engine
 
-Date: 2026-10-10. Part 4 of the five the owner set out on 2026-10-09. Drafted overnight, finished on his word of 2026-10-10 ("let's continue and finish this new spec, give me the questions and build it, then we go from there"). Every choice he has not made himself is marked as a ruling; his answers to section 13 are folded in where they fall.
+Date: 2026-10-10. Part 4 of the five the owner set out on 2026-10-09. Drafted overnight, finished on his word of 2026-10-10 ("let's continue and finish this new spec, give me the questions and build it, then we go from there"). Every choice he has not made himself is marked as a ruling. He answered the five questions of section 13 the same day, each with the recommended choice, and the answers are folded in where they fall.
 
 ## 1. What he ruled
 
@@ -13,6 +13,7 @@ Date: 2026-10-10. Part 4 of the five the owner set out on 2026-10-09. Drafted ov
 - A click on a node: its numbers and its members' tensions.
 - WORST tables (ropes, wires, trees, nodes, machines) that sort, and fly to the row.
 - No prose. The engine as real as possible, computed once in the background, the captures replayed; no exaggeration slider.
+- His answers of 2026-10-10: the formwork run takes the cable net run's design prestress; one machine a study, shared by both tabs; the captures replace the studio's formwork act only in this tab; the raise at the studio's own rate and 0.5 s a tiling quarter; the worst tables in a left pop-up.
 
 ## 2. What stays out
 
@@ -49,7 +50,7 @@ A ninth button in the rail, Formwork, after Cable net, and a `formwork-section` 
 | Row | What |
 |---|---|
 | Run formwork analysis | the button, its status line and progress (capture n of 100) |
-| Machine | the mechanism the Cable net tab chose, one line, and the prestress the run takes (section 6) |
+| Machine | the mechanism the Cable net tab chose, one line (his answer: one machine a study), and the prestress the run takes (section 6) |
 | Wall | the tree tube's wall, mm, a dial (3.2 to start, as ruled) |
 | Player | step back, play or pause, step on, speed (0.25x to 4x), the capture label, a scrub over the captures |
 | Frame line | rope max kN, wire max N, trees max utilisation, deviation max mm, heads touching n/46 |
@@ -61,15 +62,17 @@ A ninth button in the rail, Formwork, after Cable net, and a `formwork-section` 
 
 ## 6. The run
 
-The tab's button posts the study's cut options (as the Cable net run does), the chosen wire, wires a motor and pulleys, the wall, and the prestress of section 13 question 5. Progress polls `/api/runs/{id}`; when it is done the tab fetches the file and goes to the first capture. The run takes about two minutes on the real study, and the status line says so.
+The tab's button posts the study's cut options (as the Cable net run does), the chosen wire, wires a motor and pulleys, and the wall. Progress polls `/api/runs/{id}`; when it is done the tab fetches the file and goes to the first capture. The run takes about two minutes on the real study, and the status line says so.
+
+The prestress (his answer to question 5): the route reads the design prestress from the cable net run of the same cut (the demand's `prestress`, part 3's design point), so the net is cut for what the chosen machine holds. With no cable net run, the route refuses: `Run the cable net analysis first`. The run's options record the prestress and that it came from the cable net run. Ruling: a body that names a prestress is still taken, for scripts and tests; the tab never sends one.
 
 ## 7. The player
 
 - The captures are decoded once when read, each array a Float32Array, positions taken from millimetres to metres.
-- Timing at 1x (section 13 question 4): the raise, finish and hold at the studio's own rate, 12 s for machine time 0 to 100, so 8.4 s from 30 to 100; the tiling at 0.5 s a quarter. About 40 s in all on the real study.
+- Timing at 1x (his answer to question 4): the raise, finish and hold at the studio's own rate, 12 s for machine time 0 to 100, so 8.4 s from 30 to 100; the tiling at 0.5 s a quarter. About 40 s in all on the real study.
 - Between two captures the positions are blended linearly for the drawing only; every number shown is the nearer capture's, never a blend.
 - The label: `t 60 finish`, `t 98 hold`, `S7 q2`.
-- Ruling: while the Formwork tab is open, the studio's timeline stands still, its own net, shell, trees and lenses are hidden, and the scene shows the capture the player is at; leaving the tab gives them back as they were.
+- His answer to question 3, with a ruling on how: while the Formwork tab is open, the studio's timeline stands still, its own net, shell, trees and lenses are hidden, and the scene shows the capture the player is at; leaving the tab gives them back as they were.
 
 ## 8. The model on screen
 
@@ -93,7 +96,7 @@ Ruling: the tab draws its own objects in one group, built from the document, mov
 
 ## 10. The worst tables
 
-In a left pop-up like the Cable net tab's (section 13 question 2), one tab a part. Each row is a part's worst over the whole sequence with the capture it happens at:
+In a left pop-up like the Cable net tab's (his answer to question 2), opened by the Worst button, one tab a part. Each row is a part's worst over the whole sequence with the capture it happens at:
 - ropes: member, kN, capture;
 - wires: wire, N, capture;
 - trees: member, utilisation, capture;
@@ -113,7 +116,9 @@ One line each, no prose: `No formwork run: Run formwork analysis`; the run's own
 - The page by its text: the rail button, the section, the ticks, the pop-up.
 - On screen before handover, on the real study after a fresh formwork run: the tab at a raise capture, a finish capture, the hold and a tiling quarter; each Colour by; each show tick; the labels; the card; each worst table and a row's fly-to. Every picture looked at.
 
-## 13. His questions
+## 13. His questions, answered 2026-10-10
+
+Each answered with the recommended choice.
 
 1. Machine: one machine a study shared by both tabs (recommended: the tabs never disagree), or a Formwork machine of its own?
 2. The worst tables in a left pop-up like the Cable net tab's (recommended), or in the panel?
