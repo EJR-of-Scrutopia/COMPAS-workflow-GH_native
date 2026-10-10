@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 
-from test_formwork_model import document
+from test_formwork_model import document, with_holds
 
 STATIC = Path(__file__).resolve().parents[2] / "bench" / "studio" / "static"
 
@@ -87,8 +87,29 @@ out.nearest = [view.nearestNode(camera, rect, 302, 99), view.nearestNode(camera,
 out.placed = [0, 1, 2, 3].map((i) => m.placedFaces(sim, i));
 view.clear();
 out.cleared = [view.group.children.length, view.parts(), view.point({ kind: "node", index: 0 })];
+// the holds' props (spec 2026-10-10 formwork holds, section 5): node 2 held
+const held = m.readSim(%(held)s);
+view.build(held);
+const props = () => view.parts().props;
+const withHolds = { ...every, holds: true };
+out.propsCount = view.group.children.length;
+view.show({ from: 0, to: 0, blend: 0, nearer: 0 }, { show: withHolds, colour: "off", tolerance: 20 });
+out.propsBefore = props().visible;
+view.show({ from: 2, to: 2, blend: 0, nearer: 2 }, { show: withHolds, colour: "off", tolerance: 20 });
+out.propPushing = [props().visible, props().count, at(props(), 0), colourAt(props(), 0)];
+view.show({ from: 3, to: 3, blend: 0, nearer: 3 }, { show: withHolds, colour: "off", tolerance: 20 });
+out.propLifted = colourAt(props(), 0);
+view.show({ from: 3, to: 3, blend: 0, nearer: 3 }, { show: every, colour: "off", tolerance: 20 });
+out.propUnticked = props().visible;
+view.clear();
 console.log(JSON.stringify(out));
 """
+
+
+def _held():
+    doc = with_holds(document())
+    doc["net"]["holds"] = [2]                      # a node with a height, for its prop
+    return doc
 
 
 @pytest.fixture(scope="module")
@@ -100,7 +121,7 @@ def out(tmp_path_factory):
         "three": (STATIC / "vendor" / "three.module.js").resolve().as_uri(),
         "model": (STATIC / "formwork_model.js").resolve().as_uri(),
         "view": (STATIC / "formwork_view.js").resolve().as_uri(),
-        "doc": json.dumps(document())}, encoding="utf-8")
+        "doc": json.dumps(document()), "held": json.dumps(_held())}, encoding="utf-8")
     result = subprocess.run(["node", str(script)], capture_output=True, text=True,
                             encoding="utf-8")
     assert result.returncode == 0, result.stderr
@@ -108,8 +129,9 @@ def out(tmp_path_factory):
 
 
 def test_the_view_builds_its_own_objects_and_the_still_ones_once(out):
-    # net, design, wires, push, its heads, trees, heads, anchors, ground and skin
-    assert out["children"] == 10
+    # net, design, wires, push, its heads, trees, heads, anchors, ground, skin
+    # and the holds' props
+    assert out["children"] == 11
     # the designed form as a light line net: the second member, node 1 to 2
     assert out["design"] == pytest.approx([1.0, 0.0, 0.0, 1.0, 1.0, 0.5])
     first, second, count = out["anchors"]
@@ -206,3 +228,18 @@ def test_a_click_finds_the_nearest_node_on_screen(out):
 
 def test_closing_the_tab_removes_everything(out):
     assert out["cleared"] == [0, None, None]
+
+
+def test_each_hold_is_a_prop_from_the_ground_to_its_design_point_from_the_jacking_on(out):
+    # ten objects with the props
+    assert out["propsCount"] == 11
+    # not in before the jacking
+    assert out["propsBefore"] is False
+    visible, count, prop, colour = out["propPushing"]
+    assert visible is True and count == 1
+    # node 2's design point is (1, 1, 0.5): a prop half a metre tall under it
+    assert prop["p"] == pytest.approx([1.0, 1.0, 0.25]) and prop["s"][1] == pytest.approx(0.5)
+    assert colour == pytest.approx(linear([0x3f / 255, 0x9e / 255, 0x57 / 255]))
+    # its node lifted off: grey; and the tick hides them
+    assert out["propLifted"] == pytest.approx(linear([0x9a / 255, 0xa4 / 255, 0xb2 / 255]))
+    assert out["propUnticked"] is False

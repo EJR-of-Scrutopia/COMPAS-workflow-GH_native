@@ -11,6 +11,7 @@ const MARK_M = 0.05;            // an anchor's mark, and twice a ground contact'
 const HEAD_M = 0.08;            // a head's mark
 const PUSH_LONGEST_M = 1.0;     // a push at the run's 95th percentile and over, drawn this long
 const TIP_M = 0.08;             // the head on a push, this long
+const PROP_M = 0.03;            // a hold's prop, this thick (spec 2026-10-10 formwork holds)
 const PLAIN = [0.86, 0.86, 0.86];
 const TREE_PLAIN = [0.72, 0.74, 0.78];
 const HEAD_TOUCHING = [0x3f / 255, 0x9e / 255, 0x57 / 255];
@@ -94,6 +95,8 @@ export function createFormworkView(THREE) {
       ground: marks(new THREE.SphereGeometry(MARK_M / 2, 8, 6), sim.nodes,
                     new THREE.MeshBasicMaterial({ color: 0xc99a2e })),
       skin: skin(),
+      props: marks(new THREE.CylinderGeometry(PROP_M / 2, PROP_M / 2, 1, 8), sim.holds.length,
+                   new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.6 })),
     };
     const design = parts.design.geometry.attributes.position;
     sim.edges.forEach(([u, v], e) => {
@@ -259,6 +262,24 @@ export function createFormworkView(THREE) {
     surface.attributes.position.needsUpdate = true;
     if (surface.index && surface.index.count) surface.computeVertexNormals();
 
+    // the holds' props: from the jacking on, each standing on the ground under
+    // its node's design point up to it, green while it pushes its node
+    const jacked = near.phase === "holds" || near.phase === "tiling";
+    sim.holds.forEach((holdNode, h) => {
+      const top = [sim.design[3 * holdNode], sim.design[3 * holdNode + 1], sim.design[3 * holdNode + 2]];
+      const height = Math.max(top[2], 1e-6);
+      // a cylinder stands along y: turned to stand along z, then made as tall as the point
+      turn.setFromUnitVectors(up, start.set(0, 0, 1));
+      matrix.compose(middle.set(top[0], top[1], height / 2), turn, stretch.set(1, height, 1));
+      parts.props.setMatrixAt(h, matrix);
+      const p = near.holdPush;
+      const pushing = p && 3 * h + 2 < p.length && Math.hypot(p[3 * h], p[3 * h + 1], p[3 * h + 2]) > 0;
+      parts.props.setColorAt(h, tone(pushing ? HEAD_TOUCHING : HEAD_CLEAR));
+    });
+    parts.props.count = sim.holds.length;
+    parts.props.instanceMatrix.needsUpdate = true;
+    if (parts.props.instanceColor) parts.props.instanceColor.needsUpdate = true;
+
     const on = settings.show || {};
     parts.net.visible = !!on.net;
     parts.design.visible = !!on.design;
@@ -270,6 +291,7 @@ export function createFormworkView(THREE) {
     parts.anchors.visible = !!on.anchors;
     parts.ground.visible = !!on.ground;
     parts.skin.visible = !!on.skin && !!(surface.index && surface.index.count);
+    parts.props.visible = !!on.holds && jacked && sim.holds.length > 0;
   }
 
   // Where a part is on screen now, in metres (targetPoint on the blended
