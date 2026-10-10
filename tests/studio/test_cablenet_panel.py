@@ -30,7 +30,7 @@ def _function_body(js, name):
 
 
 def test_the_controller_fills_the_skeleton_and_judges_through_the_model():
-    for ident in ("cablenet-run", "cablenet-run-status", "cablenet-prestress", "cablenet-speed",
+    for ident in ("cablenet-run", "cablenet-run-status", "cablenet-speed",
                   "cablenet-tolerance", "cablenet-tolerance-value",
                   "cablenet-speed-note", "cablenet-demand", "cablenet-motor", "cablenet-ratio",
                   "cablenet-pulley", "cablenet-rope", "cablenet-wires", "cablenet-recommend",
@@ -107,18 +107,36 @@ def test_the_speed_dial_only_annotates():
         assert ident not in body, ident
 
 
+def test_the_prestress_is_worked_out_and_the_run_sends_the_machines_ceiling():
+    """Spec 2026-10-10 prestress and holds, sections 4 and 5: no Prestress
+    dial; the run is designed for the chosen machine's ceiling, or the
+    strongest machine's while none is scored; the motors' new columns read the
+    needs table."""
+
+    html = (STATIC / "index.html").read_text(encoding="utf-8")
+    assert 'id="cablenet-prestress"' not in html
+    assert "el.prestress" not in JS and "cablenet-prestress" not in JS
+    chosen = _function_body(JS, "chosenCeiling")
+    assert "panel.row.verdict.worst.ceiling" in chosen
+    assert "panel.strongest ? panel.strongest.ceiling_newtons : null" in chosen
+    run = _function_body(JS, "startRun")
+    assert "ceiling_newtons: chosenCeiling() == null ? undefined : chosenCeiling()," in run
+    assert "prestress:" not in run
+    assert "motorsHtml(scored.rows, panel.choices.motor, panel.demand)" in JS
+
+
 def test_each_dial_keeps_its_reading_beside_the_track():
     """The interface language: a dial states the value it has, in a reading
     named <slider-id>-value, written by whoever owns the dial."""
 
-    for ident in ("cablenet-prestress-value", "cablenet-speed-value", "cablenet-wires-value"):
+    for ident in ("cablenet-tolerance-value", "cablenet-speed-value", "cablenet-wires-value"):
         assert '"{}"'.format(ident) in JS, ident
     body = _function_body(JS, "showDials")
-    assert "el.prestressValue.textContent = el.prestress.value" in body
+    assert "el.toleranceValue.textContent = el.tolerance.value" in body
     assert "el.speedValue.textContent = el.speed.value" in body
     assert "el.wiresValue.textContent = el.wires.value" in body
     # and every move of a dial writes its reading
-    for dial in ("prestress", "speed", "wires"):
+    for dial in ("tolerance", "speed", "wires"):
         listener = JS[JS.index('el.{}.addEventListener("input"'.format(dial)):]
         assert "showDials();" in listener[:listener.index("});")], dial
 
@@ -206,7 +224,7 @@ def test_the_menu_answers_in_values_and_warns_in_one_line_each():
 
     body = _function_body(JS, "renderDemand")
     assert "answersHtml(menuAnswers(demand, panel.row, panel.strongest))" in body
-    assert ("runWarnings(demand, { prestress: Number(el.prestress.value), "
+    assert ("runWarnings(demand, { ceiling: chosenCeiling(), "
             "tolerance: Number(el.tolerance.value) }, panel.parts, "
             "panel.choices && panel.choices.rope)") in body
     assert '<div class="cablenet-warning">${esc(line)}</div>' in body
@@ -230,7 +248,7 @@ def test_the_menu_is_short_and_the_mechanism_cost_and_graphs_are_in_the_pop_up()
     opening = '<details id="cablenet-section">'
     section = html[html.index(opening):]
     section = section[:section.index("</details>")]
-    order = ["cablenet-run", "cablenet-tolerance", "cablenet-prestress", "cablenet-wires",
+    order = ["cablenet-run", "cablenet-tolerance", "cablenet-wires",
              "cablenet-demand", "cablenet-popup-toggle", "cablenet-lenses", "cablenet-stage"]
     places = [section.index('id="{}"'.format(ident)) for ident in order]
     assert places == sorted(places)
@@ -283,7 +301,7 @@ def test_every_motor_is_scored_only_while_the_mechanism_tab_is_in_view():
     assert 'el.popup.classList.contains("hidden") || panel.tab !== "cn-mechanism"' in body
     assert "validChoices(panel.options, { ...panel.choices, motor: motor.key })" in body
     assert "++panel.motorsTicket" in body and body.count("mine !== panel.motorsTicket") == 2
-    assert "motorsHtml(scored.rows, panel.choices.motor)" in body
+    assert "motorsHtml(scored.rows, panel.choices.motor, panel.demand)" in body
     assert "renderMotors();" in _function_body(JS, "renderHolds")
     click = JS[JS.index('el.motors.addEventListener("click"'):]
     click = click[:click.index("\n  });")]

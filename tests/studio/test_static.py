@@ -4628,7 +4628,7 @@ def test_the_rail_has_a_cable_net_section_and_the_data_popup_lost_its_tab():
                        "scene-section", "output-section"]
     assert '<details id="cablenet-section">' in html
     assert "cablenet-panel" not in html
-    for ident in ("cablenet-run", "cablenet-prestress", "cablenet-speed", "cablenet-lenses",
+    for ident in ("cablenet-run", "cablenet-speed", "cablenet-lenses",
                   "cablenet-stage", "cablenet-motor", "cablenet-recommend",
                   "cablenet-wires", "cablenet-price", "cablenet-holds",
                   "cablenet-graphs", "cablenet-export", "cablenet-export-choose",

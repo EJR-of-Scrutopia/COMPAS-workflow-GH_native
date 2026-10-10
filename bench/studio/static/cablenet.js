@@ -74,7 +74,6 @@ function sentOptions(options) {
 export function mountCableNet({ studyName, studyOptions, onDemand, onCeiling, onPopup = () => {} }) {
   const el = {
     run: byId("cablenet-run"), runStatus: byId("cablenet-run-status"),
-    prestress: byId("cablenet-prestress"), prestressValue: byId("cablenet-prestress-value"),
     tolerance: byId("cablenet-tolerance"), toleranceValue: byId("cablenet-tolerance-value"),
     speed: byId("cablenet-speed"), speedValue: byId("cablenet-speed-value"),
     speedNote: byId("cablenet-speed-note"), demand: byId("cablenet-demand"),
@@ -232,7 +231,7 @@ export function mountCableNet({ studyName, studyOptions, onDemand, onCeiling, on
     // motor redraws them from what was scored
     const key = JSON.stringify([studyName(), body, panel.demandTicket]);
     if (key === panel.motorsKey && panel.motorsRows) {
-      el.motors.innerHTML = motorsHtml(panel.motorsRows, panel.choices.motor);
+      el.motors.innerHTML = motorsHtml(panel.motorsRows, panel.choices.motor, panel.demand);
       return;
     }
     try {
@@ -241,7 +240,7 @@ export function mountCableNet({ studyName, studyOptions, onDemand, onCeiling, on
       if (mine !== panel.motorsTicket) return;
       panel.motorsKey = key;
       panel.motorsRows = scored.rows;
-      el.motors.innerHTML = motorsHtml(scored.rows, panel.choices.motor);
+      el.motors.innerHTML = motorsHtml(scored.rows, panel.choices.motor, panel.demand);
     } catch (error) {
       if (mine !== panel.motorsTicket) return;
       el.motors.innerHTML = `<div class="cablenet-warning">${esc(error.message)}</div>`;
@@ -265,13 +264,23 @@ export function mountCableNet({ studyName, studyOptions, onDemand, onCeiling, on
       : "No cable net demand";
   }
 
-  // The menu's answers (Needed, Gives, Most), then one line for each dial or
-  // wire the run on screen differs from. Values only: the model writes them.
+  // The ceiling a run is designed for (spec 2026-10-10 prestress and holds,
+  // section 4): the chosen machine's worst wire, or the strongest machine's
+  // while none is scored, or none.
+  function chosenCeiling() {
+    if (panel.row && !panel.row.refused && panel.row.verdict && panel.row.verdict.worst) {
+      return panel.row.verdict.worst.ceiling;
+    }
+    return panel.strongest ? panel.strongest.ceiling_newtons : null;
+  }
+
+  // The menu's answers (Needed, Gives, Most, Holds, Roof), then one line for
+  // each thing the run on screen differs from. Values only: the model writes them.
   function renderDemand() {
     const demand = panel.demand;
     const warnings = panel.demandNote
       ? ["Cable net demand: " + String(panel.demandNote).replace(/\.+$/, "")]
-      : runWarnings(demand, { prestress: Number(el.prestress.value), tolerance: Number(el.tolerance.value) }, panel.parts, panel.choices && panel.choices.rope);
+      : runWarnings(demand, { ceiling: chosenCeiling(), tolerance: Number(el.tolerance.value) }, panel.parts, panel.choices && panel.choices.rope);
     el.demand.innerHTML = answersHtml(menuAnswers(demand, panel.row, panel.strongest)) +
       warnings.map((line) => `<div class="cablenet-warning">${esc(line)}</div>`).join("");
     showExport();
@@ -365,20 +374,13 @@ export function mountCableNet({ studyName, studyOptions, onDemand, onCeiling, on
   }
 
   // Each dial states the value it has: its reading follows the track, and the
-  // prestress and tolerance dials also re-say whether they still match the
-  // analysis on screen.
+  // tolerance dial also re-says whether it still matches the analysis on screen.
   function showDials() {
-    el.prestressValue.textContent = el.prestress.value;
     el.toleranceValue.textContent = el.tolerance.value;
     el.speedValue.textContent = el.speed.value;
     el.wiresValue.textContent = el.wires.value;
   }
   showDials();
-
-  el.prestress.addEventListener("input", () => {
-    showDials();
-    renderDemand();
-  });
 
   el.tolerance.addEventListener("input", () => {
     showDials();
@@ -515,7 +517,10 @@ export function mountCableNet({ studyName, studyOptions, onDemand, onCeiling, on
     el.run.disabled = true;
     el.runStatus.textContent = "starting";
     try {
-      const body = { ...sentOptions(options), prestress: Number(el.prestress.value),
+      // the engine works the prestress out from the load, under the
+      // ceiling of the machine chosen
+      const body = { ...sentOptions(options),
+                     ceiling_newtons: chosenCeiling() == null ? undefined : chosenCeiling(),
                      tolerance_mm: Number(el.tolerance.value),
                      rope: panel.choices ? panel.choices.rope : undefined };
       const response = await fetch(`/api/studies/${encodeURIComponent(studyName())}/cablenet/run`,
