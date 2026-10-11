@@ -42,6 +42,7 @@ const sim = m.readSim(%(doc)s);
 const plain = m.readSim(%(plain)s);
 const unsorted = m.readSim(%(unsorted)s);
 const reason = m.readSim(%(reason)s);
+const unread = m.readSim(%(unread)s);
 out.read = { families: sim.families, tendons: sim.tendons, edgeTendon: Array.from(sim.edgeTendon),
              pulls: sim.captures.map((c) => Array.from(c.tendonTension)), scales: sim.scales,
              older: sim.older, plainTendons: plain.tendons,
@@ -83,7 +84,9 @@ out.warnings = {
   plainPulled: m.formworkWarnings(plain, { mechanism: chosen, pullIn: 300 }),
   loading: m.formworkWarnings(plain, { mechanism: chosen }),
   reason: m.formworkWarnings(reason, { mechanism: chosen, pullIn: 300 }),
+  unread: m.formworkWarnings(unread, { mechanism: chosen, pullIn: 0 }),
 };
+out.unread = unread.older;
 out.series = g.graphSeries(sim).pull;
 out.graphs = [g.graphsHtml(sim, 1200, 20), g.graphsHtml(plain, 1200, 20)];
 console.log(JSON.stringify(out));
@@ -101,12 +104,15 @@ def out(tmp_path_factory):
     reason["options"]["pull_in"] = 300.0
     reason["tendons"] = None
     reason["tendons_reason"] = "No tendons: this net's lines do not run across from a principal line"
+    unread = _run()
+    del unread["net"]["families"]
     script = tmp_path_factory.mktemp("cable_net_tendons") / "harness.mjs"
     script.write_text(HARNESS % {
         "module": (STATIC / "formwork_model.js").resolve().as_uri(),
         "popup": (STATIC / "run_popup_model.js").resolve().as_uri(),
         "doc": json.dumps(with_tendons(_run())), "plain": json.dumps(plain),
         "unsorted": json.dumps(unsorted), "reason": json.dumps(reason),
+        "unread": json.dumps(unread),
         "chosen": json.dumps(CHOSEN)}, encoding="utf-8")
     result = subprocess.run(["node", str(script)], capture_output=True, text=True,
                             encoding="utf-8")
@@ -217,6 +223,19 @@ def test_the_run_is_out_of_date_when_the_pull_changes(out):
     assert w["plainPulled"] == ["Run again: pull changed"]
     # a pulled run on a net with no principal line says why it has no tendons
     assert w["reason"] == ["No tendons: this net's lines do not run across from a principal line"]
+
+
+def test_a_run_read_without_families_is_an_older_run(out):
+    # found on screen: a run from before the families cannot tell Along from
+    # Across, and says so rather than drawing both grey without a word
+    assert out["unread"] is True
+    assert out["warnings"]["unread"] == ["Run again: older run"]
+
+
+def test_the_other_family_is_a_quiet_mid_grey(out):
+    # found on screen: a light grey read near white on the dark viewport,
+    # louder than the family coloured
+    assert out["colours"]["other"] == pytest.approx([0x7d / 255, 0x82 / 255, 0x8a / 255])
 
 
 def test_a_third_graph_draws_the_pull_of_all_the_tendons(out):

@@ -204,6 +204,7 @@ export function createFormworkView(THREE) {
     for (let i = 0; i < treeAt.length; i++) treeAt[i] = a.treeX[i] + (b.treeX[i] - a.treeX[i]) * f;
 
     const net = parts.net.geometry.attributes;
+    const tinted = new Array(sim.edges.length).fill(null);
     sim.edges.forEach(([u, v], e) => {
       put(net.position.array, 6 * e, node(u));
       put(net.position.array, 6 * e + 3, node(v));
@@ -217,6 +218,7 @@ export function createFormworkView(THREE) {
         // across tendons, section 6)
         cu = cv = memberColour(by, sim, near, e);
       }
+      if (cu) tinted[e] = [cu, cv || cu];
       putColour(net.color.array, 6 * e, cu || PLAIN);
       putColour(net.color.array, 6 * e + 3, cv || PLAIN);
     });
@@ -254,8 +256,10 @@ export function createFormworkView(THREE) {
     parts.heads.instanceMatrix.needsUpdate = true;
     if (parts.heads.instanceColor) parts.heads.instanceColor.needsUpdate = true;
 
-    // the tendons, proud of the net, in their across members' colours under
-    // Across and Both and white otherwise, each with its reel by its head
+    // the tendons, proud of the net, each in the colours of the member it
+    // runs along wherever the net is coloured, and white where the net is
+    // plain (found on screen: white tendons hid the colours of their members
+    // under Along and Offset), each with its reel by its head
     const tendons = parts.tendons.geometry.attributes;
     const proud = (i) => { const p = node(i); p[2] += TENDON_PROUD_M; return p; };
     let segment = 0;
@@ -266,11 +270,11 @@ export function createFormworkView(THREE) {
         put(tendons.position.array, 6 * segment, proud(path[k - 1]));
         put(tendons.position.array, 6 * segment + 3, proud(path[k]));
         const e = edgeOf(path[k - 1], path[k]);
-        const tint = (by === "across" || by === "both") && e >= 0
-          ? memberColour(by, sim, near, e) || TENDON_PLAIN : TENDON_PLAIN;
-        putColour(tendons.color.array, 6 * segment, tint);
-        putColour(tendons.color.array, 6 * segment + 3, tint);
-        if (first === null) first = tint;
+        const pair = e >= 0 && tinted[e] ? tinted[e] : [TENDON_PLAIN, TENDON_PLAIN];
+        const [from, to] = e >= 0 && sim.edges[e][0] === path[k - 1] ? pair : [pair[1], pair[0]];
+        putColour(tendons.color.array, 6 * segment, from);
+        putColour(tendons.color.array, 6 * segment + 3, to);
+        if (first === null) first = from;
         segment += 1;
       }
       const head = proud(path[0]);
