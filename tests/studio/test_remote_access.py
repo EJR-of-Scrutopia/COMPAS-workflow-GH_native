@@ -572,7 +572,7 @@ def test_the_analysis_lenses_are_buttons_one_at_a_time():
     # Three since the pulse left (2026-09-06, his word); five since the cable
     # net lenses (2026-10-08): Wire tension and Sag paint the same wires.
     assert ('const EXCLUSIVE_LAYERS = '
-            '["stress", "deflection", "forces", "tension", "sag"];') in js
+            '["stress", "deflection", "forces"];') in js
     set_layer = _js_function(js, "function setLayer(name, on)")
     assert "state.layers[other] = false;" in set_layer
     # Round two of his walk: wire forces ARE the net's lens, so raising it

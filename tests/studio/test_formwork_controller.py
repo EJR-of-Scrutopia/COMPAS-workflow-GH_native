@@ -229,6 +229,4 @@ def test_the_tab_records_the_raise_through_the_studio_s_recorder():
 
 
 def test_the_studio_labels_and_card_stand_down_while_the_tab_is_open():
-    assert ("body.formwork-open #model-labels, body.formwork-open #cablenet-pick "
-            "{ display: none; }") in CSS
     assert 'document.body.classList.toggle("formwork-open", on);' in _inner(JS, "setActive")

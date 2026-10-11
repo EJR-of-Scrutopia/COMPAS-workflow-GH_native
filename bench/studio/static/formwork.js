@@ -11,7 +11,7 @@ import {
   formworkWarnings, frameLine, frameLineHtml, labelsShown, paintOverlay, playhead, readSim,
   recordingCaption, weakestAt, withWall,
 } from "./formwork_model.js";
-import { spreadLabels } from "./cablenet_model.js";
+import { spreadLabels } from "./labels.js";
 
 // As the studio's labels and card.
 const LABEL_MAX = 125;

@@ -53,10 +53,8 @@
      coordinates over whatever the pointer is on and following it as
      the camera moves. -->
 <div id="hover-badge" class="hidden"></div>
-<!-- The Cable net lenses' numbers on the model and the card a click on a node
-     opens (spec 2026-10-09 Cable net display, section 5.3). -->
-<div id="model-labels"></div>
-<div id="cablenet-pick" class="hidden"></div>
+<!-- The one Cable net tab's values on the model and the card a click on a
+     node opens (spec 2026-10-11 one Cable net tab, section 5.2). -->
 <div id="formwork-labels"></div>
 <div id="formwork-pick" class="hidden"></div>
 <div id="event-log"></div>
@@ -508,29 +506,6 @@
     <div id="hud"></div>
     <!-- Not one of the lenses: an annotation, tucked at the bottom. -->
     <label id="overlays-tuck"><input id="overlays-box" type="checkbox"> Text overlays</label>
-  </details>
-  <details id="cablenet-section" class="hidden">
-    <summary>Cable net</summary>
-    <!-- Retired by the one Cable net tab (spec 2026-10-11, section 9): no
-         rail button opens it, and it goes with its code. -->
-    <!-- The cable net as a view (spec 2026-10-09 Cable net display): a short
-         menu of values; the mechanism, its cost and the graphs in the pop-up
-         on the left (#cablenet-popup), opened by the Mechanism button. Every
-         readout is filled by cablenet.js; the lenses by studio.js. -->
-    <button id="cablenet-run" class="primary" title="Run the cable net analysis">Run cable net analysis</button>
-    <div id="cablenet-run-status"></div>
-    <div class="dial-block" id="cablenet-dials">
-    <label title="Tolerance, mm"><span>Tolerance</span>
-      <input id="cablenet-tolerance" type="range" min="1" max="100" step="1" value="20">
-      <b id="cablenet-tolerance-value">20</b><em>mm</em></label>
-    <label title="Wires a motor"><span>Wires a motor</span>
-      <input id="cablenet-wires" type="range" min="1" max="7" step="1" value="1">
-      <b id="cablenet-wires-value">1</b><em></em></label>
-    </div>
-    <div id="cablenet-demand" class="cablenet-readout"></div>
-    <button id="cablenet-popup-toggle" title="Mechanism, cost and graphs">Mechanism</button>
-    <div id="cablenet-lenses" class="lens-list"></div>
-    <div id="cablenet-stage" class="layer-note"></div>
   </details>
   <details id="formwork-section">
     <summary>Cable net</summary>
@@ -1002,52 +977,6 @@
   <div id="data-content" class="data-tab hidden"></div>
   <div id="data-graphs" class="data-tab hidden"></div>
 </div>
-<div id="cablenet-popup" class="hidden">
-  <!-- The Cable net tab's pop-up (spec 2026-10-09 Cable net display, section
-       4): the mechanism, its cost and the graphs. Filled by cablenet.js. -->
-  <div id="cablenet-popup-head">
-    <div id="cablenet-tabs">
-      <button data-cn-tab="cn-mechanism" class="active" type="button" title="Mechanism">Mechanism</button>
-      <button data-cn-tab="cn-cost" type="button" title="Cost">Cost</button>
-      <button data-cn-tab="cn-graphs" type="button" title="Graphs">Graphs</button>
-    </div>
-    <button id="cablenet-popup-close" type="button" title="Close">Close</button>
-  </div>
-  <div id="cn-mechanism" class="cn-tab">
-    <div id="cablenet-choices">
-      <div class="named"><span>Motor</span><select id="cablenet-motor" title="Motor"></select></div>
-      <div class="named"><span>Ratio</span><select id="cablenet-ratio" title="Planetary ratio"></select></div>
-      <div class="named"><span>Pulleys</span><select id="cablenet-pulley" title="Pulley, or none"></select></div>
-      <div class="named"><span>Wire</span><select id="cablenet-rope" title="Wire"></select></div>
-    </div>
-    <button id="cablenet-recommend" title="Cheapest combination that holds">Recommend</button>
-    <div id="cablenet-recommend-note" class="cablenet-readout"></div>
-    <div id="cablenet-limits" class="cablenet-readout"></div>
-    <div id="cablenet-motors" class="cablenet-readout"></div>
-    <div id="cablenet-machine" class="cablenet-readout"></div>
-    <div id="cablenet-holds" class="cablenet-readout"></div>
-    <div id="cablenet-travel" class="cablenet-readout"></div>
-    <div class="dial-block" id="cablenet-speed-dial">
-    <label title="Rope speed, mm/s"><span>Rope speed</span>
-      <input id="cablenet-speed" type="range" min="1" max="400" step="1" value="50">
-      <b id="cablenet-speed-value">50</b><em>mm/s</em></label>
-    </div>
-    <div id="cablenet-speed-note" class="cablenet-readout"></div>
-  </div><!-- /cn-mechanism -->
-  <div id="cn-cost" class="cn-tab hidden">
-    <div id="cablenet-price" class="cablenet-readout"></div>
-    <div id="cablenet-buy" class="cablenet-readout"></div>
-    <button id="cablenet-export" title="Spreadsheet, diagram and data sheet">Export</button>
-    <div id="cablenet-export-row" class="folder-line">
-      <button id="cablenet-export-choose" title="Choose where the cable net exports are written">Export folder</button>
-      <span id="cablenet-export-path" title="">no folder chosen</span>
-    </div>
-    <div id="cablenet-export-result" class="cablenet-readout"></div>
-  </div><!-- /cn-cost -->
-  <div id="cn-graphs" class="cn-tab hidden">
-    <div id="cablenet-graphs" class="cablenet-readout"></div>
-  </div><!-- /cn-graphs -->
-</div><!-- the end of the cable net pop-up -->
 <div id="mechanism-popup" class="hidden">
   <!-- The one Cable net tab's mechanism (spec 2026-10-11 one Cable net tab,
        section 8.1): one dropdown of whole spooling mechanisms, strongest
