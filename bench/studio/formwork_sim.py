@@ -292,11 +292,19 @@ def _subprocess_runner(python_exe: Path) -> Callable:
                 process = subprocess.Popen(
                     [str(python_exe), str(SOLVE_FORMWORK), str(request_path), str(out_path)],
                     stdout=subprocess.PIPE, stderr=errors, text=True)
+                # a capture's figures follow its progress line, and reach
+                # progress as a fourth argument (his choice of 11 October
+                # 2026: the answer fills in as the run goes)
+                last = None
                 for line in process.stdout:
                     parts = line.split(None, 3)
                     if progress is not None and len(parts) >= 3 and parts[0] == "progress":
-                        progress(int(parts[1]), int(parts[2]),
-                                 parts[3].strip() if len(parts) > 3 else "")
+                        last = (int(parts[1]), int(parts[2]),
+                                parts[3].strip() if len(parts) > 3 else "")
+                        progress(*last)
+                    elif progress is not None and last is not None and parts[:1] == ["figures"]:
+                        done, told = line.split(None, 2)[1:]
+                        progress(int(done), last[1], last[2], json.loads(told))
                 code = process.wait()
             if code != 0 or not out_path.is_file():
                 raise FormworkError("solve_formwork exited {}: {}".format(

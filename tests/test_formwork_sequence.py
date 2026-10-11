@@ -433,3 +433,29 @@ def test_each_line_pulls_by_the_contacts_of_each_step_of_the_tiling(monkeypatch)
     assert len(tiling) >= 2
     assert tiling[0] == [50.0] * 4
     assert tiling[1] == [0.0, 50.0, 50.0, 50.0]
+
+
+def test_each_capture_sends_its_figures_and_a_shared_first_pass_none():
+    # his choice of 11 October 2026: the answer fills in as the run goes, so
+    # each capture sends what the answer reads from it
+    sent = []
+    result = fs.simulate(_toy(), figures=lambda done, f: sent.append((done, f)))
+    assert [done for done, _ in sent] == list(range(1, len(result.captures) + 1))
+    last = result.captures[-1]
+    _, f = sent[-1]
+    assert f["wire"] == pytest.approx(float(last.wire_tension.max()))
+    assert f["wire_index"] == int(np.argmax(last.wire_tension))
+    assert f["offset_max"] == pytest.approx(float(last.deviation.max()))
+    assert f["offset_mean"] == pytest.approx(float(last.deviation.mean()))
+    k = int(np.argmax(last.tree_utilisation))
+    assert f["tree_utilisation"] == pytest.approx(float(last.tree_utilisation[k]))
+    assert f["tree_newtons"] == pytest.approx(abs(float(last.tree_axial[k])))
+    assert f["tendons"] == len(last.tendon_tension)
+    # with motors shared, the first pass (the raise alone, to learn each
+    # wire's need) is not the run's: it sends none
+    told, shared = [], []
+    two = fs.simulate(_toy(wires_per_motor=2), lambda done, total, what: told.append((done, total)),
+                      figures=lambda done, f: shared.append(done))
+    frames = len(_toy().frames)
+    assert shared == [frames + k for k in range(1, len(two.captures) + 1)]
+    assert told[-1] == (shared[-1], shared[-1])

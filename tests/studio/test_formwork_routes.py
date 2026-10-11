@@ -318,3 +318,20 @@ def test_the_captures_route_never_reads_outside_the_study_folder(tmp_path, monke
     by_pattern = client.get("/api/studies/Tiny/formwork/sim",
                             params=dict(RUN, pattern="../../../decoy"))
     assert by_pattern.status_code == 400 and "outside" in by_pattern.json()["detail"]
+
+
+def test_a_run_carries_each_captures_figures_as_it_goes(tmp_path, monkeypatch):
+    # his choice of 11 October 2026: the answer fills in as the run goes
+    def fake(request, progress=None):
+        progress(1, 2, "raise at machine time 30")
+        progress(1, 2, "raise at machine time 30", {"wire": 5.0, "offset_max": 40.0})
+        progress(2, 2, "hold at machine time 100", {"wire": 9.0, "offset_max": 30.0})
+        return {"schema": "bench.formwork-sim/1", "captures": [{"phase": "hold"}]}
+
+    client, _ = make_client(tmp_path, monkeypatch, formwork_runner=fake)
+    _plant(tmp_path)
+    started = client.post("/api/studies/Tiny/formwork/run", json={**RUN, "prestress": 250.0})
+    state = wait_for(client, started.json()["run"])
+    assert state["state"] == "done", state["message"]
+    assert state["figures"] == [{"wire": 5.0, "offset_max": 40.0, "capture": 1},
+                                {"wire": 9.0, "offset_max": 30.0, "capture": 2}]

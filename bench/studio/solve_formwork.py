@@ -12,7 +12,9 @@ never in the server's process. formwork_sim.py starts it as a subprocess:
 
     .venv/Scripts/python.exe bench/studio/solve_formwork.py request.json out.json
 
-A line goes to stdout for every capture, "progress <done> <total> <what>". A
+A line goes to stdout for every capture, "progress <done> <total> <what>",
+and after it "figures <done> <json>", what the studio's answer reads from that
+capture as the run goes (his choice of 11 October 2026). A
 run the engine refuses prints the reason to stderr and exits 1.
 
 A request may name state_out, where the sequence's state at the hold is
@@ -251,14 +253,14 @@ def _summary(result):
     }
 
 
-def solve(request, progress=None):
+def solve(request, progress=None, figures=None):
     """The capture document for one request."""
 
     model = model_from(request)
     print_ = fingerprint(request)
     state = None if not request.get("state_in") else read_state(request["state_in"], print_)
     began = time.perf_counter()
-    result = fs.simulate(model, progress, state=state)
+    result = fs.simulate(model, progress, state=state, figures=figures)
     seconds = time.perf_counter() - began
     if request.get("state_out") and state is None:
         write_state(request["state_out"], result.state, print_)
@@ -335,8 +337,11 @@ def main() -> int:
     def progress(done, total, what):
         print("progress {} {} {}".format(done, total, what), flush=True)
 
+    def figures(done, told):
+        print("figures {} {}".format(done, json.dumps(told, allow_nan=False)), flush=True)
+
     try:
-        document = solve(request, progress)
+        document = solve(request, progress, figures)
     except ne.EngineError as error:
         print(str(error), file=sys.stderr)
         return 1

@@ -1649,7 +1649,7 @@ body.stilling
 #panel .segmented input:checked + span { position: relative; background: var(--accent-bg);
   color: var(--accent-ink); border-color: var(--accent); }
 #panel #formwork-views { display: flex; gap: var(--s2); margin: var(--s2) 0; }
-#panel #formwork-views button { flex: 1; min-width: 0; margin: 0; }
+#panel #formwork-views button { flex: 1; min-width: 0; margin: 0; padding-left: 0; padding-right: 0; text-align: center; }
 #panel #formwork-views button.active { background: var(--accent-bg); color: var(--accent-ink);
   border-color: var(--accent); }
 #panel .icon-act { width: 34px; margin: 0; padding: 5px 0; text-align: center; font-size: 13px;
