@@ -2177,6 +2177,7 @@ def create_app(runner=None, cra_runner=None, cablenet_runner=None,
         before the slow part."""
 
         import catalogue
+        import machine
 
         material = str(body.get("material", "tile"))
         pattern = str(body.get("pattern", "herringbone"))
@@ -2222,31 +2223,58 @@ def create_app(runner=None, cra_runner=None, cablenet_runner=None,
         if source is not None and source not in bundle.CUT_SOURCES:
             raise HTTPException(400, "source must be one of {} when given".format(
                 ", ".join(bundle.CUT_SOURCES)))
-        rope_key = str(body.get("rope", FORMWORK_DEFAULTS["rope"]))
+        if export not in geometry.available_exports(bundle.UPLOAD_DIR):
+            raise HTTPException(404, "There is no export named {!r}.".format(export))
         parts = catalogue.load_parts()
+        # The mechanism (spec 2026-10-11 one Cable net tab, section 4.2): the net
+        # is cut for one spool's pull of it, and its rope, wires a motor and
+        # pulleys are the run's. The tab sends it and never a prestress; a body
+        # that names a prestress keeps it, as scripts and tests do, and with no
+        # mechanism one is the only way to run.
+        chosen = body.get("mechanism")
+        built = pull = facts = None
+        if chosen is not None:
+            if not isinstance(chosen, dict):
+                raise HTTPException(400, "mechanism: the five choices, not {!r}".format(chosen))
+            facts = _machine_facts(export, parts, chosen.get("rope"))
+            try:
+                built = machine.derive(parts, chosen, facts, MECHANISM_ANGLE_DEGREES)
+                pull = machine.have(parts, built, MECHANISM_ANGLE_DEGREES)
+            except (machine.MachineError, catalogue.CatalogueError) as error:
+                raise HTTPException(400, str(error))
+            rope_key = built["rope"]
+            wires_per_motor = built["wires_per_motor"]
+            pulleys = built["sheave"] is not None
+        elif prestress is None:
+            raise HTTPException(400, "Choose a mechanism")
+        else:
+            rope_key = str(body.get("rope", FORMWORK_DEFAULTS["rope"]))
         if rope_key not in parts["rope"]:
             raise HTTPException(400, "no rope named {!r} in the catalogue".format(rope_key))
         rope = parts["rope"][rope_key]
         _validate(export, material, pattern, size, thickness)
-        # The prestress the net is cut for: the cable net run's design prestress
-        # for the same cut (the owner's answer of 10 October 2026), unless the
-        # body names one, as scripts and tests do. The tab never sends one.
         prestress_from = "request"
         if prestress is None:
-            if export not in geometry.available_exports(bundle.UPLOAD_DIR):
-                raise HTTPException(404, "There is no export named {!r}.".format(export))
-            try:
-                demand = _read_cablenet_demand(export, material, pattern, size, thickness,
-                                               density, source)
-            except HTTPException as error:
-                if error.status_code != 404:
-                    raise
-                raise HTTPException(400, "Run the cable net analysis first")
-            designed = demand.get("prestress")
-            if (isinstance(designed, bool) or not isinstance(designed, (int, float))
-                    or not (math.isfinite(designed) and designed > 0.0)):
-                raise HTTPException(400, "Run the cable net analysis again: no prestress")
-            prestress, prestress_from = float(designed), "cable net"
+            prestress, prestress_from = float(pull["newtons"]), "mechanism"
+        mechanism_options = {
+            "mechanism": None if built is None else built["choices"],
+            "described": None if built is None else machine.describe(parts, built),
+            "have_newtons": None if pull is None else pull["newtons"],
+            "have_limit": None if pull is None else pull["limit"],
+            "have_part": None if pull is None else pull["part"],
+            "rope_working_newtons": catalogue.rope_working_load(parts, rope_key),
+        }
+
+        def annotate(document):
+            # the drum and the carriage, judged on the run's own reels
+            if built is None:
+                return {}
+            reeves = dict(zip(facts["nodes"], facts["reeves"]))
+            return {"checks": formwork_sim.travel_checks(parts, built, document, reeves,
+                                                         facts["nodes"])}
+
+        import formwork_sim
+
         slug = geometry.slugify(export)
         with RUNS_LOCK:
             for run in RUNS.values():
@@ -2304,9 +2332,10 @@ def create_app(runner=None, cra_runner=None, cablenet_runner=None,
                              "rope": rope_key, "prestress": prestress,
                              "prestress_from": prestress_from,
                              "wires_per_motor": wires_per_motor, "wall": wall,
-                             "pulleys": pulleys, "holds": holds, "tolerance_mm": tolerance_mm},
+                             "pulleys": pulleys, "holds": holds, "tolerance_mm": tolerance_mm,
+                             **mechanism_options},
                     runner=formwork_runner, progress=progress, holds=holds,
-                    tolerance_mm=tolerance_mm)
+                    tolerance_mm=tolerance_mm, annotate=annotate)
                 run["state"] = "done"
                 run["phase"] = "done"
                 run["message"] = ""

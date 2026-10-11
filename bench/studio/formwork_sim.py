@@ -421,14 +421,107 @@ def _subprocess_runner(python_exe: Path) -> Callable:
     return run
 
 
+def sides_of(faces, edges, rim_nodes, node_count):
+    """Each node's side (spec 2026-10-11 one Cable net tab, section 6): the
+    rim's wire nodes chained along the net's boundary (its edges on one face)
+    split into runs, a side each, numbered in the rim's own order; every node
+    belongs to the side it is fewest net steps from, ties to the lower side.
+    None for a net with no faces to find its boundary by."""
+
+    if not faces:
+        return None
+    key = lambda a, b: (a, b) if a < b else (b, a)
+    on_faces = {}
+    for face in faces:
+        for i in range(len(face)):
+            edge = key(int(face[i]), int(face[(i + 1) % len(face)]))
+            on_faces[edge] = on_faces.get(edge, 0) + 1
+    rim = [int(node) for node in rim_nodes]
+    joined = {node: [] for node in rim}
+    for (a, b), count in on_faces.items():
+        if count == 1 and a in joined and b in joined:
+            joined[a].append(b)
+            joined[b].append(a)
+    side_of = {}
+    for start in rim:
+        if start in side_of:
+            continue
+        side = len(set(side_of.values()))
+        side_of[start] = side
+        stack = [start]
+        while stack:
+            for other in joined[stack.pop()]:
+                if other not in side_of:
+                    side_of[other] = side
+                    stack.append(other)
+    neighbours = [[] for _ in range(int(node_count))]
+    for u, v in edges:
+        neighbours[int(u)].append(int(v))
+        neighbours[int(v)].append(int(u))
+    sides = [None] * int(node_count)
+    for node, side in side_of.items():
+        sides[node] = side
+    frontier = sorted(side_of)
+    while frontier:
+        reached = {}
+        for node in frontier:
+            for other in neighbours[node]:
+                if sides[other] is None and (other not in reached
+                                             or sides[node] < reached[other]):
+                    reached[other] = sides[node]
+        for node, side in reached.items():
+            sides[node] = side
+        frontier = sorted(reached)
+    return sides
+
+
+def _floats(entry):
+    """One packed array of a capture document (solve_formwork.pack), read with
+    the standard library: the studio's server imports no numpy."""
+
+    import base64
+    import struct
+
+    raw = base64.b64decode(entry["f32"])
+    return list(struct.unpack("<%df" % (len(raw) // 4), raw))
+
+
+def travel_checks(parts, configuration, document, reeve_by_node, rim_nodes):
+    """The drum and the carriage of the run's mechanism (spec 2026-10-11
+    section 8.1), from the run's own take-up at each drum: each capture's reels,
+    in the engine's rim order (the rim's nodes ascending), each wire reeved as
+    the export draws it. The worst wire of each, its figure, its limit and
+    whether it fits; None for a run with no reels."""
+
+    import machine
+
+    order = sorted(int(node) for node in rim_nodes)
+    series = [[] for _ in order]
+    for capture in document.get("captures") or []:
+        if not isinstance(capture.get("reel"), dict):
+            continue
+        for w, value in enumerate(_floats(capture["reel"])[:len(order)]):
+            series[w].append(value)
+    if not any(series):
+        return None
+    reeves = [int(reeve_by_node.get(node, 1)) for node in order]
+    travel = machine.travel(parts, configuration, series, reeves)
+    drum, carriage = travel["worst_drum"], travel["worst_carriage"]
+    return {"drum": {"value_mm": drum["drum_rope_mm"], "limit_mm": drum["drum_capacity_mm"],
+                     "fits": drum["drum_fits"], "wire": drum["wire"]},
+            "carriage": {"value_mm": carriage["carriage_mm"], "limit_mm": carriage["stroke_mm"],
+                         "fits": carriage["rail_fits"], "wire": carriage["wire"]}}
+
+
 def run_formwork(inputs, arrays, binding, plan, thickness, density, out_path, ea,
                  mass_per_metre, prestress, wires_per_motor, wall, study=None, options=None,
                  note=None, runner=None, python_exe=None, progress=None, holds="none",
-                 tolerance_mm=20.0):
+                 tolerance_mm=20.0, annotate=None):
     """From a checked study and its cut to a written capture document. runner,
     when given, replaces the subprocess: it takes the request and progress and
     returns the document. progress, when given, is called with (captures done,
-    captures in all, what)."""
+    captures in all, what). The document gains each node's side (sides_of),
+    and annotate, when given, adds what it returns from the finished document."""
 
     request = request_from(inputs, arrays, binding, plan, thickness, density, ea,
                            mass_per_metre, prestress, wires_per_motor, wall, study, options, note)
@@ -443,5 +536,12 @@ def run_formwork(inputs, arrays, binding, plan, thickness, density, out_path, ea
     else:
         document = runner(request, progress)
         document["holds"] = None
+    vertices, edges = arrays.get("vertices"), arrays.get("edges")
+    document.setdefault("net", {})["sides"] = (
+        None if vertices is None or edges is None else
+        sides_of(arrays.get("faces"), edges, [wire["node"] for wire in inputs.rim],
+                 len(vertices)))
+    if annotate is not None:
+        document.update(annotate(document))
     bundle.write_json_atomically(Path(out_path), document)
     return {"path": str(out_path), "captures": len(document.get("captures") or [])}
