@@ -684,6 +684,7 @@ export function mountFormwork({ studyName, studyOptions, mechanism, view, hooks 
     el.answer.innerHTML = "";
     el.costBody.innerHTML = "";
     el.graphs.innerHTML = "";
+    setHolds(0);
     el.label.textContent = "";
     el.runStatus.textContent = "";
     el.run.disabled = false;

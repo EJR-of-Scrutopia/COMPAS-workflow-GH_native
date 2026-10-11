@@ -141,6 +141,9 @@ def test_the_cost_and_the_graphs_follow_the_run_and_export_bom_writes_it():
     clear = _inner(JS, "clear")
     assert 'el.costBody.innerHTML = "";' in clear and 'el.graphs.innerHTML = "";' in clear
     assert "clearTimeout(tab.rerun);" in clear and "tab.rerun = null;" in clear
+    # and its rods a side, so the next study's Run is not given them unseen
+    # (found by the final review)
+    assert "setHolds(0);" in clear
     # the pop-up switches between its three tabs
     assert "function showTab(id) {" in PICK
     assert 'el.popup.querySelectorAll("[data-mech-tab]")' in PICK
