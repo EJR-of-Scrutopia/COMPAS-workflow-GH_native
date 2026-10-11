@@ -186,13 +186,18 @@ def _places(model):
     return bool(model.holds) or (int(model.holds_per_side) > 0 and len(model.sides) > 0)
 
 
-def _pulled(model, net):
+def _pulled(model, net, contacts):
     """The net with its tendons pulled in (spec 2026-10-11 across tendons,
-    section 3, as amended); as it is with no pull or no lines."""
+    section 3, as amended), each line's once none of its nodes rests on the
+    ground (found running the real study: a big pull on a line still lying
+    there drags it along the ground); as it is with no pull or no lines."""
 
     if not model.tendons or float(model.tendon_pull) <= 0.0:
         return net
-    return net._replace(tendons=ne.tendons(model.tendons, model.tendon_pull))
+    resting = set(int(node) for node in contacts.resting)
+    pull = [0.0 if resting.intersection(path) else float(model.tendon_pull)
+            for path in model.tendons]
+    return net._replace(tendons=ne.tendons(model.tendons, pull))
 
 
 def _count(model):
@@ -311,7 +316,6 @@ def _raise(model, net, plan, progress, total):
     rest = None
     done_steps = 0
     # laid out by hand unpulled; the tendons pull from the raise on
-    net = _pulled(model, net)
     for frame in model.frames:
         now = {node: np.asarray(frame.trees[tree], dtype=float) for node, tree in tree_of.items()}
         if previous is None:
@@ -321,13 +325,14 @@ def _raise(model, net, plan, progress, total):
         for step in range(1, steps + 1):
             heads = {k: previous[k] + (now[k] - previous[k]) * step / steps for k in now}
             contacts = contacts._replace(heads=heads)
+            pulled = _pulled(model, net, contacts)
             if plan is None:
-                rest, contacts = ne.settle(x, net, model.weight, anchors, contacts)
+                rest, contacts = ne.settle(x, pulled, model.weight, anchors, contacts)
                 reel = {node: _need(rest.reaction[node], model.rim[node]) for node in rim}
                 needs.append(reel)
             else:
                 reel = plan[done_steps]
-                rest, contacts = ne.settle(x, net, model.weight, {}, contacts,
+                rest, contacts = ne.settle(x, pulled, model.weight, {}, contacts,
                                            wires=_wires(model, reel))
             done_steps += 1
             x = rest.x
@@ -340,7 +345,7 @@ def _raise(model, net, plan, progress, total):
 
 
 def _jack_and_tile(model, net, progress, total, captures, x, contacts, reel, wires, tree_x):
-    net = _pulled(model, net)
+    net = _pulled(model, net, contacts)
     # the holds (spec 2026-10-10 formwork holds, section 3): once the net is up,
     # each hold is put under its node and jacked to the node's design point, at
     # most SUB_STEP_MM a step, gripping it; it keeps its grip from then on,
