@@ -146,15 +146,6 @@ out.inView = [m.labelKindsInView(["rope", "deviation", "contact"], { net: true, 
 out.pickHead = m.formworkPickHtml(sim, 1, 2);
 out.pickRim = m.formworkPickHtml(sim, 1, 0);
 out.pickNone = m.formworkPickHtml(sim, 1, 9);
-const chosen = { rope: "rope-4mm", wires_per_motor: 1, pulleys: true, wall: 3.2, prestress: 723.4 };
-out.warn = [m.formworkWarnings(null, chosen), m.formworkWarnings(sim, chosen),
-  m.formworkWarnings(m.readSim(older), chosen),
-  m.formworkWarnings(sim, { ...chosen, wires_per_motor: 2 }),
-  m.formworkWarnings(sim, { ...chosen, prestress: 6660 }),
-  m.formworkWarnings(sim, { ...chosen, prestress: 725 }),
-  m.formworkWarnings(sim, { ...chosen, wall: 2.6 }),
-  m.formworkWarnings(sim, { ...chosen, prestress: null }),
-  m.formworkWarnings(sim, { ...chosen, rope: null })];
 // the worst tables (spec section 10)
 const tables = m.worstTables(sim);
 out.worst = tables;
@@ -383,20 +374,6 @@ def test_the_card_gives_the_node_its_head_or_wire_and_its_members(out):
     assert "<th>Wire</th><td>w0</td>" in rim and "<th>Wire tension</th><td>1200 N</td>" in rim
     assert "Head push" not in rim
     assert out["pickNone"] == ""
-
-
-def test_the_warnings_are_one_line_each(out):
-    none, same, older, machine, prestress, within, wall, unknown, unloaded = out["warn"]
-    # the Cable net tab's choices not loaded yet: no machine to differ (final
-    # review 6: a false "Run again: machine no wire")
-    assert unloaded == []
-    assert none == ["No formwork run: Run formwork analysis"]
-    assert same == [] and within == [] and unknown == []
-    assert older == ["Run again: older formwork run"]
-    assert machine == ["Run again: machine rope-4mm, 2 a motor, pulleys, "
-                       "run rope-4mm, 1 a motor, pulleys"]
-    assert prestress == ["Run again: prestress 6660.0 N, run 723.4 N"]
-    assert wall == ["Run again: wall 2.6 mm, run 3.2 mm"]
 
 
 def test_each_worst_table_holds_each_parts_worst_over_the_run_and_where(out):

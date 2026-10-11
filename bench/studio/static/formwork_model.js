@@ -71,6 +71,7 @@ export function readSim(doc) {
     letOut: decodeF32(c.let_out),
     treeX: metres(decodeF32(c.tree_x)),
     treeUtilisation: decodeF32(c.tree_utilisation),
+    treeAxial: decodeF32(c.tree_axial) || new Float32Array(0),
     ground: Array.isArray(c.ground) ? c.ground : null,
     addedFaces: Array.isArray(c.added_faces) ? c.added_faces : null,
     holdPush: decodeF32(c.hold_push) || new Float32Array(0),
@@ -104,6 +105,10 @@ export function readSim(doc) {
     // search that chose them, or none
     holds: Array.isArray(net.holds) ? net.holds : [],
     search: doc.holds || null,
+    // each node's side (spec 2026-10-11 one Cable net tab, section 6), and the
+    // mechanism's drum and carriage judged on the run's own reels (8.1)
+    sides: Array.isArray(net.sides) ? net.sides : null,
+    checks: doc.checks || null,
     scales: { tension: scale("tension"), wire: scale("wireTension"),
               deviation: scale("deviation"), utilisation: scale("treeUtilisation"), push },
     older: !Array.isArray(net.faces) || doc.captures.some((c) => !Array.isArray(c.ground)),
@@ -415,36 +420,128 @@ export function formworkPickHtml(sim, index, node) {
     ? "<table><tr><th>To node</th><th>Tension</th></tr>" + members.join("") + "</table>" : "");
 }
 
-// The machine as a warning names it: its wire, wires a motor and pulleys.
-function machineName(options) {
-  return (options.rope || "no wire") + ", " + (options.wires_per_motor || 1) + " a motor, "
-    + (options.pulleys === false ? "no pulleys" : "pulleys");
-}
+const MECHANISM_KEYS = ["motor", "ratio", "pulley", "rope", "wires_per_motor"];
 
-// One line each (spec section 11): no run yet, an older run, and the run's
-// machine, prestress or wall not the chosen ones. chosen: the Cable net tab's
-// rope, wires_per_motor and pulleys, the Wall dial, and the cable net run's
-// design prestress (null when there is none).
+// One line each (spec 2026-10-11 one Cable net tab, section 4.4): no run yet,
+// an older run, and a run not made with the mechanism chosen (its five
+// choices, wires a motor among them). A wall is judged again without a run
+// (withWall), so it never makes a run out of date. chosen: { mechanism }, the
+// pop-up's five choices, null while they load.
 export function formworkWarnings(sim, chosen) {
-  if (!sim) return ["No formwork run: Run formwork analysis"];
+  if (!sim) return ["No run yet: Run"];
   const out = [];
-  if (sim.older) out.push("Run again: older formwork run");
-  const ran = sim.options || {};
-  if (!chosen) return out;
-  if (chosen.rope != null && machineName(chosen) !== machineName(ran)) {
-    out.push("Run again: machine " + machineName(chosen) + ", run " + machineName(ran));
-  }
-  if (chosen.prestress != null && ran.prestress != null
-      && Math.abs(chosen.prestress - ran.prestress) > 0.01 * ran.prestress) {
-    out.push("Run again: prestress " + Number(chosen.prestress).toFixed(1) + " N, run "
-      + Number(ran.prestress).toFixed(1) + " N");
-  }
-  if (chosen.wall != null && ran.wall != null
-      && Number(chosen.wall).toFixed(1) !== Number(ran.wall).toFixed(1)) {
-    out.push("Run again: wall " + Number(chosen.wall).toFixed(1) + " mm, run "
-      + Number(ran.wall).toFixed(1) + " mm");
+  if (sim.older) out.push("Run again: older run");
+  const mine = chosen && chosen.mechanism;
+  const ran = (sim.options || {}).mechanism;
+  if (mine && (!ran || MECHANISM_KEYS.some((key) => (ran[key] ?? null) !== (mine[key] ?? null)))) {
+    out.push("Run again: mechanism changed");
   }
   return out;
+}
+
+// A whole number of newtons with its thousands marked: "57,476 N".
+export function grouped(n) {
+  return Math.round(Number(n)).toLocaleString("en-GB") + " N";
+}
+
+// The answer, from the run alone (spec 2026-10-11 one Cable net tab, section
+// 4.3): the largest wire tension anywhere in the run, its wire and capture;
+// one spool's pull of the run's mechanism; how much is missing or to spare;
+// and the form, the worst offset at the run's last capture, against the
+// tolerance. have and gap are null for a run cut for a named prestress.
+export function answer(sim, tolerance) {
+  if (!sim) return null;
+  let needed = null;
+  sim.captures.forEach((c, k) => {
+    const t = c.wireTension;
+    for (let w = 0; t && w < t.length; w++) {
+      if (!needed || t[w] > needed.newtons) needed = { newtons: t[w], wire: w, capture: k };
+    }
+  });
+  if (needed) {
+    needed.name = sim.rim.names[needed.wire] || "#" + needed.wire;
+    needed.label = captureLabel(sim.captures[needed.capture]);
+  }
+  const o = sim.options || {};
+  const have = o.have_newtons == null ? null
+    : { newtons: Number(o.have_newtons), limit: o.have_limit || null, part: o.have_part || null,
+        mechanism: o.mechanism || null };
+  const gap = needed && have
+    ? { newtons: Math.abs(needed.newtons - have.newtons), missing: needed.newtons > have.newtons }
+    : null;
+  const last = sim.captures[sim.captures.length - 1];
+  const worst = largestOf(last.deviation);
+  const form = { mm: worst, tolerance: Number(tolerance), within: worst <= Number(tolerance) };
+  return { needed, have, gap, form };
+}
+
+// The mechanism as the answer names it: "23HS45-4204D-E1000 20:1".
+function shortMechanism(mechanism) {
+  if (!mechanism) return "";
+  return mechanism.motor + (mechanism.ratio == null ? " direct" : " " + mechanism.ratio + ":1");
+}
+
+// The answer block (spec section 4.3): a row each, value then what it is;
+// Needed's row carries its capture and wire, so a click goes there. Greyed
+// (stale) while the run is out of date.
+export function answerHtml(a, { stale = false } = {}) {
+  if (!a) return "";
+  const mark = (ok) => (ok ? "✓" : "✗");
+  const row = (name, value, note = "", attrs = "") =>
+    `<tr${attrs}><th>${escapeHtml(name)}</th><td>${value}</td><td>${escapeHtml(note)}</td></tr>`;
+  const rows = [];
+  if (a.needed) {
+    rows.push(row("Needed", grouped(a.needed.newtons),
+                  "worst wire " + a.needed.name + ", at " + a.needed.label,
+                  ` data-capture="${a.needed.capture}" data-wire="${a.needed.wire}"`));
+  }
+  rows.push(a.have ? row("Have", grouped(a.have.newtons), "one spool, " + shortMechanism(a.have.mechanism))
+    : row("Have", "none"));
+  if (a.gap) rows.push(row(a.gap.missing ? "Missing" : "Spare", grouped(a.gap.newtons) + " " + mark(!a.gap.missing)));
+  rows.push(row("Form", millimetres(a.form.mm) + " " + mark(a.form.within),
+                "worst offset, tolerance " + Number(a.form.tolerance) + " mm"));
+  return `<table class="answer${stale ? " stale" : ""}">` + rows.join("") + "</table>";
+}
+
+// ---------- the trees judged again for a new wall ----------
+// trees.resistance, ported (spec 2026-10-11 section 7: a new wall is judged
+// again from the run's own member forces, without a run): EN 1993-1-1 6.3.1,
+// buckling curve a, S355, the member's own length as its buckling length.
+const E_STEEL = 210000.0;
+const FY_S355 = 355.0;
+const ALPHA_CURVE_A = 0.21;
+const FOLDED_MM = 1.0e-6;
+
+function resistance(diameter, wall, length, compression) {
+  const inner = diameter - 2 * wall;
+  const area = Math.PI / 4 * (diameter ** 2 - inner ** 2);
+  const plastic = area * FY_S355;
+  if (!compression) return plastic;
+  const inertia = Math.PI / 64 * (diameter ** 4 - inner ** 4);
+  const critical = Math.PI ** 2 * E_STEEL * inertia / length ** 2;
+  const slenderness = Math.sqrt(plastic / critical);
+  const phi = 0.5 * (1 + ALPHA_CURVE_A * (slenderness - 0.2) + slenderness ** 2);
+  return Math.min(1, 1 / (phi + Math.sqrt(phi ** 2 - slenderness ** 2))) * plastic;
+}
+
+// The run with its trees judged in a tube of this wall: each capture's
+// utilisation from its members' forces and lengths, and the scale with them.
+// The run read is left as it is.
+export function withWall(sim, wall) {
+  if (!sim) return sim;
+  const diameter = sim.trees.diameter;
+  const captures = sim.captures.map((c) => {
+    const utilisation = new Float32Array(sim.trees.members.length);
+    sim.trees.members.forEach(([p, q], k) => {
+      const length = Math.hypot(c.treeX[3 * q] - c.treeX[3 * p], c.treeX[3 * q + 1] - c.treeX[3 * p + 1],
+                                c.treeX[3 * q + 2] - c.treeX[3 * p + 2]) * 1000;
+      const n = c.treeAxial[k] || 0;
+      utilisation[k] = length < FOLDED_MM ? 0 : Math.abs(n) / resistance(diameter, wall, length, n < 0);
+    });
+    return { ...c, treeUtilisation: utilisation };
+  });
+  const scale = Math.max(0, ...captures.map((c) => largestOf(c.treeUtilisation)));
+  return { ...sim, captures, trees: { ...sim.trees, wall }, scales: { ...sim.scales, utilisation: scale } };
 }
 
 // ---------- what a recorded frame carries ----------
