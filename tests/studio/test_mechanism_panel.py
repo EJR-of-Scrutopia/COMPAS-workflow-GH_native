@@ -18,6 +18,7 @@ LIST = [
     {"choices": {"motor": "ES-MH342200", "ratio": 7, "pulley": "Pfaff-DSRB-185-8",
                  "rope": "rope-8mm", "wires_per_motor": 1},
      "have_newtons": 6660.0, "limit": "rope tension", "part": "rope-8mm",
+     "part_name": "8 mm 7x19",
      "label": "ES-MH342200, 7:1, 185 mm pulleys, 8 mm 7x19: 6,660 N a spool"},
     {"choices": {"motor": "23HS45-4204D-E1000", "ratio": 20, "pulley": "Pfaff-DSRB-90-6",
                  "rope": "rope-6mm", "wires_per_motor": 1},
@@ -73,7 +74,9 @@ def test_the_dropdown_lists_each_mechanism_by_its_label(out):
 def test_under_it_three_lines_have_limited_by_and_checks(out):
     html = out["html"]
     assert "<th>Have</th><td>3,229 N a spool</td>" in html["pass"]
-    assert "<th>Limited by</th><td>23HS45-4204D-E1000, motor</td>" in html["pass"]
+    # what gives way first, then the part by the name it is bought by; a
+    # list from before the names were sent falls back on the part's key
+    assert "<th>Limited by</th><td>motor, 23HS45-4204D-E1000</td>" in html["pass"]
     assert "<th>Checks</th><td>all pass ✓</td>" in html["pass"]
     # only what fails, a line each
     assert "<th>Checks</th><td>rope on drum 4,000 of 3,616 mm ✗</td>" in html["fail"]
@@ -81,7 +84,7 @@ def test_under_it_three_lines_have_limited_by_and_checks(out):
     assert "all pass" not in html["fail"]
     # before a run there is nothing to check yet
     assert "<th>Checks</th><td>after a run</td>" in html["before"]
-    assert "<th>Limited by</th><td>rope-8mm, rope</td>" in html["before"]
+    assert "<th>Limited by</th><td>rope, 8 mm 7x19</td>" in html["before"]
     assert html["none"] == ""
     # three lines, no paragraph
     assert "<p" not in html["pass"] + html["fail"] + html["before"]

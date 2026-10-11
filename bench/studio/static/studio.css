@@ -1670,6 +1670,8 @@ body.stilling
 #panel .mechanism-line button { width: auto; margin: 0; }
 #panel #formwork-mechanism-name { color: var(--ink-2); font-size: var(--t-2); }
 #panel #formwork-answer table.stale { opacity: 0.45; }
+/* a figure and its mark stay on one line */
+#panel #formwork-answer td:nth-child(2) { white-space: nowrap; }
 #panel #formwork-answer tr[data-capture] { cursor: pointer; }
 #panel #formwork-record-status { color: var(--ink-2); font-size: var(--t-2); min-height: 1.2em; }
 /* The one Cable net tab's mechanism pop-up (spec 2026-10-11 section 8.1), on

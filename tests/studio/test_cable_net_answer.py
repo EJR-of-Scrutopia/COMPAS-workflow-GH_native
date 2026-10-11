@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pytest
 
-from test_formwork_model import document
+from test_formwork_model import document, with_holds
 
 STATIC = Path(__file__).resolve().parents[2] / "bench" / "studio" / "static"
 CHOSEN = {"motor": "23HS45-4204D-E1000", "ratio": 20, "pulley": "Pfaff-DSRB-90-4",
@@ -39,6 +39,7 @@ const out = {};
 const sim = m.readSim(%(doc)s);
 const spare = m.readSim(%(spare)s);
 const plain = m.readSim(%(plain)s);
+const held = m.readSim(%(held)s);
 out.read = { sides: sim.sides, checks: sim.checks, axial: Array.from(sim.captures[2].treeAxial) };
 out.answer = m.answer(sim, 20);
 out.html = m.answerHtml(out.answer);
@@ -46,6 +47,7 @@ out.staleHtml = m.answerHtml(out.answer, { stale: true });
 out.spare = m.answerHtml(m.answer(spare, 30));
 out.plain = [m.answer(plain, 20), m.answerHtml(m.answer(plain, 20))];
 out.none = [m.answer(null, 20), m.answerHtml(null)];
+out.held = [m.answer(held, 20).holds, m.answerHtml(m.answer(held, 20)), out.answer.holds];
 const chosen = %(chosen)s;
 out.warnings = {
   none: m.formworkWarnings(null, { mechanism: chosen }),
@@ -55,6 +57,9 @@ out.warnings = {
   noChoice: m.formworkWarnings(sim, { mechanism: null }),
   plainRun: m.formworkWarnings(plain, { mechanism: chosen }),
   older: m.formworkWarnings(m.readSim(%(older)s), { mechanism: chosen }),
+  rodsSame: m.formworkWarnings(sim, { mechanism: chosen, holdsPerSide: 0 }),
+  rods: m.formworkWarnings(sim, { mechanism: chosen, holdsPerSide: 3 }),
+  rodsAndMechanism: m.formworkWarnings(sim, { mechanism: { ...chosen, ratio: 50 }, holdsPerSide: 3 }),
 };
 const thicker = m.withWall(sim, 4.0);
 out.wall = { utilisation: thicker.captures.map((c) => Array.from(c.treeUtilisation)),
@@ -88,6 +93,7 @@ def out(tmp_path_factory):
         "module": (STATIC / "formwork_model.js").resolve().as_uri(),
         "doc": json.dumps(_run()), "spare": json.dumps(_run(2000.0)),
         "plain": json.dumps(plain), "older": json.dumps(document(older=True)),
+        "held": json.dumps(with_holds(_run())),
         "chosen": json.dumps(CHOSEN)}, encoding="utf-8")
     result = subprocess.run(["node", str(script)], capture_output=True, text=True,
                             encoding="utf-8")
@@ -139,6 +145,24 @@ def test_the_run_is_out_of_date_when_the_mechanism_changes(out):
     # a run cut for a named prestress, or an older one, is not the mechanism's
     assert w["plainRun"] == ["Run again: mechanism changed"]
     assert w["older"][0] == "Run again: older run"
+
+
+def test_the_answer_says_the_rods_a_side_and_how_many_went_on(out):
+    # spec 2026-10-11 one Cable net tab, section 4.3: Holds, 3 a side, 15 rods
+    holds, html, plain = out["held"]
+    assert holds == {"perSide": 1, "rods": 1}
+    assert "<th>Holds</th><td>1 a side, 1 rod</td>" in html
+    assert plain == {"perSide": 0, "rods": 0}
+    assert "<th>Holds</th><td>none</td>" in out["html"]
+
+
+def test_the_run_is_out_of_date_when_the_rods_a_side_change(out):
+    # spec section 7: rods a side changed, a run from the hold
+    w = out["warnings"]
+    assert w["rodsSame"] == []
+    assert w["rods"] == ["Run again: rods a side changed"]
+    assert w["rodsAndMechanism"] == ["Run again: mechanism changed",
+                                     "Run again: rods a side changed"]
 
 
 def test_a_new_wall_judges_the_trees_again_from_the_runs_own_forces(out):

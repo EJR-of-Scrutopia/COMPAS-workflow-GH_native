@@ -74,6 +74,7 @@ export function mountFormwork({ studyName, studyOptions, mechanism, view, hooks 
     mechanismName: byId("formwork-mechanism-name"),
     tolerance: byId("formwork-tolerance"), toleranceValue: byId("formwork-tolerance-value"),
     wires: byId("formwork-wires"), wiresValue: byId("formwork-wires-value"),
+    holds: byId("formwork-holds"), holdsValue: byId("formwork-holds-value"),
     wall: byId("formwork-wall"), wallValue: byId("formwork-wall-value"),
     skin: byId("formwork-skin"), skinValue: byId("formwork-skin-value"),
     scrub: byId("formwork-scrub"), scrubValue: byId("formwork-scrub-value"),
@@ -128,7 +129,8 @@ export function mountFormwork({ studyName, studyOptions, mechanism, view, hooks 
   }
 
   function outOfDate() {
-    return formworkWarnings(tab.sim, { mechanism: mechanism.chosen() });
+    return formworkWarnings(tab.sim, { mechanism: mechanism.chosen(),
+                                       holdsPerSide: Number(el.holds.value) });
   }
 
   // The answer (spec section 4.3), greyed while the run is out of date.
@@ -252,6 +254,18 @@ export function mountFormwork({ studyName, studyOptions, mechanism, view, hooks 
   // wires a motor changes every mechanism's pull: the pop-up reads them
   // again, and its answer starts the run (mechanismChanged)
   el.wires.addEventListener("input", () => { el.wiresValue.textContent = el.wires.value; });
+  // Holds a side (spec section 6): a change reruns from the state at the
+  // hold once it settles (section 7)
+  function setHolds(value) {
+    el.holds.value = String(value);
+    el.holdsValue.textContent = el.holds.value;
+  }
+  el.holds.addEventListener("input", () => { el.holdsValue.textContent = el.holds.value; });
+  el.holds.addEventListener("change", () => {
+    renderWarnings();
+    renderAnswer();
+    if (tab.sim && outOfDate().includes("Run again: rods a side changed")) scheduleRerun(true);
+  });
   el.wires.addEventListener("change", () => {
     tab.again = true;
     mechanism.setWires(Number(el.wires.value));
@@ -364,7 +378,9 @@ export function mountFormwork({ studyName, studyOptions, mechanism, view, hooks 
     }
     if (mine !== tab.ticket) return;
     tab.loading = false;
+    const first = !tab.sim;
     tab.sim = sim;
+    if (sim && first) setHolds(sim.holdsPerSide);
     judge();
     mechanism.setChecks(sim ? sim.checks : null);
     tab.times = sim ? captureTimes(sim.captures) : [];
@@ -406,8 +422,11 @@ export function mountFormwork({ studyName, studyOptions, mechanism, view, hooks 
           el.run.disabled = false;
           el.runStatus.textContent = "";
           await load();
-          // a change made while this run went on: run again for it
-          if (outOfDate().includes("Run again: mechanism changed")) scheduleRerun();
+          // a change made while this run went on: run again for it, from the
+          // hold when only the rods changed
+          const lines = outOfDate();
+          if (lines.includes("Run again: mechanism changed")) scheduleRerun(false);
+          else if (lines.includes("Run again: rods a side changed")) scheduleRerun(true);
         }
         if (run.state === "failed") {
           stopWatching();
@@ -425,8 +444,9 @@ export function mountFormwork({ studyName, studyOptions, mechanism, view, hooks 
   }
 
   // The run takes the mechanism chosen in the pop-up; the server cuts the net
-  // for one spool's pull of it. The tab never sends a prestress.
-  async function startRun() {
+  // for one spool's pull of it. The tab never sends a prestress. resume: start
+  // from the state at the hold, for other rods a side.
+  async function startRun(resume = false) {
     const options = studyOptions();
     if (!options || !studyName()) { el.runStatus.textContent = "open a study first"; return; }
     const choices = mechanism.chosen();
@@ -435,7 +455,7 @@ export function mountFormwork({ studyName, studyOptions, mechanism, view, hooks 
     el.runStatus.textContent = "starting: about two minutes";
     try {
       const body = { ...sentOptions(options), mechanism: choices, wall: Number(el.wall.value),
-                     tolerance_mm: Number(el.tolerance.value) };
+                     holds_per_side: Number(el.holds.value), resume };
       const response = await fetch(`/api/studies/${encodeURIComponent(studyName())}/formwork/run`,
         { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
       let started = null;
@@ -461,17 +481,21 @@ export function mountFormwork({ studyName, studyOptions, mechanism, view, hooks 
       el.run.disabled = false;
     }
   }
-  el.run.addEventListener("click", startRun);
+  el.run.addEventListener("click", () => startRun(false));
   el.record.addEventListener("click", () => hooks.record());
 
-  // A change that needs a run (the mechanism, wires a motor) starts it once
-  // the changes settle; one already running is followed by another.
-  function scheduleRerun() {
+  // A change that needs a run (the mechanism, wires a motor, the rods a
+  // side) starts it once the changes settle; one already running is followed
+  // by another. resume: from the hold, when only the rods changed; a full run
+  // waiting wins.
+  function scheduleRerun(resume = false) {
+    tab.resume = tab.rerun == null ? resume : tab.resume && resume;
     clearTimeout(tab.rerun);
     tab.rerun = setTimeout(() => {
+      tab.rerun = null;
       if (!tab.active) return;
       if (tab.watcher != null) return;     // the watch runs again when it ends
-      startRun();
+      startRun(tab.resume);
     }, RERUN_SETTLE_MS);
   }
 
@@ -483,7 +507,7 @@ export function mountFormwork({ studyName, studyOptions, mechanism, view, hooks 
     renderAnswer();
     const wanted = byHand || tab.again;
     tab.again = false;
-    if (wanted && choices && outOfDate().includes("Run again: mechanism changed")) scheduleRerun();
+    if (wanted && choices && outOfDate().includes("Run again: mechanism changed")) scheduleRerun(false);
   }
 
   // The recording of the raise (studio.js recordAnimation): the player's

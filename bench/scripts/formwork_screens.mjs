@@ -230,9 +230,27 @@ try {
     note("run " + JSON.stringify(report.run));
     await shot(page, "02-after-run");
   }
+  // HOLDS=N: the rods a side moved to N, and the run from the hold waited for
+  if (process.env.HOLDS != null) {
+    const before = Date.now();
+    await page.evaluate((n) => {
+      const slider = document.getElementById("formwork-holds");
+      slider.value = String(n);
+      slider.dispatchEvent(new Event("input", { bubbles: true }));
+      slider.dispatchEvent(new Event("change", { bubbles: true }));
+    }, Number(process.env.HOLDS));
+    await waitFor(page, () => /running|capture/.test(
+      document.getElementById("formwork-run-status").textContent), 30000);
+    const done = await waitFor(page, () => !document.getElementById("formwork-run").disabled
+      && !/Run again/.test(document.getElementById("formwork-warnings").innerText)
+      && !document.getElementById("formwork-run-status").textContent, 1800000);
+    report.holdsRun = { seconds: Math.round((Date.now() - before) / 1000), done };
+    note("holds run " + JSON.stringify(report.holdsRun));
+  }
   report.holds = await page.evaluate(() => {
-    const el = document.getElementById("formwork-holds");
-    return el ? el.innerText : null;
+    const row = [...document.querySelectorAll("#formwork-answer tr")]
+      .find((tr) => tr.querySelector("th") && tr.querySelector("th").textContent === "Holds");
+    return row ? row.innerText.replace(/\s+/g, " ").trim() : null;
   });
   note("holds " + JSON.stringify(report.holds));
 

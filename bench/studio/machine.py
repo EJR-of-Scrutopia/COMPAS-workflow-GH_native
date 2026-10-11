@@ -383,6 +383,21 @@ def have(parts, configuration, angle_degrees):
     return {"newtons": top["newtons"], "limit": top["name"], "part": top["part"]}
 
 
+def part_name(parts, key):
+    """A part as it is bought: a rope by its size and construction, a pulley by
+    its name, anything else by its catalogue key, which is its model."""
+
+    rope = parts.get("rope", {}).get(key)
+    if rope is not None:
+        return "{:g} mm {}".format(float(rope["diameter_mm"]),
+                                   rope.get("construction", "").strip()).strip()
+    for kind in ("sheave",):
+        named = parts.get(kind, {}).get(key)
+        if named is not None and named.get("name"):
+            return str(named["name"])
+    return key
+
+
 def preset_label(parts, configuration, newtons):
     """A whole mechanism by its real names and its pull: "ES-MH342200, 50:1,
     190 mm pulleys, 8 mm 7x19: 3,411 N a spool"."""
@@ -426,6 +441,7 @@ def presets(parts, facts, angle_degrees, wires_per_motor=1):
         pull, built, choices = best
         found.append({"choices": choices, "have_newtons": pull["newtons"],
                       "limit": pull["limit"], "part": pull["part"],
+                      "part_name": part_name(parts, pull["part"]),
                       "described": describe(parts, built),
                       "label": preset_label(parts, built, pull["newtons"])})
     found.sort(key=lambda entry: -entry["have_newtons"])
