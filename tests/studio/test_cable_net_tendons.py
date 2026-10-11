@@ -103,7 +103,7 @@ def out(tmp_path_factory):
     reason = _run()
     reason["options"]["pull_in"] = 300.0
     reason["tendons"] = None
-    reason["tendons_reason"] = "No tendons: this net's lines do not run across from a principal line"
+    reason["tendons_reason"] = "No tendons"
     unread = _run()
     del unread["net"]["families"]
     script = tmp_path_factory.mktemp("cable_net_tendons") / "harness.mjs"
@@ -213,7 +213,9 @@ def test_a_nodes_card_gives_its_tendons_tension(out):
 def test_the_answer_says_the_pull_a_tendon_and_in_all(out):
     pull, html, plainPull, plainHtml = out["answer"]
     assert pull == {"newtons": 300, "tendons": 2, "total": 600}
-    assert "<th>Pull in</th><td>300 N a tendon</td><td>2 tendons, 600 N in all</td>" in html
+    # a tendon's pull, and all of them together (his ruling of 11 October
+    # 2026: values, not notes)
+    assert "<tr><th>Pull in</th><td>300 N</td></tr><tr><th>Pull total</th><td>600 N</td></tr>" in html
     assert html.index("Trees load") < html.index("Pull in") and "Holds" not in html
     assert plainPull is None and "Pull in" not in plainHtml
 
@@ -225,7 +227,7 @@ def test_the_run_is_out_of_date_when_the_pull_changes(out):
     assert w["plain"] == [] and w["loading"] == []
     assert w["plainPulled"] == ["Run again: pull changed"]
     # a pulled run on a net with no principal line says why it has no tendons
-    assert w["reason"] == ["No tendons: this net's lines do not run across from a principal line"]
+    assert w["reason"] == ["No tendons"]
 
 
 def test_a_run_read_without_families_is_an_older_run(out):
@@ -244,5 +246,5 @@ def test_the_other_family_is_a_quiet_mid_grey(out):
 def test_a_third_graph_draws_the_pull_of_all_the_tendons(out):
     assert out["series"] == [0, 300, 600, 600]
     pulled, plain = out["graphs"]
-    assert pulled.count("<svg") == 3 and "pull in, all tendons, N" in pulled
+    assert pulled.count("<svg") == 3 and "pull total, N" in pulled
     assert plain.count("<svg") == 2

@@ -59,7 +59,7 @@ def test_the_run_sends_the_mechanism_the_wall_and_the_pull_and_never_a_prestress
     assert "/formwork/run" in body and "prestress" not in body and "tolerance" not in body
     assert "holds" not in body and "resume" not in body
     assert 'el.run.addEventListener("click", () => startRun());' in JS
-    assert 'el.runStatus.textContent = "starting: about two minutes";' in body
+    assert 'el.runStatus.textContent = "starting";' in body
     watch = _inner(JS, "watch")
     assert "`capture ${run.stage} of ${run.of}`" in watch and "await load();" in watch
 
@@ -125,7 +125,7 @@ def test_the_cost_and_the_graphs_follow_the_run_and_export_bom_writes_it():
     # a run with no mechanism has no cost, and is not asked for one (found on
     # screen: an older run's refusal reached the console)
     assert cost.index("if (!(tab.sim.options || {}).mechanism) {") < cost.index("/formwork/cost?")
-    assert "Run again: no mechanism in this run" in cost
+    assert "Run again: no mechanism" in cost and "in this run" not in cost
     graphs = _inner(JS, "renderGraphs")
     assert ("el.graphs.innerHTML = graphsHtml(tab.judged, have == null ? null : Number(have), "
             "Number(el.tolerance.value));") in graphs
@@ -368,6 +368,14 @@ def test_the_colour_by_titles_say_what_is_coloured():
     assert '<label title="The across ropes\' tension, kN; the along ones grey">' in html
     assert '<label title="Every rope\'s tension, kN">' in html
     assert "tendons' pull" not in html and "whole force" not in html
+
+
+def test_the_run_status_and_the_folder_say_no_more_than_the_state():
+    # his ruling of 11 October 2026: no descriptive text
+    watch = _inner(JS, "watch")
+    assert ": run.state;" in watch and "(${run.phase})" not in watch
+    assert "`${live.kind} run live`" in JS and "is live on this study" not in JS
+    assert "(missing)" in JS and "this folder is not there" not in JS
 
 
 def test_a_figure_for_every_line_is_not_cut_short():

@@ -229,9 +229,7 @@ def test_a_run_takes_no_holds_and_no_resume(tmp_path, monkeypatch):
         response = client.post("/api/studies/Tiny/formwork/run", json={**RUN, **asked})
         assert response.status_code == 400, asked
         name = next(iter(asked))
-        assert response.json()["detail"] == (
-            "{} is no longer taken: the holds went on 11 October 2026, and every run is a "
-            "full run with none".format(name)), asked
+        assert response.json()["detail"] == "{} is no longer taken".format(name), asked
 
 
 def test_a_study_with_no_formwork_document_is_refused_before_the_cut(tmp_path, monkeypatch):

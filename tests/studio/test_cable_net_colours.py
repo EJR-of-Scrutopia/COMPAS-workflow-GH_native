@@ -137,7 +137,7 @@ def test_each_key_runs_from_nought_to_twice_the_limit_with_the_limit_in_the_midd
     assert ropes["limitText"] == "working load 1.8 kN" and ropes["fraction"] == 0.5
     assert offset["max"] == "40 mm" and offset["limitText"] == "tolerance 20 mm"
     assert offset["fraction"] == 0.5 and offset["judged"] is True
-    assert trees["title"] == "tree members, share of capacity"
+    assert trees["title"] == "trees, utilisation"
     assert trees["max"] == "2.00" and trees["limitText"] == "capacity 1.0" and trees["fraction"] == 0.5
     assert off is None
     assert out["pastScale"]["max"] == "12,000 N" and out["pastScale"]["fraction"] == 0.5
@@ -206,7 +206,9 @@ def test_the_weakest_wear_their_values_and_compare_its_offsets(out):
     model = out["model"]
     assert model["weakest"] == [[w["kind"], w["index"], w["text"]] for w in out["weakest"]]
     assert len(model["closest"]) == len(out["closest"]) == 5
-    assert all(label[2].endswith(" spare") for label in model["closest"])
+    # each with its own value, not what it has to spare (his ruling of 11
+    # October 2026: no words where a figure will do)
+    assert model["closest"] == [[w["kind"], w["index"], w["text"]] for w in out["closest"]]
     assert model["compare"] == model["wire"] + model["deviation"]
     assert model["both"] == model["deviation"]
     assert model["none"] == []

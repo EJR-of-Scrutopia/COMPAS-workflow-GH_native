@@ -56,14 +56,16 @@ def out(tmp_path_factory):
 
 def test_the_cost_is_one_spool_the_spools_the_cabinets_and_the_total(out):
     html = out["cost"]
-    assert ("<tr><th>One spool</th><td>£412.30</td><td>34HS31-6004D-E1000 on EG34 50:1, "
-            "Pfaff DSRB 185/8 pulleys, 8 mm 7x19</td></tr>") in html
+    # figures only (his ruling of 11 October 2026): the mechanism is named under
+    # its button, and VAT goes into the total's name
+    assert "<tr><th>One spool</th><td>£412.30</td><td></td></tr>" in html
     assert "<tr><th>Spools</th><td>105 × £412.30</td><td>£43,292</td></tr>" in html
     assert "<tr><th>Cabinets</th><td>15</td><td>£5,250</td></tr>" in html
-    assert "<tr><th>Total</th><td>£48,542</td><td>VAT excluded</td></tr>" in html
+    assert "<tr><th>Total ex VAT</th><td>£48,542</td><td></td></tr>" in html
+    assert "Pfaff" not in html and "VAT excluded" not in html
     # the count, the parts' names on hover: found on screen, fifteen names
     # crowded the tab
-    assert '<tr title="drum-72, pico"><th>Unpriced</th><td>2 parts</td><td></td></tr>' in html
+    assert '<tr title="drum-72, pico"><th>Unpriced</th><td>2</td><td></td></tr>' in html
     assert "Unpriced" not in out["priced"]
     assert out["none"] == ""
 

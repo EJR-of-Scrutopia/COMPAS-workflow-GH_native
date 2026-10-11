@@ -1393,8 +1393,7 @@ def create_app(runner=None, cra_runner=None, formwork_runner=None) -> FastAPI:
         # them, with them: every run is a full run with none
         for gone in ("holds", "holds_per_side", "resume"):
             if gone in body:
-                raise HTTPException(400, "{} is no longer taken: the holds went on 11 October "
-                                         "2026, and every run is a full run with none".format(gone))
+                raise HTTPException(400, "{} is no longer taken".format(gone))
         # the pull on every across tendon, newtons a tendon (spec 2026-10-11
         # across tendons, section 7); nought is none
         pull_in = body.get("pull_in", 0)

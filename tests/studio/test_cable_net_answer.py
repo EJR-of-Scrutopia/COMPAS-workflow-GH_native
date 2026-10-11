@@ -132,19 +132,19 @@ def test_the_answer_is_the_force_needed_one_spools_pull_and_the_gap(out):
     assert a["form"] == {"mm": 25.0, "tolerance": 20.0, "within": False}
     assert a["mean"] == {"mm": 10.25, "within": True}
     html = out["html"]
-    assert ('<tr data-capture="2" data-wire="0"><th>Needed</th><td>1,500 N</td>'
-            "<td>worst wire w0, at S1 q1</td></tr>") in html
-    assert "<th>Have</th><td>1,200 N</td><td>one spool, 23HS45-4204D-E1000 20:1</td>" in html
-    # what falls short is in deep red, not marked with a cross (his ask of 11
-    # October 2026)
-    assert '<th>Missing</th><td><span class="over">300 N</span></td>' in html
-    assert ('<th>Worst offset</th><td><span class="over">25 mm</span></td>'
-            "<td>at the end, tolerance 20 mm</td>") in html
-    assert "<th>Mean offset</th><td>10 mm</td><td>at the end</td>" in html
+    # a name and a value a row, nothing said about either (his ruling of 11
+    # October 2026: no descriptive text); Needed's row still goes to its wire
+    assert '<tr data-capture="2" data-wire="0"><th>Needed</th><td>1,500 N</td></tr>' in html
+    assert "<tr><th>Have</th><td>1,200 N</td></tr>" in html
+    # what falls short is in deep red, not marked with a cross
+    assert '<tr><th>Missing</th><td><span class="over">300 N</span></td></tr>' in html
+    assert '<tr><th>Worst offset</th><td><span class="over">25 mm</span></td></tr>' in html
+    assert "<tr><th>Mean offset</th><td>10 mm</td></tr>" in html
+    assert "</td><td>" not in html
     assert 'class="answer stale"' in out["staleHtml"] and 'class="answer stale"' not in html
     # a spool that pulls more than the run needs: spare, and the form within 30 mm
-    assert "<th>Spare</th><td>500 N</td>" in out["spare"]
-    assert "<th>Worst offset</th><td>25 mm</td><td>at the end, tolerance 30 mm</td>" in out["spare"]
+    assert "<tr><th>Spare</th><td>500 N</td></tr>" in out["spare"]
+    assert "<tr><th>Worst offset</th><td>25 mm</td></tr>" in out["spare"]
     for marked in (html, out["spare"]):
         assert "✗" not in marked and "✓" not in marked and "<th>Form</th>" not in marked
 
@@ -160,12 +160,12 @@ def test_the_answer_gives_the_trees_load_and_what_its_tube_takes(out):
     assert over["capacity"] == pytest.approx(resistance, rel=1e-6)
     assert over["utilisation"] == pytest.approx(250000.0 / resistance, rel=1e-5)
     tube = "{:,} N".format(round(resistance))
-    assert ('<th>Trees load</th><td><span class="over">250,000 N</span></td>'
-            "<td>worst member, its tube takes " + tube + "</td>") in out["trees"]["overHtml"]
+    assert ('<tr><th>Trees load</th><td><span class="over">250,000 N</span></td></tr>'
+            "<tr><th>Trees capacity</th><td>" + tube + "</td></tr>") in out["trees"]["overHtml"]
     within = out["trees"]["within"]
     assert within["capture"] == 2 and within["newtons"] == 900.0
-    assert ("<th>Trees load</th><td>900 N</td><td>worst member, its tube takes " + tube + "</td>"
-            in out["trees"]["withinHtml"])
+    assert ("<tr><th>Trees load</th><td>900 N</td></tr><tr><th>Trees capacity</th><td>" + tube
+            + "</td></tr>" in out["trees"]["withinHtml"])
 
 
 def test_a_run_with_no_mechanism_says_none_for_what_one_spool_pulls(out):

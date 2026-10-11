@@ -418,7 +418,7 @@ export function colourKey(by, sim, limits) {
     across: ["across, rope tension, kN", kilo, given.rope, working],
     both: ["rope tension, kN", kilo, given.rope, working],
     deviation: ["offset, mm", millimetres, given.tolerance, (v) => "tolerance " + Number(v) + " mm"],
-    utilisation: ["tree members, share of capacity", (v) => Number(v).toFixed(2), 1.0,
+    utilisation: ["trees, utilisation", (v) => Number(v).toFixed(2), 1.0,
                   (v) => "capacity " + Number(v).toFixed(1)],
   }[by];
   const [title, format, limit, named] = keyed;
@@ -615,7 +615,7 @@ export function modelLabels(sim, index, { by = null, weakest = [], compare = fal
   if (by != null) colourLabels(sim, index, by).forEach(add);
   for (const item of weakest || []) {
     add({ kind: item.kind, index: item.index, value: item.value,
-          text: item.over ? item.text : textFor(KIND_BY[item.kind], item.limit - item.value) + " spare" });
+          text: item.text });
   }
   if (compare) colourLabels(sim, index, "deviation").forEach(add);
   return out;
@@ -800,42 +800,33 @@ function treesLoad(sim) {
   return { ...worst, newtons: Math.abs(n), capacity, label: captureLabel(c) };
 }
 
-// The mechanism as the answer names it: "23HS45-4204D-E1000 20:1".
-function shortMechanism(mechanism) {
-  if (!mechanism) return "";
-  return mechanism.motor + (mechanism.ratio == null ? " direct" : " " + mechanism.ratio + ":1");
-}
-
-// The answer block (spec section 4.3): a row each, value then what it is;
+// The answer block (spec section 4.3): a row each, its name and its value;
 // Needed's row carries its capture and wire, so a click goes there. Greyed
 // (stale) while the run is out of date.
 export function answerHtml(a, { stale = false } = {}) {
   if (!a) return "";
-  // what falls short in deep red (his ask of 11 October 2026: no cross)
+  // what falls short in deep red (his ask of 11 October 2026: no cross), and a
+  // name and a value a row, nothing said about either (his ruling of the same
+  // day: no descriptive text)
   const short = (text, bad) => (bad ? `<span class="over">${text}</span>` : text);
-  const row = (name, value, note = "", attrs = "") =>
-    `<tr${attrs}><th>${escapeHtml(name)}</th><td>${value}</td><td>${escapeHtml(note)}</td></tr>`;
+  const row = (name, value, attrs = "") =>
+    `<tr${attrs}><th>${escapeHtml(name)}</th><td>${value}</td></tr>`;
   const rows = [];
   if (a.needed) {
     rows.push(row("Needed", grouped(a.needed.newtons),
-                  "worst wire " + a.needed.name + ", at " + a.needed.label,
                   ` data-capture="${a.needed.capture}" data-wire="${a.needed.wire}"`));
   }
-  rows.push(a.have ? row("Have", grouped(a.have.newtons), "one spool, " + shortMechanism(a.have.mechanism))
-    : row("Have", "none"));
+  rows.push(row("Have", a.have ? grouped(a.have.newtons) : "none"));
   if (a.gap) rows.push(row(a.gap.missing ? "Missing" : "Spare", short(grouped(a.gap.newtons), a.gap.missing)));
-  rows.push(row("Worst offset", short(millimetres(a.form.mm), !a.form.within),
-                "at the end, tolerance " + Number(a.form.tolerance) + " mm"));
-  if (a.mean) rows.push(row("Mean offset", short(millimetres(a.mean.mm), !a.mean.within), "at the end"));
+  rows.push(row("Worst offset", short(millimetres(a.form.mm), !a.form.within)));
+  if (a.mean) rows.push(row("Mean offset", short(millimetres(a.mean.mm), !a.mean.within)));
   if (a.trees) {
-    rows.push(row("Trees load", short(grouped(a.trees.newtons), a.trees.utilisation > 1),
-                  a.trees.capacity == null ? "worst member"
-                    : "worst member, its tube takes " + grouped(a.trees.capacity)));
+    rows.push(row("Trees load", short(grouped(a.trees.newtons), a.trees.utilisation > 1)));
+    if (a.trees.capacity != null) rows.push(row("Trees capacity", grouped(a.trees.capacity)));
   }
   if (a.pull) {
-    rows.push(row("Pull in", grouped(a.pull.newtons) + " a tendon",
-                  a.pull.tendons + (a.pull.tendons === 1 ? " tendon, " : " tendons, ")
-                  + grouped(a.pull.total) + " in all"));
+    rows.push(row("Pull in", grouped(a.pull.newtons)));
+    rows.push(row("Pull total", grouped(a.pull.total)));
   }
   return `<table class="answer${stale ? " stale" : ""}">` + rows.join("") + "</table>";
 }

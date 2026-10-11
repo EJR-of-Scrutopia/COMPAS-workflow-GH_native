@@ -451,7 +451,7 @@ export function mountFormwork({ studyName, studyOptions, mechanism, view, hooks 
     // a run with no mechanism has no cost to ask for (found on screen: an
     // older run's refusal reached the console)
     if (!(tab.sim.options || {}).mechanism) {
-      el.costBody.innerHTML = '<div class="cablenet-warning">Run again: no mechanism in this run</div>';
+      el.costBody.innerHTML = '<div class="cablenet-warning">Run again: no mechanism</div>';
       return;
     }
     const query = new URLSearchParams();
@@ -490,7 +490,7 @@ export function mountFormwork({ studyName, studyOptions, mechanism, view, hooks 
   function showFolder(row) {
     el.costFolderPath.textContent = row && row.path ? row.path : "no folder chosen";
     el.costFolderPath.title = row && row.path
-      ? (row.exists ? row.path : `${row.path} (this folder is not there)`) : "";
+      ? (row.exists ? row.path : `${row.path} (missing)`) : "";
   }
   async function loadFolder() {
     try { showFolder(await getJson("/api/cablenet/exports/folder")); }
@@ -525,7 +525,7 @@ export function mountFormwork({ studyName, studyOptions, mechanism, view, hooks 
         const run = await getJson(`/api/runs/${encodeURIComponent(runId)}`);
         if (tab.watcher !== poll) return;
         el.runStatus.textContent = run.of > 0 ? `capture ${run.stage} of ${run.of}`
-          : `${run.state} (${run.phase})`;
+          : run.state;
         if (run.state === "done") {
           stopWatching();
           el.run.disabled = false;
@@ -561,7 +561,7 @@ export function mountFormwork({ studyName, studyOptions, mechanism, view, hooks 
     const choices = mechanism.chosen();
     if (!choices) { el.runStatus.textContent = "Choose a mechanism"; return; }
     el.run.disabled = true;
-    el.runStatus.textContent = "starting: about two minutes";
+    el.runStatus.textContent = "starting";
     try {
       const body = { ...sentOptions(options), mechanism: choices, wall: Number(el.wall.value),
                      pull_in: Number(el.pull.value) };
@@ -574,7 +574,7 @@ export function mountFormwork({ studyName, studyOptions, mechanism, view, hooks 
         if (live.kind === "formwork") {
           watch(started.run);
         } else {
-          el.runStatus.textContent = `a ${live.kind} run is live on this study`;
+          el.runStatus.textContent = `${live.kind} run live`;
           el.run.disabled = false;
         }
         return;

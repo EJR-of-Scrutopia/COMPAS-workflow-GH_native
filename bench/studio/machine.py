@@ -400,7 +400,7 @@ def part_name(parts, key):
 
 def preset_label(parts, configuration, newtons):
     """A whole mechanism by its real names and its pull: "ES-MH342200, 50:1,
-    190 mm pulleys, 8 mm 7x19: 3,411 N a spool"."""
+    190 mm pulleys, 8 mm 7x19: 3,411 N"."""
 
     gearbox = configuration["gearbox"]
     ratio = ("direct" if gearbox == "direct" else
@@ -409,7 +409,7 @@ def preset_label(parts, configuration, newtons):
     pulleys = ("no pulleys" if pulley is None else
                "{:g} mm pulleys".format(float(_part(parts, "sheave", pulley)["diameter_mm"])))
     rope = _part(parts, "rope", configuration["rope"])
-    return "{}, {}, {}, {:g} mm {}: {:,.0f} N a spool".format(
+    return "{}, {}, {}, {:g} mm {}: {:,.0f} N".format(
         configuration["motor"], ratio, pulleys, float(rope["diameter_mm"]),
         rope.get("construction", "").strip(), float(newtons))
 
