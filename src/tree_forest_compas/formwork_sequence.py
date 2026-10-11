@@ -345,7 +345,9 @@ def _raise(model, net, plan, progress, total):
 
 
 def _jack_and_tile(model, net, progress, total, captures, x, contacts, reel, wires, tree_x):
-    net = _pulled(model, net, contacts)
+    # each line pulls by the contacts of each step, as through the raise
+    # (found by the final review: read once at the hold, a line laid back on
+    # the ground in the tiling kept pulling and dragged it)
     # the holds (spec 2026-10-10 formwork holds, section 3): once the net is up,
     # each hold is put under its node and jacked to the node's design point, at
     # most SUB_STEP_MM a step, gripping it; it keeps its grip from then on,
@@ -364,7 +366,8 @@ def _jack_and_tile(model, net, progress, total, captures, x, contacts, reel, wir
             contacts = contacts._replace(heads={**contacts.heads, **jacks},
                                          engaged=contacts.engaged | frozenset(holds),
                                          tied=contacts.tied | frozenset(holds))
-            rest, contacts = ne.settle(x, net, model.weight, {}, contacts, wires=wires)
+            rest, contacts = ne.settle(x, _pulled(model, net, contacts), model.weight, {}, contacts,
+                                       wires=wires)
             x = rest.x
         captures.append(_capture(model, rest, contacts, reel, model.design, tree_x,
                                  "holds", 100.0, None, None))
@@ -373,7 +376,8 @@ def _jack_and_tile(model, net, progress, total, captures, x, contacts, reel, wir
     for row in model.rows:
         for quarter, skin in enumerate(row.quarters, start=1):
             loads = model.weight + np.asarray(skin, dtype=float)
-            rest, contacts = ne.settle(x, net, loads, {}, contacts, wires=wires)
+            rest, contacts = ne.settle(x, _pulled(model, net, contacts), loads, {}, contacts,
+                                       wires=wires)
             x = rest.x
             captures.append(_capture(model, rest, contacts, reel, model.design, tree_x,
                                      "tiling", None, row.name, quarter))

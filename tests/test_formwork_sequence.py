@@ -407,3 +407,29 @@ def test_a_run_from_the_state_at_the_hold_with_tendons_is_the_full_run(wires_per
     assert again.holds == full.holds
     for mine, theirs in zip(again.captures, full.captures):
         _same_capture(mine, theirs)
+
+
+def test_each_line_pulls_by_the_contacts_of_each_step_of_the_tiling(monkeypatch):
+    # found by the final review: the lift-off rule was read once at the hold
+    # and kept for the jacking and the tiling, so a line laid back on the
+    # ground there kept pulling and dragged it. Node 1, on the first line, put
+    # on the ground after the first quarter: the next quarter's settle is
+    # given that line unpulled, the other three pulling
+    model = _toy()._replace(tendons=TENDONS, tendon_pull=50.0)
+    real = ne.settle
+    tiling = []
+
+    def spy(x, net, loads, anchors, contacts, **kwargs):
+        if net.tendons is None or np.array_equal(loads, model.weight):
+            return real(x, net, loads, anchors, contacts, **kwargs)
+        tiling.append(net.tendons.pull.tolist())
+        rest, after = real(x, net, loads, anchors, contacts, **kwargs)
+        if len(tiling) == 1:
+            after = after._replace(resting={**after.resting, 1: np.array(rest.x[1])})
+        return rest, after
+
+    monkeypatch.setattr(ne, "settle", spy)
+    fs.simulate(model)
+    assert len(tiling) >= 2
+    assert tiling[0] == [50.0] * 4
+    assert tiling[1] == [0.0, 50.0, 50.0, 50.0]
