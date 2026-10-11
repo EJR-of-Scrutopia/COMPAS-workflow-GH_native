@@ -12,6 +12,11 @@ until the wire and the net agree, and a wire left short pulls its node onto
 the anchor, where the foundation pushes back. From the hold frame on the
 reels hold where they are, and the skin's weight stretches the wires
 (section 4.2).
+
+At the hold the studio places N rods a side where the net sags most, jacks
+them to the design and tiles (spec 2026-10-11 one Cable net tab, section 6).
+The raise does not depend on the rods, so the state at the hold is kept, and a
+run for other rods starts from it (section 7).
 """
 
 from __future__ import annotations
@@ -63,6 +68,9 @@ class Model(NamedTuple):
     holds: tuple = ()       # net nodes jacked to their design points after the raise and
                             # gripped there in every direction from then on, like a head:
                             # a rod along its own force (spec 2026-10-10 formwork holds)
+    sides: tuple = ()       # each node's side, a wired run of the rim; -1 for none (spec
+                            # 2026-10-11 one Cable net tab, section 6)
+    holds_per_side: int = 0  # the rods placed on each side at the hold when holds is empty
 
 
 class Capture(NamedTuple):
@@ -93,6 +101,20 @@ class Capture(NamedTuple):
     leftover: float
 
 
+class HoldState(NamedTuple):
+    """The sequence at the hold, before any rod is jacked (spec 2026-10-11 one
+    Cable net tab, section 7): enough to jack and tile again without raising
+    the net again."""
+
+    x: np.ndarray           # (n, 3) every net node, mm
+    contacts: object        # net_engine.Contacts
+    reel: dict              # rim node -> its drum's reel, mm
+    captures: list          # [Capture], the raise up to and including the hold
+    rest_lengths: object = None
+    cut_force: object = None
+    groups: object = None
+
+
 class Result(NamedTuple):
     captures: list
     rest_lengths: np.ndarray
@@ -100,6 +122,8 @@ class Result(NamedTuple):
     groups: object          # per machine, the spools each motor carries; None at one a motor
     wall: float
     thinnest_wall: object   # the thinnest standard wall that holds every capture, or None
+    holds: tuple = ()       # the held nodes, side by side
+    state: object = None    # HoldState, the sequence at the hold
 
 
 def cut(model):
@@ -117,6 +141,58 @@ def cut(model):
     length = np.linalg.norm(model.design[model.edges[:, 1]] - model.design[model.edges[:, 0]],
                             axis=1)
     return length / (1.0 + force / float(model.ea)), force
+
+
+def place_holds(model, x):
+    """The rods at the hold (spec 2026-10-11 one Cable net tab, section 6): on
+    each side in turn, model.holds_per_side of its nodes furthest from the
+    design, picked one at a time, never on a column head, a wire's node or a
+    net neighbour of a rod already placed. Each side on its own sag. Returns
+    the nodes, side by side."""
+
+    per_side = int(model.holds_per_side)
+    if per_side <= 0 or not len(model.sides):
+        return ()
+    barred = {int(node) for node in model.rim} | {int(net) for net, _ in model.heads}
+    neighbours = {}
+    for u, v in model.edges:
+        neighbours.setdefault(int(u), set()).add(int(v))
+        neighbours.setdefault(int(v), set()).add(int(u))
+    off = np.linalg.norm(np.asarray(x, dtype=float) - model.design, axis=1)
+    placed, near = [], set()
+    for side in sorted({int(s) for s in model.sides if int(s) >= 0}):
+        ranked = sorted((node for node, s in enumerate(model.sides)
+                         if int(s) == side and node not in barred),
+                        key=lambda node: (-off[node], node))
+        count = 0
+        for node in ranked:
+            if count == per_side:
+                break
+            if node in near:
+                continue
+            placed.append(node)
+            near |= neighbours.get(node, set()) | {node}
+            count += 1
+    return tuple(placed)
+
+
+def _places(model):
+    """Whether a run jacks rods after the raise."""
+
+    return bool(model.holds) or (int(model.holds_per_side) > 0 and len(model.sides) > 0)
+
+
+def _count(model):
+    return (len(model.frames) + (1 if _places(model) else 0)
+            + sum(len(row.quarters) for row in model.rows))
+
+
+def _kept(contacts):
+    """A copy of the contacts no later step can change."""
+
+    return contacts._replace(
+        heads={k: np.array(v, dtype=float, copy=True) for k, v in contacts.heads.items()},
+        resting={k: np.array(v, dtype=float, copy=True) for k, v in contacts.resting.items()})
 
 
 def _need(reaction, wire):
@@ -160,12 +236,39 @@ def _capture(model, rest, contacts, reel, target, tree_x, phase, time, row, quar
     )
 
 
-def _run(model, net, plan, progress):
+def _run(model, net, plan, progress, raise_only=False, start=None):
     """One pass of the sequence (module docstring). Without a plan every wire
     has its own motor, whose drum reels exactly what holds its node on its
     anchor; with one, plan[k] is every wire's reel at the raise's k-th step.
-    Returns the captures and, without a plan, every wire's need at every step
-    of the raise."""
+    raise_only stops at the hold; start, a HoldState, begins there. Returns
+    the captures, without a plan every wire's need at every step of the
+    raise, the state at the hold, and the rods jacked."""
+
+    total = _count(model)
+    if start is None:
+        captures, needs, x, contacts, reel = _raise(model, net, plan, progress, total)
+        state = HoldState(np.array(x, dtype=float, copy=True), _kept(contacts), dict(reel),
+                          list(captures))
+    else:
+        state, needs = start, []
+        x = np.array(start.x, dtype=float, copy=True)
+        contacts, reel, captures = _kept(start.contacts), dict(start.reel), list(start.captures)
+    if raise_only:
+        return captures, needs, state, ()
+    # from the hold frame on, the reels hold where they are (spec section 4.2)
+    wires = _wires(model, reel)
+    tree_x = model.frames[-1].trees
+    holds = tuple(int(node) for node in model.holds) or place_holds(model, x)
+    model = model._replace(holds=holds)
+    captures = _jack_and_tile(model, net, progress, total, captures, x, contacts, reel, wires,
+                              tree_x)
+    return captures, needs, state, holds
+
+
+def _raise(model, net, plan, progress, total):
+    """The layout and the raise (module docstring), to the hold frame.
+    Returns the captures, the needs, and where the net, its contacts and the
+    reels are at the hold."""
 
     tree_of = {int(net_node): int(tree) for net_node, tree in model.heads}
     rim = sorted(int(node) for node in model.rim)
@@ -189,8 +292,6 @@ def _run(model, net, plan, progress):
     reel = {node: 0.0 for node in rim}
     needs = []
     captures = []
-    total = (len(model.frames) + (1 if model.holds else 0)
-             + sum(len(row.quarters) for row in model.rows))
     previous = None
     rest = None
     done_steps = 0
@@ -218,9 +319,10 @@ def _run(model, net, plan, progress):
                                  frame.phase, float(frame.time), None, None))
         if progress is not None:
             progress(len(captures), total, "{} at machine time {:g}".format(frame.phase, frame.time))
-    # from the hold frame on, the reels hold where they are (spec section 4.2)
-    wires = _wires(model, reel)
-    tree_x = model.frames[-1].trees
+    return captures, needs, x, contacts, reel
+
+
+def _jack_and_tile(model, net, progress, total, captures, x, contacts, reel, wires, tree_x):
     # the holds (spec 2026-10-10 formwork holds, section 3): once the net is up,
     # each hold is put under its node and jacked to the node's design point, at
     # most SUB_STEP_MM a step, gripping it; it keeps its grip from then on,
@@ -254,17 +356,19 @@ def _run(model, net, plan, progress):
                                      "tiling", None, row.name, quarter))
             if progress is not None:
                 progress(len(captures), total, "row {} quarter {}".format(row.name, quarter))
-    return captures, needs
+    return captures
 
 
-def simulate(model, progress=None):
+def simulate(model, progress=None, state=None):
     """The whole sequence (module docstring), and the thinnest standard tube
-    wall that holds every capture. With motors shared, the sequence is first
-    run with every wire on its own motor to learn what each wire needs; the
+    wall that holds every capture. With motors shared, the raise is first run
+    with every wire on its own motor to learn what each wire needs; the
     spools are paired on those needs, frame by frame through the raise; and
     the sequence is run again, each motor reeling the mean of its wires' needs
-    at every step. progress, when given, is called with (captures done,
-    captures in all, what)."""
+    at every step. state, a HoldState from a run of the same model, starts at
+    the hold: only the rods' jacking and the tiling are worked out (spec
+    2026-10-11 one Cable net tab, section 7). progress, when given, is called
+    with (captures done, captures in all, what)."""
 
     if not model.frames:
         raise ne.EngineError("no frames: the raise follows the formwork's trees, and there "
@@ -277,28 +381,37 @@ def simulate(model, progress=None):
         if missing:
             raise ne.EngineError("rim nodes {} are on no machine, so no motor reels "
                                  "them".format(missing))
-    rest_lengths, cut_force = cut(model)
-    net = ne.ropes(model.edges, rest_lengths, model.ea)
-    per_run = (len(model.frames) + (1 if model.holds else 0)
-               + sum(len(row.quarters) for row in model.rows))
-    total = per_run * (2 if shared else 1)
+    per_run = _count(model)
+    if state is not None:
+        rest_lengths, cut_force, groups = state.rest_lengths, state.cut_force, state.groups
+        net = ne.ropes(model.edges, rest_lengths, model.ea)
+        kept = len(state.captures)
+        told = None if progress is None else (
+            lambda done, _, what: progress(done - kept, per_run - kept, what))
+        captures, _, state, holds = _run(model, net, None, told, start=state)
+    else:
+        rest_lengths, cut_force = cut(model)
+        net = ne.ropes(model.edges, rest_lengths, model.ea)
+        # with motors shared the first pass is the raise alone: the pairing is
+        # the raise's, whatever rods go on after it
+        total = per_run + (len(model.frames) if shared else 0)
 
-    def report(offset):
-        if progress is None:
-            return None
-        return lambda done, _, what: progress(offset + done, total, what)
+        def report(offset):
+            if progress is None:
+                return None
+            return lambda done, _, what: progress(offset + done, total, what)
 
-    captures, needs = _run(model, net, None, report(0))
-    groups = None
-    if shared:
-        by_wire = {node: [c.reel[i] for c in captures if c.phase != "tiling"]
-                   for i, node in enumerate(rim)}
-        groups = [pg.best_split([int(node) for node in machine], by_wire,
-                                int(model.wires_per_motor))[0]
-                  for machine in model.machines]
-        motors = [group for machine in groups for group in machine]
-        plan = [pg.common_reels(step, motors) for step in needs]
-        captures, _ = _run(model, net, plan, report(per_run))
+        captures, needs, state, holds = _run(model, net, None, report(0), raise_only=shared)
+        groups = None
+        if shared:
+            by_wire = {node: [c.reel[i] for c in captures] for i, node in enumerate(rim)}
+            groups = [pg.best_split([int(node) for node in machine], by_wire,
+                                    int(model.wires_per_motor))[0]
+                      for machine in model.machines]
+            motors = [group for machine in groups for group in machine]
+            plan = [pg.common_reels(step, motors) for step in needs]
+            captures, _, state, holds = _run(model, net, plan, report(len(model.frames)))
+        state = state._replace(rest_lengths=rest_lengths, cut_force=cut_force, groups=groups)
     thinnest = None
     for wall in sorted(tr.STANDARD_WALLS):
         if 2.0 * wall >= tr.DIAMETER:
@@ -308,4 +421,5 @@ def simulate(model, progress=None):
                <= 1.0 for c in captures):
             thinnest = wall
             break
-    return Result(captures, rest_lengths, cut_force, groups, float(model.wall), thinnest)
+    return Result(captures, rest_lengths, cut_force, groups, float(model.wall), thinnest,
+                  holds, state)

@@ -153,3 +153,35 @@ def test_the_entry_refuses_with_the_reason_and_writes_nothing(tmp_path):
     assert done.returncode == 1
     assert "no frames" in done.stderr
     assert not (tmp_path / "out.json").exists()
+
+
+# spec 2026-10-11 one Cable net tab, sections 6 and 7: each node's side in the
+# toy, its four corners a side each
+SIDES = [0, 0, 1, 0, 0, 1, 2, 2, 3]
+
+
+def test_a_holds_run_from_the_saved_state_is_the_full_run_and_says_so(tmp_path):
+    state = tmp_path / "state.json.gz"
+    base = solve_formwork.solve({**_request(), "sides": SIDES, "state_out": str(state)})
+    assert state.is_file() and base["resumed"] is False
+    asked = {**_request(), "sides": SIDES, "holds_per_side": 1}
+    again = solve_formwork.solve({**asked, "state_in": str(state)})
+    full = solve_formwork.solve(asked)
+    assert again["resumed"] is True and full["resumed"] is False
+    assert again["captures"] == full["captures"] and again["summary"] == full["summary"]
+    assert again["net"] == full["net"]
+    held = full["net"]["holds"]
+    assert len(held) == 3 and full["net"]["holds_per_side"] == 1
+    assert full["net"]["hold_sides"] == [SIDES[node] for node in held]
+
+
+def test_a_state_for_another_request_or_none_readable_is_a_full_run(tmp_path):
+    state = tmp_path / "state.json.gz"
+    solve_formwork.solve({**_request(), "sides": SIDES, "state_out": str(state)})
+    other = {**_request(), "sides": SIDES, "holds_per_side": 1, "prestress": 60.0}
+    full = solve_formwork.solve(other)
+    for path in (state, tmp_path / "none.json.gz"):
+        again = solve_formwork.solve({**other, "state_in": str(path)})
+        assert again["resumed"] is False and again["captures"] == full["captures"]
+    state.write_bytes(b"not a state")
+    assert solve_formwork.solve({**other, "state_in": str(state)})["resumed"] is False
