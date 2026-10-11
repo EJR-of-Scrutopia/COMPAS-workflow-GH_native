@@ -224,13 +224,17 @@ def tangent_stiffness(x, net):
                 vals.append(sign * block[:, p, q])
     t = net.tendons
     if t is not None and len(t.paths):
-        # a tendon's segments: their geometric stiffness P / l across them, and
-        # where two rings have closed, the stop's along them
+        # a tendon's segments: across them, the geometric stiffness of what
+        # they carry, the pull less the stop's push, floored at nought as a
+        # slack rope's is (found by the final review: the whole pull, P / l,
+        # stepped Newton wrong where two rings had closed); along them, where
+        # two rings have closed, the stop's
         seg_length, seg_unit, stop = _tendon_segments(x, t)
         uu = seg_unit[:, :, None] * seg_unit[:, None, :]
         stopped = np.where(stop > 0.0, TENDON_STOP_N_PER_MM, 0.0)
+        carried = np.maximum(t.pull[t.owner] - stop, 0.0) / seg_length
         block = (stopped[:, None, None] * uu
-                 + (t.pull[t.owner] / seg_length)[:, None, None] * (np.eye(3)[None] - uu))
+                 + carried[:, None, None] * (np.eye(3)[None] - uu))
         for a, b, sign in ((0, 0, 1.0), (1, 1, 1.0), (0, 1, -1.0), (1, 0, -1.0)):
             for p in range(3):
                 for q in range(3):
@@ -425,7 +429,8 @@ def relax(x, held, net, loads, cap=RELAX_CAP, wires=None, on_ground=()):
         if net.tendons is not None and len(net.tendons.paths):
             t = net.tendons
             seg_length, _, stop = _tendon_segments(x, t)
-            each = t.pull[t.owner] / seg_length + np.where(stop > 0.0, TENDON_STOP_N_PER_MM, 0.0)
+            each = (np.maximum(t.pull[t.owner] - stop, 0.0) / seg_length
+                    + np.where(stop > 0.0, TENDON_STOP_N_PER_MM, 0.0))
             np.add.at(mass, t.segments[:, 0], each)
             np.add.at(mass, t.segments[:, 1], each)
         mass = np.maximum(mass[owner] + wire_mass, 1.0e-9)

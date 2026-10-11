@@ -263,3 +263,53 @@ def test_each_tendon_has_its_own_pull_and_a_pulled_net_gets_a_longer_newton_budg
     ne.bring_to_rest(x0, _held(4, 0, 3), net._replace(tendons=ne.tendons([(0, 1, 2)], 300.0)),
                      np.zeros_like(x0))
     assert seen == [ne.NEWTON_CAP, ne.TENDON_NEWTON_CAP]
+
+
+def test_the_tendons_tangent_is_the_derivative_of_its_force_where_two_rings_have_stopped():
+    # found by the final review: across a stopped segment the tangent took the
+    # whole pull, P / l, where the force carries the pull less the stop's
+    # push, so Newton stepped wrong exactly where a pull gathers a line at its
+    # end. Two free rings 19.99 mm apart, the stop pushing 1,000 N against a
+    # 3,000 N pull; every rope taut, so every term is exact
+    d = np.array([0.8, 0.6, 0.0])
+    x = np.array([[0.0, 0.0, 0.0], [600.0, 40.0, 30.0], [0.0, 0.0, 0.0], [1200.0, 0.0, 0.0]])
+    x[2] = x[1] + 19.99 * d
+    length = np.linalg.norm(x[[1, 2, 3]] - x[[0, 1, 2]], axis=1)
+    net = ne.ropes([(0, 1), (1, 2), (2, 3)], list(0.9 * length), 4.8e4)
+    net = net._replace(tendons=ne.tendons([(0, 1, 2)], 3000.0))
+    stiffness = ne.tangent_stiffness(x, net).toarray()
+    h = 1.0e-4
+    numeric = np.zeros_like(stiffness)
+    for j in range(12):
+        step = np.zeros(12)
+        step[j] = h
+        ahead = ne.rope_forces(x + step.reshape(4, 3), net)[0].ravel()
+        behind = ne.rope_forces(x - step.reshape(4, 3), net)[0].ravel()
+        numeric[:, j] = -(ahead - behind) / (2.0 * h)
+    np.testing.assert_allclose(stiffness, numeric, atol=0.05)
+
+
+def test_a_slack_strip_pulled_hard_comes_to_rest_under_newton():
+    # found by the final review: with the inconsistent tangent a strip of
+    # slack across ropes pulled at 30,000 N a tendon did not come to rest in
+    # Newton's 3,000 steps, and would have fallen to relaxation; each column a
+    # line from the held principal line out to the free edge
+    rows, cols, bay = 6, 10, 300.0
+    node = lambda r, c: r * cols + c
+    x0 = np.array([[c * bay, r * bay, -0.2 * r * bay] for r in range(rows) for c in range(cols)])
+    edges, rest = [], []
+    for r in range(rows):
+        for c in range(cols - 1):
+            edges.append((node(r, c), node(r, c + 1)))
+            rest.append(bay * 0.995)
+    for r in range(rows - 1):
+        for c in range(cols):
+            edges.append((node(r, c), node(r + 1, c)))
+            rest.append(np.hypot(bay, 0.2 * bay) * 1.15)
+    paths = [tuple(node(r, c) for r in range(rows)) for c in range(cols)]
+    net = ne.ropes(edges, rest, 1.0e5)._replace(tendons=ne.tendons(paths, 30000.0))
+    loads = np.zeros_like(x0)
+    loads[:, 2] = -20.0
+    _, iterations, _, ok = ne.minimise(x0, _held(rows * cols, *range(cols)), net, loads,
+                                       cap=ne.TENDON_NEWTON_CAP)
+    assert ok, iterations
