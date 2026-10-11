@@ -46,6 +46,10 @@ def make_client(tmp_path, monkeypatch, runner=None, formwork_runner=None):
     # recordings_folder from the settings file, so patching only the
     # default would still send a take wherever he had last pointed it.
     monkeypatch.setattr(app_module, "RECORDINGS_DIR", tmp_path / "recordings")
+    # and the export folder, which until one is chosen IS his recordings
+    # folder, bound when the module loaded: a bill of materials written by a
+    # test lands here
+    monkeypatch.setattr(app_module, "CABLENET_EXPORTS_DIR", tmp_path / "exports")
     monkeypatch.setattr(app_module, "SETTINGS_PATH", tmp_path / "settings.json")
     app_module.RUNS.clear()
     if runner is None:
