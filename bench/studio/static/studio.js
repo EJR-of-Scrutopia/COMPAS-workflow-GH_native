@@ -7,6 +7,7 @@ import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 import { buildLiveSeries, liveSpecs, liveCut, seriesToCsv } from "./live_graphs.js";
 import { mountCableNet } from "./cablenet.js";
 import { mountFormwork } from "./formwork.js";
+import { mountMechanism } from "./mechanism_pick.js";
 import { createFormworkView } from "./formwork_view.js";
 import {
   escapeHtml, holdsFor, instantAt, labelTargets, lensLegend, pickHtml, sagBand, spreadLabels,
@@ -7205,6 +7206,8 @@ function activateTab(sectionId) {
   try {
     remembered = localStorage.getItem("vaulted-tab");
   } catch (error) { remembered = null; }
+  // the old Cable net tab is the one tab now (spec 2026-10-11)
+  if (remembered === "cablenet-section") remembered = "formwork-section";
   activateTab(remembered || "study-section");
 }
 
@@ -11736,7 +11739,7 @@ function paintForceLegend(magnitude) {
     return;
   }
   legend.classList.remove("hidden");
-  legend.classList.remove("bands");
+  legend.classList.remove("bands", "ramp");
   legend.classList.remove("deflection");
   document.getElementById("legend-title").textContent =
     "member force, kN (extremes clamped)";
@@ -11934,7 +11937,7 @@ function updateLegend(stressMagnitude, deflectionMax, deflectionPeakOnly, stage)
     return;
   }
   legend.classList.remove("hidden");
-  legend.classList.remove("bands");
+  legend.classList.remove("bands", "ramp");
   const surface = document.getElementById("stress-surface").value;
   const surfaceLabels = {
     per: "top and bottom skins",
@@ -12220,7 +12223,7 @@ function resetNodeColours() {
 function paintScalarLegend(title, low, zero, high) {
   const legend = document.getElementById("legend");
   legend.classList.remove("hidden");
-  legend.classList.remove("bands");
+  legend.classList.remove("bands", "ramp");
   legend.classList.add("deflection");
   document.getElementById("legend-title").textContent = title;
   document.getElementById("legend-min").textContent = low;
@@ -12324,7 +12327,7 @@ function paintLensLegend(lens, stage) {
 // model. Every other legend takes the class back off.
 function paintBandLegend(title, bands, low, high) {
   const legend = document.getElementById("legend");
-  legend.classList.remove("hidden");
+  legend.classList.remove("hidden", "ramp");
   legend.classList.add("bands");
   document.getElementById("legend-title").textContent = title;
   document.getElementById("legend-bands").innerHTML = bands.map((band) =>
@@ -16135,10 +16138,27 @@ function leaveFormworkTab() {
 function paintFormworkLegend(key) {
   if (!key) {
     document.getElementById("legend").classList.add("hidden");
+    document.getElementById("legend").classList.remove("ramp");
     return;
   }
-  if (key.bands) paintBandLegend(key.title, key.bands, key.min, key.max);
-  else paintScalarLegend(key.title, key.min, "", key.max);
+  paintRampLegend(key);
+}
+
+// The one Cable net tab's key (spec 2026-10-11 section 5.1): the full ramp
+// from nought to the run's largest, the limit marked at its place on the bar
+// and named; a limit past the run's largest is named with no mark.
+function paintRampLegend(key) {
+  const legend = document.getElementById("legend");
+  legend.classList.remove("hidden", "bands", "deflection");
+  legend.classList.add("ramp");
+  document.getElementById("legend-title").textContent = key.title;
+  document.getElementById("legend-min").textContent = key.min;
+  document.getElementById("legend-zero").textContent = "";
+  document.getElementById("legend-max").textContent = key.max;
+  const mark = document.getElementById("legend-limit");
+  mark.classList.toggle("hidden", key.fraction == null);
+  if (key.fraction != null) mark.style.left = (100 * key.fraction).toFixed(1) + "%";
+  document.getElementById("legend-limit-text").textContent = key.limitText || "";
 }
 
 // One frame of the raise as recorded: the picture just rendered, copied into a
@@ -16164,31 +16184,33 @@ function aimFormworkAt(point) {
   controls.update();
 }
 
+// The mechanism pop-up (spec 2026-10-11 section 8.1): its choice runs the tab.
+const mechanismPick = mountMechanism({
+  studyName: cablenetStudyName,
+  onChange: (choices, byHand) => { if (formworkTab) formworkTab.mechanismChanged(choices, byHand); },
+  onPopup: () => {
+    // the mechanism takes the left: the data sheet and the old pop-up shut
+    document.getElementById("data-panel").classList.add("hidden");
+    document.getElementById("data-button").classList.remove("active");
+    cableNet.closePopup();
+    if (!document.getElementById("graphs-panel").classList.contains("hidden")) setGraphsTucked(true);
+  },
+});
+
 formworkTab = mountFormwork({
   studyName: cablenetStudyName,
   studyOptions: cablenetStudyOptions,
-  machine: () => (cableNet.choices ? cableNet.choices() : null),
-  designPrestress: () => (state.cablenet && state.cablenet.prestress != null
-    && Number.isFinite(Number(state.cablenet.prestress)) ? Number(state.cablenet.prestress) : null),
-  tolerance: () => Number(document.getElementById("cablenet-tolerance").value),
+  mechanism: mechanismPick,
   view: formworkView,
   hooks: {
     enter: enterFormworkTab,
     leave: leaveFormworkTab,
     legend: paintFormworkLegend,
-    showMachine: (on) => { if (machineObjects) machineObjects.group.visible = on; },
     aim: aimFormworkAt,
     camera: () => camera,
     canvasRect: () => canvas.getBoundingClientRect(),
     viewRight,
     record: toggleRecording,
-    onPopup: () => {
-      // the worst tables take the left: the data sheet and the Cable net pop-up shut
-      document.getElementById("data-panel").classList.add("hidden");
-      document.getElementById("data-button").classList.remove("active");
-      cableNet.closePopup();
-      if (!document.getElementById("graphs-panel").classList.contains("hidden")) setGraphsTucked(true);
-    },
   },
 });
 document.getElementById("data-button").addEventListener("click", () => {
@@ -17221,6 +17243,9 @@ function applyFormworkAct(t, strikeU) {
 // away with the columns and the net, and the anchors and tension ties
 // stay, because those two are the permanent works.
 let machineObjects = null;
+// The spooling machines as the studio draws them are the old design (the
+// owner, 2026-10-11): hidden everywhere until the new ones are drawn.
+const MACHINE_PLANT_SHOWN = false;
 
 function disposeMachine() {
   const row = document.getElementById("machine-row");
@@ -18090,6 +18115,9 @@ function applyMachineAct(t, strikeU) {
   } else {
     temporary.visible = true;             // standing, as the finished net is
   }
+  // the machine models are the old ones: not drawn for now (spec 2026-10-11
+  // one Cable net tab, section 5.5); the permanent works stay
+  if (!MACHINE_PLANT_SHOWN) temporary.visible = false;
   permanent.visible = true;               // the permanent works remain
   // The machine leaves with the columns and the net, on the same fade,
   // because it is one machine leaving. It REVERSES OUT rather than

@@ -245,7 +245,7 @@ def test_the_menu_is_short_and_the_mechanism_cost_and_graphs_are_in_the_pop_up()
     """Spec 2026-10-09 Cable net display, sections 3 and 4."""
 
     html = (STATIC / "index.html").read_text(encoding="utf-8")
-    opening = '<details id="cablenet-section">'
+    opening = '<details id="cablenet-section" class="hidden">'
     section = html[html.index(opening):]
     section = section[:section.index("</details>")]
     order = ["cablenet-run", "cablenet-tolerance", "cablenet-wires",

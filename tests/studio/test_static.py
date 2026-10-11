@@ -4619,57 +4619,62 @@ def test_space_is_wired_to_play_pause_and_the_rewind():
     assert "applyTimeline(0);" in rewind
 
 
-def test_the_formwork_section_is_a_run_a_player_ticks_and_the_worst_popup():
-    # spec 2026-10-10 formwork tab, sections 5 and 10
+def test_the_cable_net_tab_is_a_run_its_answer_a_player_and_its_views():
+    # spec 2026-10-11 one Cable net tab, sections 4 and 5
     html = (STATIC / "index.html").read_text(encoding="utf-8")
     opening = '<details id="formwork-section">'
     assert opening in html
     section = html[html.index(opening) + len(opening):]
     section = section[:section.index("</details>")]
-    for ident in ("formwork-run", "formwork-run-status", "formwork-machine", "formwork-wall",
-                  "formwork-scrub", "formwork-speed", "formwork-back", "formwork-play",
-                  "formwork-on", "formwork-label", "formwork-line", "formwork-show",
-                  "formwork-colour", "formwork-label-ticks", "formwork-worst-toggle",
-                  "formwork-warnings", "formwork-record", "formwork-record-status",
-                  "formwork-holds-choice", "formwork-holds"):
+    assert "<summary>Cable net</summary>" in section
+    for ident in ("formwork-run", "formwork-run-status", "formwork-answer", "mechanism-toggle",
+                  "formwork-mechanism-name", "formwork-tolerance", "formwork-wires",
+                  "formwork-wall", "formwork-skin", "formwork-scrub", "formwork-speed",
+                  "formwork-back", "formwork-play", "formwork-on", "formwork-label",
+                  "formwork-line", "formwork-show", "formwork-compare", "formwork-weakest",
+                  "formwork-colour", "formwork-values", "formwork-warnings", "formwork-record",
+                  "formwork-record-status"):
         assert 'id="{}"'.format(ident) in section, ident
     assert section.count('class="primary"') == 1 and section.count("<details") == 0
     for tag in re.findall(r"<button[^>]*>", section):
         assert 'title="' in tag, tag
-    # the eight show ticks, the five colour choices (Deviation first on), the
-    # three label ticks
+    # Show as chips; the skin is its slider and the design is Compare's
     assert re.findall(r'data-show="([a-z]+)"', section) == [
-        "net", "trees", "heads", "wires", "anchors", "ground", "skin", "design", "holds"]
-    # the holds: a search to the tolerance (the default) or none (spec
-    # 2026-10-10 formwork holds, section 5)
-    assert re.findall(r'name="formwork-holds" value="([a-z]+)"', section) == ["search", "none"]
-    assert 'title="The holds\' rods: green a strut, blue a tie"' in section
-    assert 'value="search" checked' in section
+        "net", "trees", "heads", "wires", "anchors", "ground", "holds"]
+    assert section.count('class="chip"') == 8           # seven Show chips and Values
+    # Colour by as one segmented bar, Wires first and on
     assert re.findall(r'name="formwork-colour" value="([a-z]+)"', section) == [
-        "tension", "deviation", "utilisation", "wire", "off"]
-    assert 'value="deviation" checked' in section
-    assert re.findall(r'data-label="([a-z]+)"', section) == ["rope", "deviation", "contact"]
-    # the worst tables in a pop-up on the left, one tab a part; the labels and
-    # the card of their own
-    for ident in ("formwork-popup", "formwork-popup-close", "formwork-worst", "formwork-labels",
-                  "formwork-pick"):
+        "wire", "tension", "deviation", "utilisation", "off"]
+    assert 'value="wire" checked' in section and 'class="segmented"' in section
+    assert '<input id="formwork-values" type="checkbox" checked>' in section
+    # the skin from hidden to half opaque
+    assert '<input id="formwork-skin" type="range" min="0" max="50" step="1" value="30">' in section
+    # the player in the studio's own symbols
+    assert ('<button id="formwork-play" class="icon-act" type="button" title="Play">&#9654;</button>'
+            in section)
+    # no Worst, no holds search
+    for gone in ("formwork-worst-toggle", "formwork-popup", "formwork-holds-choice",
+                 'id="formwork-holds"', "data-label="):
+        assert gone not in html, gone
+    for ident in ("formwork-labels", "formwork-pick"):
         assert 'id="{}"'.format(ident) in html, ident
-    popup = html[html.index('<div id="formwork-popup"'):]
-    popup = popup[:popup.index("<!-- the end of the formwork pop-up -->")]
-    assert re.findall(r'data-fw-tab="([a-z]+)"', popup) == [
-        "ropes", "wires", "trees", "nodes", "machines"]
-    for tag in re.findall(r"<button[^>]*>", popup):
-        assert 'title="' in tag, tag
+    # the key's limit marker
+    assert '<div id="legend-bar"><span id="legend-limit" class="hidden"></span></div>' in html
+    assert '<div id="legend-limit-text"></div>' in html
 
 
 def test_the_rail_has_a_cable_net_section_and_the_data_popup_lost_its_tab():
     html = (STATIC / "index.html").read_text(encoding="utf-8")
     rail = html[html.index('<nav id="tab-rail">'):html.index("</nav>")]
     buttons = re.findall(r'data-section="([a-z-]+)"', rail)
+    # one Cable net tab (spec 2026-10-11): the rail's Cable net opens it; the
+    # old section stays hidden until its code goes
     assert buttons == ["import-section", "study-section", "analysis-section",
-                       "cablenet-section", "formwork-section", "animation-section",
+                       "formwork-section", "animation-section",
                        "camera-section", "scene-section", "output-section"]
-    assert '<details id="cablenet-section">' in html
+    assert '<button data-section="formwork-section" type="button">Cable net</button>' in rail
+    assert ">Formwork</button>" not in rail
+    assert '<details id="cablenet-section" class="hidden">' in html
     assert "cablenet-panel" not in html
     for ident in ("cablenet-run", "cablenet-speed", "cablenet-lenses",
                   "cablenet-stage", "cablenet-motor", "cablenet-recommend",
@@ -4680,7 +4685,7 @@ def test_the_rail_has_a_cable_net_section_and_the_data_popup_lost_its_tab():
     # the run is the section's one primary action. The slice starts AFTER the
     # section's own opening tag, or the count of nested <details> below could
     # never be nought.
-    opening = '<details id="cablenet-section">'
+    opening = '<details id="cablenet-section" class="hidden">'
     section = html[html.index(opening) + len(opening):]
     section = section[:section.index("</details>")]
     assert section.count('class="primary"') == 1
