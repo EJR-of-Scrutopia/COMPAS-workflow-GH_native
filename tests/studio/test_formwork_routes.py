@@ -208,6 +208,32 @@ def test_the_run_takes_rods_a_side_and_tells_the_engine_the_sides_and_its_state(
     assert "state_in" not in seen[-1]
 
 
+def test_the_run_takes_the_tendons_switch(tmp_path, monkeypatch):
+    # spec 2026-10-11 across tendons, section 7: on by default; the Tiny net
+    # has one head, so no principal line, and its run says so
+    seen = []
+
+    def fake(request, progress=None):
+        seen.append(request)
+        return {"schema": "bench.formwork-sim/1", "captures": []}
+
+    client, _ = make_client(tmp_path, monkeypatch, formwork_runner=fake)
+    _plant(tmp_path)
+    started = client.post("/api/studies/Tiny/formwork/run", json=RUN)
+    assert wait_for(client, started.json()["run"])["state"] == "done"
+    assert seen[-1]["tendons"] == [] and seen[-1]["options"]["tendons"] is True
+    import formwork_sim
+    document = client.get("/api/studies/Tiny/formwork/sim", params=RUN).json()
+    assert document["tendons_reason"] == formwork_sim.NO_TENDONS
+    started = client.post("/api/studies/Tiny/formwork/run", json={**RUN, "tendons": False})
+    assert wait_for(client, started.json()["run"])["state"] == "done"
+    assert seen[-1]["options"]["tendons"] is False
+    document = client.get("/api/studies/Tiny/formwork/sim", params=RUN).json()
+    assert document["tendons_reason"] is None
+    response = client.post("/api/studies/Tiny/formwork/run", json={**RUN, "tendons": "yes"})
+    assert response.status_code == 400 and "tendons: true or false" in response.json()["detail"]
+
+
 def test_rods_a_side_are_a_whole_number_from_nought_to_twenty(tmp_path, monkeypatch):
     client, _ = make_client(tmp_path, monkeypatch, formwork_runner=_idle)
     _plant(tmp_path)

@@ -1403,6 +1403,10 @@ def create_app(runner=None, cra_runner=None, formwork_runner=None) -> FastAPI:
         resume = body.get("resume", False)
         if not isinstance(resume, bool):
             raise HTTPException(400, "resume: true or false, not {!r}".format(resume))
+        # the tendons along the across lines (spec 2026-10-11 across tendons)
+        tendons = body.get("tendons", True)
+        if not isinstance(tendons, bool):
+            raise HTTPException(400, "tendons: true or false, not {!r}".format(tendons))
         source = body.get("source")
         if source is not None and source not in bundle.CUT_SOURCES:
             raise HTTPException(400, "source must be one of {} when given".format(
@@ -1519,9 +1523,9 @@ def create_app(runner=None, cra_runner=None, formwork_runner=None) -> FastAPI:
                              "prestress_from": prestress_from,
                              "wires_per_motor": wires_per_motor, "wall": wall,
                              "pulleys": pulleys, "holds_per_side": holds_per_side,
-                             **mechanism_options},
+                             "tendons": tendons, **mechanism_options},
                     runner=formwork_runner, progress=progress, holds_per_side=holds_per_side,
-                    state_path=state_path, resume=resume, annotate=annotate)
+                    state_path=state_path, resume=resume, annotate=annotate, tendons=tendons)
                 run["state"] = "done"
                 run["phase"] = "done"
                 run["message"] = ""

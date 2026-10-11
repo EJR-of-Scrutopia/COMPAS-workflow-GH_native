@@ -228,3 +228,46 @@ def test_a_net_with_no_principal_line_or_lines_that_do_not_sort_has_none_and_say
     assert formwork_sim.across_lines(faces + [[node(0, 0), node(1, 0), node(1, 1)]], heads) == (
         None, [], why)                                                             # a triangle
     assert formwork_sim.across_lines([], heads) == (None, [], why)
+
+
+def test_the_run_hands_the_engine_its_tendons_and_writes_every_edges_family(tmp_path):
+    # spec 2026-10-11 across tendons, sections 2 and 4: a strip net whose
+    # principal line runs through its heads
+    import json
+
+    faces, heads, node = _strip_net()
+    edges = sorted({tuple(sorted((f[i], f[(i + 1) % 4]))) for f in faces for i in range(4)})
+    vertices = [[float(n % 5), float(n // 5), 0.0] for n in range(25)]
+    arrays = {"vertices": vertices, "edges": [list(e) for e in edges], "faces": faces}
+    inputs = formwork_sim.Inputs([], [], [[h, i] for i, h in enumerate(heads)], [], [], [], [])
+    binding = {"keys": [], "order": [], "assignment": []}
+    seen = []
+
+    def idle(request, progress=None):
+        seen.append(request)
+        return {"schema": "bench.formwork-sim/1", "captures": []}
+
+    told = (inputs, arrays, binding, [], 0.02, 2000.0, tmp_path / "sim.json", EA, 0.01, 300.0,
+            1, 3.2)
+    formwork_sim.run_formwork(*told, runner=idle)
+    lines = seen[-1]["tendons"]
+    assert len(lines) == 10 and all(len(line["path"]) == 3 for line in lines)
+    assert all(line["path"][0] == heads[line["head"]] for line in lines)
+    written = json.loads((tmp_path / "sim.json").read_text(encoding="utf-8"))
+    families = written["net"]["families"]
+    assert len(families) == len(edges)
+    assert families[edges.index((node(0, 0), node(1, 0)))] == "along"
+    assert families[edges.index((node(2, 0), node(2, 1)))] == "across"
+    assert written["tendons_reason"] is None
+    # switched off: no tendons, the families still written for the views
+    formwork_sim.run_formwork(*told, runner=idle, tendons=False)
+    assert seen[-1]["tendons"] == []
+    written = json.loads((tmp_path / "sim.json").read_text(encoding="utf-8"))
+    assert written["net"]["families"] == families and written["tendons_reason"] is None
+    # a net with no principal line: none, and the reason
+    inputs_one = inputs._replace(heads=[[node(2, 0), 0]])
+    formwork_sim.run_formwork(inputs_one, *told[1:], runner=idle)
+    assert seen[-1]["tendons"] == []
+    written = json.loads((tmp_path / "sim.json").read_text(encoding="utf-8"))
+    assert written["tendons_reason"] == formwork_sim.NO_TENDONS
+    assert written["net"]["families"] is None

@@ -474,16 +474,18 @@ def travel_checks(parts, configuration, document, reeve_by_node, rim_nodes):
 def run_formwork(inputs, arrays, binding, plan, thickness, density, out_path, ea,
                  mass_per_metre, prestress, wires_per_motor, wall, study=None, options=None,
                  note=None, runner=None, python_exe=None, progress=None, holds_per_side=0,
-                 state_path=None, resume=False, annotate=None):
+                 state_path=None, resume=False, annotate=None, tendons=True):
     """From a checked study and its cut to a written capture document. runner,
     when given, replaces the subprocess: it takes the request and progress and
     returns the document. progress, when given, is called with (captures done,
     captures in all, what). The engine is told each node's side (sides_of) and
     places holds_per_side rods on each; it keeps its state at the hold at
     state_path, and with resume a state there is where it starts (spec
-    2026-10-11 one Cable net tab, sections 6 and 7). The document gains the
-    sides, and annotate, when given, adds what it returns from the finished
-    document."""
+    2026-10-11 one Cable net tab, sections 6 and 7). With tendons, the engine
+    is handed a tendon along each across line (across_lines; spec 2026-10-11
+    across tendons). The document gains the sides, each edge's family (null
+    for a net that does not sort), the reason a run that asked for tendons has
+    none, and what annotate, when given, returns from the finished document."""
 
     request = request_from(inputs, arrays, binding, plan, thickness, density, ea,
                            mass_per_metre, prestress, wires_per_motor, wall, study, options, note)
@@ -494,7 +496,10 @@ def run_formwork(inputs, arrays, binding, plan, thickness, density, out_path, ea
     if holds_per_side and sides is None:
         raise FormworkError("rods a side need the net's sides, and this net's rim does not "
                             "split into wired runs")
-    request.update(sides=sides, holds_per_side=int(holds_per_side))
+    families, lines, reason = across_lines(arrays.get("faces"),
+                                           [net for net, _ in inputs.heads], sides)
+    request.update(sides=sides, holds_per_side=int(holds_per_side),
+                   tendons=lines if tendons else [])
     if state_path is not None:
         request["state_out"] = str(state_path)
         if resume and Path(state_path).is_file():
@@ -503,6 +508,9 @@ def run_formwork(inputs, arrays, binding, plan, thickness, density, out_path, ea
         runner = _subprocess_runner(python_exe or FORMWORK_PYTHON)
     document = runner(request, progress)
     document.setdefault("net", {})["sides"] = sides
+    document["net"]["families"] = None if families is None or edges is None else [
+        families.get((min(int(a), int(b)), max(int(a), int(b)))) for a, b in edges]
+    document["tendons_reason"] = reason if tendons else None
     if annotate is not None:
         document.update(annotate(document))
     bundle.write_json_atomically(Path(out_path), document)
