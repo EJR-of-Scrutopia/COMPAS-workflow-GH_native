@@ -128,3 +128,5 @@ Pulled with a dialled tension on all 95 tendons, each line pulling once off the 
 | 30,000 N | 171,305 N | 8.14 | 145 | 828 / 353 mm, 80 mm | 848 / 360 mm, 88 mm |
 
 The pull buys shape, with diminishing returns past about 10,000 N; about 350 mm of mean offset stays, the arch's lost curvature, which a pull along the line does not restore. The rim's worst wire is untouched (it comes in the raise, before the edges leave the ground), and the trees take more as the pull grows.
+
+With the rods as well (checked on screen on the built tab, three rods a side): the worst offset at the end of the tiling is 893 mm with no pull and 463 mm at 3,000 N a tendon, against 1,407 mm and 976 mm without the rods.
