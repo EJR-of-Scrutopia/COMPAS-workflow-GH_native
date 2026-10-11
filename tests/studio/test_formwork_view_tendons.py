@@ -45,6 +45,11 @@ const seen = (by, show = every) => {
 out.across = seen("across");
 out.along = seen("along");
 out.both = seen("both");
+out.offset = seen("deviation");
+const colours = (part, from) => arr(part.geometry.attributes.color, from, 3);
+out.offsetEdge1 = [colours(parts.net, 6), colours(parts.net, 9)];
+out.offsetTendon0 = [colours(parts.tendons, 0), colours(parts.tendons, 3)];
+out.wire = seen("wire");
 out.hidden = seen("across", { ...every, tendons: false }).visible;
 out.where = [arr(parts.tendons.geometry.attributes.position, 0, 12), parts.tendons.geometry.drawRange.count,
              at(parts.reels, 0), at(parts.reels, 1), parts.reels.count];
@@ -55,7 +60,7 @@ out.plain = [view.parts().tendons.visible, view.parts().reels.visible, view.part
 console.log(JSON.stringify(out));
 """
 
-OTHER = linear([0xc8 / 255] * 3)
+OTHER = linear([0x7d / 255, 0x82 / 255, 0x8a / 255])
 WHITE = [1.0, 1.0, 1.0]
 
 
@@ -92,11 +97,27 @@ def test_across_colours_each_across_member_with_its_tendon_and_greys_the_rest(ou
     assert across["visible"] == [True, True]
 
 
-def test_along_colours_the_along_members_and_draws_the_tendons_white(out):
+def test_along_colours_the_along_members_and_greys_the_tendons_with_their_family(out):
+    # found on screen: white tendons over the grey across members were the
+    # loudest thing in the Along view
     along = out["along"]
     assert along["net"][0] == pytest.approx(ramp(1.0), abs=1e-6)          # 200 N, the largest along
     assert along["net"][1] == pytest.approx(OTHER, abs=1e-6)
-    assert along["tendons"][0] == pytest.approx(WHITE) and along["reels"][1] == pytest.approx(WHITE)
+    assert along["tendons"][0] == pytest.approx(OTHER, abs=1e-6)
+    assert along["reels"][1] == pytest.approx(OTHER, abs=1e-6)
+
+
+def test_under_offset_each_tendon_wears_its_members_colours_and_white_on_a_plain_net(out):
+    # found on screen: white tendons hid the offsets of the members they run
+    # along; under Wires the net is plain and the tendons stand out white
+    # tendon 0 runs from node 2 out to node 1, along edge 1 (1 to 2): its head
+    # end wears node 2's offset colour (12 mm), its free end node 1's (0 mm)
+    node1, node2 = out["offsetEdge1"]
+    head_end, free_end = out["offsetTendon0"]
+    assert head_end == pytest.approx(node2, abs=1e-6) and free_end == pytest.approx(node1, abs=1e-6)
+    assert node1 != pytest.approx(node2, abs=1e-3)
+    wire = out["wire"]
+    assert wire["tendons"][0] == pytest.approx(WHITE) and wire["reels"][0] == pytest.approx(WHITE)
 
 
 def test_both_colours_every_member_by_its_whole_force(out):

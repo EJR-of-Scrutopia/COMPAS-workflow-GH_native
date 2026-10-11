@@ -387,8 +387,10 @@ function kilo(n) {
 }
 
 // The other family's members under Along or Across, drawn in a quiet grey
-// (spec 2026-10-11 across tendons, section 6).
-export const OTHER_FAMILY = hexRgb("#c8c8c8");
+// (spec 2026-10-11 across tendons, section 6): a mid grey, so it stays under
+// the family coloured on a dark viewport and shows on a light one (found on
+// screen: a light grey read near white, louder than the family coloured).
+export const OTHER_FAMILY = hexRgb("#7d828a");
 
 // The colour a net member is drawn in under a Colour by choice: its rope's
 // tension under the old Ropes, its family's force under Along and Across (the
