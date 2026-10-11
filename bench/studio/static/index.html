@@ -984,16 +984,27 @@
   <!-- The one Cable net tab's mechanism (spec 2026-10-11 one Cable net tab,
        section 8.1): one dropdown of whole spooling mechanisms, strongest
        first, and under it one spool's pull, the part that sets it and the
-       run's drum and carriage. Filled by mechanism_pick.js. -->
+       run's drum and carriage. Filled by mechanism_pick.js; its Cost and
+       Graphs (sections 8.2 and 8.3) by formwork.js. -->
   <div id="mechanism-popup-head">
     <div id="mechanism-tabs">
       <button data-mech-tab="mech-choose" class="active" type="button" title="Mechanism">Mechanism</button>
+      <button data-mech-tab="mech-cost" type="button" title="What the run's mechanism costs on this study">Cost</button>
+      <button data-mech-tab="mech-graphs" type="button" title="The run's worst wire and worst offset at every capture">Graphs</button>
     </div>
     <button id="mechanism-popup-close" type="button" title="Close">Close</button>
   </div>
   <div id="mech-choose" class="mech-tab">
     <select id="mechanism-preset" title="The whole spooling mechanism: its parts and one spool's pull"></select>
     <div id="mechanism-have" class="cablenet-readout"></div>
+  </div>
+  <div id="mech-cost" class="mech-tab hidden">
+    <div id="cost-body" class="cablenet-readout"></div>
+    <button id="cost-export" type="button" title="Write the bill of materials to the export folder">Export BOM</button>
+    <div id="cost-export-status"></div>
+  </div>
+  <div id="mech-graphs" class="mech-tab hidden">
+    <div id="graphs-body"></div>
   </div>
 </div><!-- the end of the mechanism pop-up -->
 <!-- Two checks that must not live in studio.js, because the fault they

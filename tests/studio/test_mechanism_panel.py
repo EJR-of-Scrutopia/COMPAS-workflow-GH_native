@@ -95,6 +95,19 @@ def test_the_controller_loads_where_there_is_no_page(out):
                            "setWires", "toggle"]
 
 
+def test_the_pop_up_has_three_tabs_mechanism_cost_and_graphs():
+    html = (STATIC / "index.html").read_text(encoding="utf-8")
+    start = html.index('<div id="mechanism-popup"')
+    popup = html[start:html.index("<!-- the end of the mechanism pop-up -->", start)]
+    assert re.findall(r'data-mech-tab="([a-z-]+)"', popup) == ["mech-choose", "mech-cost",
+                                                              "mech-graphs"]
+    for pane in ("mech-choose", "mech-cost", "mech-graphs"):
+        assert 'id="{}" class="mech-tab'.format(pane) in popup, pane
+    assert '<button id="cost-export" type="button"' in popup and ">Export BOM</button>" in popup
+    for ident in ("cost-body", "cost-export-status", "graphs-body"):
+        assert 'id="{}"'.format(ident) in popup, ident
+
+
 def test_the_page_carries_the_pop_up_with_one_dropdown():
     html = (STATIC / "index.html").read_text(encoding="utf-8")
     opening = '<div id="mechanism-popup" class="hidden">'
@@ -104,4 +117,3 @@ def test_the_page_carries_the_pop_up_with_one_dropdown():
     for ident in ("mechanism-popup-close", "mechanism-preset", "mechanism-have"):
         assert 'id="{}"'.format(ident) in popup, ident
     assert popup.count("<select") == 1
-    assert re.findall(r'data-mech-tab="([a-z-]+)"', popup) == ["mech-choose"]

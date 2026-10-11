@@ -118,6 +118,27 @@ def test_rods_a_side_rerun_from_the_hold_once_they_settle():
     assert "if (sim && first) setHolds(sim.holdsPerSide);" in load
 
 
+def test_the_cost_and_the_graphs_follow_the_run_and_export_bom_writes_it():
+    # spec sections 8.2 and 8.3: read again with every run read, the graphs
+    # judged again for a new tolerance, Export BOM posted for the run shown
+    load = _inner(JS, "load")
+    assert "renderGraphs();" in load and "loadCost();" in load
+    cost = _inner(JS, "loadCost")
+    assert "/formwork/cost?" in cost and "el.costBody.innerHTML = costHtml(" in cost
+    graphs = _inner(JS, "renderGraphs")
+    assert ("el.graphs.innerHTML = graphsHtml(tab.judged, have == null ? null : Number(have), "
+            "Number(el.tolerance.value));") in graphs
+    assert "/formwork/bom" in JS and 'el.costExport.addEventListener("click", exportBom);' in JS
+    # a study going takes the cost and the graphs with it, and no rerun it
+    # had waiting is merged into the next
+    clear = _inner(JS, "clear")
+    assert 'el.costBody.innerHTML = "";' in clear and 'el.graphs.innerHTML = "";' in clear
+    assert "clearTimeout(tab.rerun);" in clear and "tab.rerun = null;" in clear
+    # the pop-up switches between its three tabs
+    assert "function showTab(id) {" in PICK
+    assert 'el.popup.querySelectorAll("[data-mech-tab]")' in PICK
+
+
 def test_the_answer_greys_when_out_of_date_and_its_needed_goes_to_the_wire():
     render = _inner(JS, "renderAnswer")
     assert 'const stale = outOfDate().some((line) => line.startsWith("Run again"));' in render

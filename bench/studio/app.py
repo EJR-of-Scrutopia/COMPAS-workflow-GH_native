@@ -2926,7 +2926,7 @@ def create_app(runner=None, cra_runner=None, formwork_runner=None) -> FastAPI:
                        "data_analysis.js", "live_graphs.js", "atmosphere.js",
                        "labels.js", "formwork.js",
                        "formwork_model.js", "formwork_view.js", "mechanism_pick.js",
-                       "mechanism_pick_model.js"):
+                       "mechanism_pick_model.js", "run_popup_model.js"):
             page = page.replace(
                 '"three/addons/": "/static/vendor/addons/"',
                 '"three/addons/": "/static/vendor/addons/",\n'

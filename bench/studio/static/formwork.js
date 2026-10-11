@@ -12,6 +12,7 @@ import {
   recordingCaption, weakestAt, withWall,
 } from "./formwork_model.js";
 import { spreadLabels } from "./labels.js";
+import { costHtml, graphsHtml } from "./run_popup_model.js";
 
 // As the studio's labels and card.
 const LABEL_MAX = 125;
@@ -85,6 +86,8 @@ export function mountFormwork({ studyName, studyOptions, mechanism, view, hooks 
     colour: byId("formwork-colour"), values: byId("formwork-values"),
     warnings: byId("formwork-warnings"), labels: byId("formwork-labels"),
     pick: byId("formwork-pick"), record: byId("formwork-record"),
+    costBody: byId("cost-body"), costExport: byId("cost-export"),
+    costStatus: byId("cost-export-status"), graphs: byId("graphs-body"),
   };
   const api = { active: () => false, setActive: () => {}, tick: () => {}, place: () => {},
                 pick: () => {}, clear: () => {}, reload: () => {}, refresh: () => {},
@@ -245,6 +248,7 @@ export function mountFormwork({ studyName, studyOptions, mechanism, view, hooks 
   el.tolerance.addEventListener("input", () => {
     el.toleranceValue.textContent = el.tolerance.value;
     renderAnswer();
+    renderGraphs();
     draw(true);
   });
   el.skin.addEventListener("input", () => {
@@ -401,8 +405,55 @@ export function mountFormwork({ studyName, studyOptions, mechanism, view, hooks 
     }
     renderWarnings();
     renderAnswer();
+    renderGraphs();
+    loadCost();
     draw(true);
   }
+
+  // The pop-up's Graphs (spec section 8.3), from the run shown: judged again
+  // for a new tolerance without a run.
+  function renderGraphs() {
+    const have = tab.sim ? (tab.sim.options || {}).have_newtons : null;
+    el.graphs.innerHTML = graphsHtml(tab.judged, have == null ? null : Number(have), Number(el.tolerance.value));
+  }
+
+  // The pop-up's Cost (section 8.2): the run's mechanism priced on the study.
+  async function loadCost() {
+    const mine = tab.ticket;
+    const options = studyOptions();
+    el.costStatus.textContent = "";
+    if (!tab.sim || !options || !studyName()) { el.costBody.innerHTML = ""; return; }
+    const query = new URLSearchParams();
+    for (const [key, value] of Object.entries(sentOptions(options))) query.set(key, String(value));
+    try {
+      const cost = await getJson(
+        `/api/studies/${encodeURIComponent(studyName())}/formwork/cost?${query.toString()}`);
+      if (mine !== tab.ticket) return;
+      el.costBody.innerHTML = costHtml(cost);
+    } catch (error) {
+      if (mine !== tab.ticket) return;
+      el.costBody.innerHTML = `<div class="cablenet-warning">${esc(error.message)}</div>`;
+    }
+  }
+
+  // Export BOM: the run's bill of materials, written to the export folder.
+  async function exportBom() {
+    const options = studyOptions();
+    if (!tab.sim || !options || !studyName()) { el.costStatus.textContent = "No run yet: Run"; return; }
+    el.costExport.disabled = true;
+    el.costStatus.textContent = "writing";
+    try {
+      const written = await getJson(`/api/studies/${encodeURIComponent(studyName())}/formwork/bom`,
+        { method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(sentOptions(options)) });
+      el.costStatus.textContent = "saved: " + written.name;
+    } catch (error) {
+      el.costStatus.textContent = error.message;
+    } finally {
+      el.costExport.disabled = false;
+    }
+  }
+  el.costExport.addEventListener("click", exportBom);
 
   function stopWatching() {
     if (tab.watcher != null) clearInterval(tab.watcher);
@@ -568,6 +619,7 @@ export function mountFormwork({ studyName, studyOptions, mechanism, view, hooks 
     tab.ticket += 1;
     stopWatching();
     clearTimeout(tab.rerun);
+    tab.rerun = null;
     tab.sim = null;
     tab.judged = null;
     tab.times = [];
@@ -580,6 +632,8 @@ export function mountFormwork({ studyName, studyOptions, mechanism, view, hooks 
     el.pick.classList.add("hidden");
     el.line.innerHTML = "";
     el.answer.innerHTML = "";
+    el.costBody.innerHTML = "";
+    el.graphs.innerHTML = "";
     el.label.textContent = "";
     el.runStatus.textContent = "";
     el.run.disabled = false;
