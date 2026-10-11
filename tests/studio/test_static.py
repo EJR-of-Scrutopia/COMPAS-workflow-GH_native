@@ -1281,6 +1281,29 @@ def test_the_analysis_and_study_controls_say_a_state_not_a_sentence():
     assert 'status.textContent === "Restart needed"' in stale
 
 
+def test_the_shelf_scatter_lights_and_take_lines_are_values():
+    # His ruling of 11 October 2026: the scatter, Lights and take lines
+    # hold the state (what is chosen, the layer, the count, a stop at a cap
+    # in deep red), never how to use the tool; the tiles' and chips'
+    # titles name the thing and its figures.
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    paint = _function_body(js, "paintScatter")
+    assert 'stop.className = "over";' in paint
+    assert '"Stopped: " + solved.stopped' in paint
+    assert '"item cap"' in js and '"triangle budget"' in js
+    for gone in ("the six thousand item cap", "Take every species out of the mix",
+                 "How often this one appears", "Take this one out of the mix",
+                 "(skin + ground)", "None: no atmosphere", "thinning every",
+                 "atmosphereTileTitle", "nothing stitched",
+                 "press twice for the start", "Fill the display with the view",
+                 "Leave full screen", "Click to stop following"):
+        assert gone not in js, gone
+    assert '"Pause (Space)" : "Play (Space)"' in _function_body(js, "paintPlayButtons")
+    assert 'state.live ? "Live: follow Grasshopper" : "Live: off"' in _function_body(js, "paintLive")
+    css = (STATIC / "studio.css").read_text(encoding="utf-8")
+    assert "#scatter-readout .over" in css
+
+
 def test_a_refused_run_reports_the_reason_the_server_gave():
     # app.py 400s a size outside the slider's range, a thickness outside
     # 0.05 to 0.5 m, and a material or pattern it does not offer, each

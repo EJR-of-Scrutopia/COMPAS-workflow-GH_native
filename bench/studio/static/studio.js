@@ -9756,8 +9756,8 @@ function scatterSolve(region, salt, strokeKeepOut) {
       rotation: rules.turn ? random() * Math.PI * 2 : 0 });
     triangles += propTriangles(type);
   }
-  const stopped = placed.length >= SCATTER_MAX_ITEMS ? "the six thousand item cap"
-    : triangles >= SCATTER_BUDGET_TRIANGLES ? "the triangle budget"
+  const stopped = placed.length >= SCATTER_MAX_ITEMS ? "item cap"
+    : triangles >= SCATTER_BUDGET_TRIANGLES ? "triangle budget"
       : null;
   return { items: placed, triangles, refused, stopped, keepOut };
 }
@@ -9784,10 +9784,7 @@ async function runScatter(region, options) {
     settings.stroke ? settings.stroke.keepOut : null);
   if (settings.stroke) settings.stroke.keepOut = solved.keepOut;
   if (!solved.items.length) {
-    document.getElementById("scatter-readout").textContent =
-      settings.stroke
-        ? "no more will fit there: loosen the spacing or widen the brush"
-        : "nothing fitted: loosen the spacing, or draw a bigger area";
+    document.getElementById("scatter-readout").textContent = "No room";
     return;
   }
   // Every placement lands on the open layer (placementLayer), and a scatter
@@ -9864,8 +9861,11 @@ function paintScatter(solved) {
   if (!readout) return;
   const rules = state.scatter;
   document.getElementById("scatter-undo-last").disabled = !state.scatterRuns.length;
+  // The state, never how to use the tool (his ruling of 11 October
+  // 2026): the mix, the layer it lands on, what was placed, and a stop at
+  // a cap in deep red.
   if (!rules.species.length) {
-    readout.textContent = "pick one or more species to scatter";
+    readout.textContent = "";
     return;
   }
   if (!solved) {
@@ -9873,15 +9873,18 @@ function paintScatter(solved) {
       const entry = propEntry(s.type);
       return (entry ? entry.label || entry.key : s.type) + " x" + s.weight;
     });
-    readout.textContent = names.join(", ")
-      + "  --  brush it on, or drag an area, onto " + placingOntoName();
+    readout.textContent = names.join(", ") + "  \u00b7  Layer: " + placingOntoName();
     return;
   }
-  readout.textContent = solved.items.length + " placed onto "
-    + (solved.home ? solved.home.name : placingOntoName()) + ", "
-    + (solved.triangles / 1e6).toFixed(1) + " M triangles"
-    + (solved.stopped ? "  --  stopped at " + solved.stopped
-      + ", loosen the spacing or pick something lighter" : "");
+  readout.textContent = solved.items.length + " placed  \u00b7  Layer: "
+    + (solved.home ? solved.home.name : placingOntoName()) + "  \u00b7  "
+    + (solved.triangles / 1e6).toFixed(1) + " M triangles";
+  if (solved.stopped) {
+    const stop = document.createElement("span");
+    stop.className = "over";
+    stop.textContent = "Stopped: " + solved.stopped;
+    readout.append("  \u00b7  ", stop);
+  }
 }
 
 // The species grid. Only what is worth scattering: the manifest's own
@@ -9956,10 +9959,10 @@ function renderShelfScatter() {
     // across. So the real dimensions go on the tile.
     const size = entry.sizeMetres;
     tile.title = (entry.label || entry.key)
-      + (size ? "  " + size[1].toFixed(2) + " m tall, "
+      + (size ? ", " + size[1].toFixed(2) + " m tall, "
         + Math.max(size[0], size[2]).toFixed(2) + " m across" : "")
-      + (entry.variants > 1 ? "  --  " + entry.variants + " variants" : "")
-      + "  --  " + (entry.triangles || 0).toLocaleString() + " triangles";
+      + (entry.variants > 1 ? ", " + entry.variants + " variants" : "")
+      + ", " + (entry.triangles || 0).toLocaleString() + " triangles";
     tile.classList.toggle("active",
       state.scatter.species.some((s) => s.type === entry.key));
     // SHIFT takes the run from the last one clicked to this one, the way
@@ -10006,7 +10009,7 @@ function renderShelfScatter() {
     const clear = document.createElement("button");
     clear.id = "scatter-deselect";
     clear.textContent = "Deselect all";
-    clear.title = "Take every species out of the mix";
+    clear.title = "Clear the mix";
     clear.addEventListener("click", () => {
       state.scatter.species = [];
       renderShelfScatter();
@@ -10024,14 +10027,14 @@ function renderShelfScatter() {
     weight.min = "1";
     weight.max = "9";
     weight.value = String(species.weight);
-    weight.title = "How often this one appears, against the others";
+    weight.title = "Weight in the mix";
     weight.addEventListener("input", () => {
       species.weight = Math.max(1, Math.min(9, +weight.value || 1));
       paintScatter();
     });
     const drop = document.createElement("button");
     drop.textContent = "✕";
-    drop.title = "Take this one out of the mix";
+    drop.title = "Remove from the mix";
     drop.addEventListener("click", () => {
       state.scatter.species = state.scatter.species
         .filter((s) => s !== species);
@@ -10206,6 +10209,9 @@ function armScatterBrush() {
   if (state.scatterArmed === "brush") { disarmScatterArea(); return; }
   if (!state.scatter.species.length) {
     logStudio("scatter: pick a species first");
+    // The log is off the screen, so the line says it: a short warning
+    // that says what to do.
+    document.getElementById("scatter-readout").textContent = "Pick a species";
     return;
   }
   disarmScatterArea();
@@ -10217,9 +10223,8 @@ function armScatterBrush() {
   // they were, and the first stroke is what shows a hidden one.
   state.scatterBrushLayer = resolvePlacementLayer().layer.id;
   document.getElementById("scatter-brush").classList.add("active");
-  document.getElementById("scatter-readout").textContent =
-    "press and drag to paint onto " + placingOntoName()
-    + "; middle-drag orbits, right-drag pans; Escape to stop";
+  const readout = document.getElementById("scatter-readout");
+  readout.textContent = "Layer: " + placingOntoName();
   // The drawer gets out of the way: a brush needs the floor, and the
   // floor was under the tiles (Param: "the tiles are a bit in the way").
   // Escape or the button brings it back.
@@ -10338,6 +10343,7 @@ function armScatterArea() {
   disarmScatterArea();
   if (!state.scatter.species.length) {
     logStudio("scatter: pick a species first");
+    document.getElementById("scatter-readout").textContent = "Pick a species";
     return;
   }
   state.scatterArmed = "area";
@@ -10348,10 +10354,8 @@ function armScatterArea() {
   scatterDrag = null;
   areaPress = null;
   document.getElementById("scatter-area").classList.add("active");
-  document.getElementById("scatter-readout").textContent =
-    "drag a rectangle to fill it onto " + placingOntoName()
-    + ", click to fill it again, drag another to move on; "
-    + "middle-drag orbits, right-drag pans; Escape to stop";
+  const readout = document.getElementById("scatter-readout");
+  readout.textContent = "Layer: " + placingOntoName();
   closeShelf();
   logStudio("scatter: drag a rectangle on the floor to fill it, click to fill it "
     + "again, drag another to move on; middle-drag orbits, right-drag pans; Escape to stop");
@@ -10706,11 +10710,9 @@ function renderShelfMaterials(cats, grid) {
       tileUrl(row.entry, row.skin ? undefined : GROUND_BASE));
     tile.title = row.entry.label
       + (row.entry.tileMetres
-        ? "  " + Math.round(row.entry.tileMetres[0] * 1000) + " x "
+        ? ", " + Math.round(row.entry.tileMetres[0] * 1000) + " x "
           + Math.round(row.entry.tileMetres[1] * 1000) + " mm"
-        : "")
-      + (row.skin && row.ground ? "  (skin + ground)"
-        : row.skin ? "  (skin)" : "  (ground)");
+        : "");
     tile.addEventListener("click", () => {
       shelfMaterialKey = row.entry.key;
       paintTileSelection(grid, row.entry.key);
@@ -11028,18 +11030,6 @@ function paintAtmosphereTile(key, canvasEl) {
   context.putImageData(image, 0, 0);
 }
 
-// A tile's title carries its numbers, in the dials' own units.
-function atmosphereTileTitle(key) {
-  const preset = ATMOSPHERE_PRESETS[key];
-  if (!preset || key === "none") {
-    return "None: no atmosphere. Sky mode keeps the weather's own haze";
-  }
-  return preset.label + ": " + preset.density + " /km thinning every " + preset.height
-    + " m, ground mist " + preset.mist + " /km over " + preset.mistHeight + " m, from "
-    + preset.start + " m, hiding at most " + preset.maxOpacity + "%, sun glow "
-    + preset.sunGlow + "%";
-}
-
 function buildAtmosphereTiles() {
   const holder = document.getElementById("atmosphere-tiles");
   const select = document.getElementById("atmosphere-preset");
@@ -11048,7 +11038,6 @@ function buildAtmosphereTiles() {
   for (const option of select.options) {
     const tile = previewTile(option.value, option.textContent,
       (canvasEl) => paintAtmosphereTile(option.value, canvasEl), 2);
-    tile.title = atmosphereTileTitle(option.value);
     tile.addEventListener("click", () => {
       if (select.value === option.value) return;
       select.value = option.value;
@@ -12887,7 +12876,7 @@ function paintLive(fresh) {
   if (fresh) liveFlash = Date.now() + 1200;
   const flaring = state.live && Date.now() < liveFlash;
   button.className = state.live ? (flaring ? "on fresh" : "on") : "off";
-  button.title = state.live ? "Live: following Grasshopper" : "Live: off";
+  button.title = state.live ? "Live: follow Grasshopper" : "Live: off";
 }
 document.getElementById("live-toggle").addEventListener("click", () => {
   state.live = !state.live;
@@ -13595,13 +13584,15 @@ function syncLightControls() {
   const heading = document.getElementById("lights-readout");
   const lamps = state.props.filter(isLamp);
   const one = isLamp(state.selectedProp) ? state.selectedProp : null;
+  // What the dials act on and the layer a new fixture lands on, never
+  // how to use the drawer (his ruling of 11 October 2026).
   if (heading) {
     heading.textContent = (one
-      ? "tuning the selected fixture"
+      ? "Selected fixture  \u00b7  "
       : lamps.length
-        ? "tuning all " + lamps.length + " fixtures"
-        : "click a fixture to place it, then a placed one to tune it")
-      + "; new fixtures go onto " + placingOntoName();
+        ? "All " + lamps.length + " fixtures  \u00b7  "
+        : "")
+      + "Layer: " + placingOntoName();
   }
   // The sliders show the selected lamp's own numbers, or the defaults a
   // newly placed lamp will wear.
@@ -17675,7 +17666,7 @@ async function recordAnimation() {
   // (the owner's choice of 10 October 2026).
   const formwork = !!(formworkTab && formworkTab.active());
   const status = document.getElementById(formwork ? "formwork-record-status" : "record-status");
-  if (!state.timeline || !state.bundle) { status.textContent = "load a study first"; return; }
+  if (!state.timeline || !state.bundle) { status.textContent = "No study"; return; }
   // F1: capture the peak from the same source the day-cycle button reads,
   // not the slider -- applyDayCycle's own writes below clamp that slider
   // for display, and reading it back here would let a mid-recording clamp
@@ -17824,8 +17815,7 @@ async function recordAnimation() {
       // and handing him a video of it anyway would be a surprise. The
       // frames already uploaded stay where they are and the next take to
       // the same name writes over them.
-      status.textContent = "stopped at frame " + stopped + " of " + total
-        + "; nothing stitched";
+      status.textContent = "stopped at frame " + stopped + " / " + total;
       return;
     }
     status.textContent = "stitching...";
@@ -17994,9 +17984,7 @@ function paintPlayButtons(text) {
   const shelf = document.getElementById("shelf-play");
   if (shelf) {
     shelf.textContent = text === "Pause" ? "❚❚" : "▶";
-    shelf.title = text === "Pause"
-      ? "Pause the animation (Space; press twice for the start)"
-      : "Play the animation (Space; press twice for the start)";
+    shelf.title = text === "Pause" ? "Pause (Space)" : "Play (Space)";
   }
 }
 
@@ -18245,8 +18233,7 @@ if (fullTile) {
   });
   document.addEventListener("fullscreenchange", () => {
     fullTile.classList.toggle("active", !!document.fullscreenElement);
-    fullTile.title = document.fullscreenElement
-      ? "Leave full screen" : "Fill the display with the view";
+    fullTile.title = document.fullscreenElement ? "Exit full screen" : "Full screen";
   });
 }
 // Ctrl+Z as well as the tile (his ask), because that is the gesture

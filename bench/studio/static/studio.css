@@ -1666,8 +1666,9 @@ body.stilling
 /* The Overview tab and the HUD under the Data button show a bad value the
    same way (his ruling of 11 October 2026). The HUD keeps the one red in
    both themes: no light rule names it (test_the_overlays_are_not_themed). */
-#data-content .over, #hud .over { color: #e2453a; font-weight: 600; }
-:root[data-theme="light"] #data-content .over { color: #a3231a; }
+#data-content .over, #hud .over, #scatter-readout .over { color: #e2453a; font-weight: 600; }
+:root[data-theme="light"] #data-content .over,
+:root[data-theme="light"] #scatter-readout .over { color: #a3231a; }
 /* a figure stays on one line */
 #panel #formwork-answer td:nth-child(2) { white-space: nowrap; }
 #panel #formwork-answer tr[data-capture] { cursor: pointer; }
