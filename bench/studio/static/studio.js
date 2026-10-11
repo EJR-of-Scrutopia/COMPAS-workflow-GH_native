@@ -15219,21 +15219,22 @@ function analysisThemeTokens() {
 
 function renderAnalysisTab() {
   const holder = document.getElementById("data-analysis");
+  // The empty and failed states are a word or two (his ruling of 11
+  // October 2026: no explanatory text, just the data).
   if (!state.bundle) {
-    holder.innerHTML = "<p>Load a study first.</p>";
+    holder.innerHTML = "<h3>No study</h3>";
     return null;
   }
-  // A narrative fault must never take the Data button down with it: the
-  // Overview sheet still has the raw numbers, so the failure is shown in
-  // place and reported, and the panel opens regardless.
+  // A fault in the tables must never take the Data button down with it:
+  // the Overview sheet still has the raw numbers, so the failure is shown
+  // in place and reported, and the panel opens regardless.
   try {
     const input = computeAnalysisInput(state.bundle, finalStage());
     holder.innerHTML = buildAnalysisHtml(input);
     return input;
   } catch (error) {
     reportProblem("the analysis narrative failed: " + error.message, error);
-    holder.textContent = "The narrative could not be built ("
-      + error.message + "); the Overview tab still has the raw numbers.";
+    holder.textContent = "Not built: " + error.message;
     return null;
   }
 }
@@ -15258,15 +15259,14 @@ function ensurePlotly() {
 async function renderDataGraphs() {
   const holder = document.getElementById("data-graphs");
   if (!state.bundle) {
-    holder.innerHTML = "<p>Load a study first.</p>";
+    holder.innerHTML = "<p>No study</p>";
     return;
   }
   const input = computeAnalysisInput(state.bundle, finalStage());
   const specs = buildGraphSpecs(input, analysisThemeTokens());
   if (!specs.length) {
-    holder.innerHTML = "<p>Graphs read the staged analysis and the member "
-      + "forces, and this bundle has neither yet. Run the staged analysis "
-      + "and come back.</p>";
+    // Nothing staged and no member forces: nothing to draw.
+    holder.innerHTML = "<p>No staged run</p>";
     return;
   }
   const done = beginLoading("Preparing graphs");

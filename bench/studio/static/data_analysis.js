@@ -1,98 +1,101 @@
-// The Data sheet's interpretive half: what the numbers MEAN.
+// The Data sheet's Analysis tab and its Graphs: the study's figures,
+// judged against the material's limits.
 //
-// Param: "this new analysis tab actually helps us make sense of the data.
-// It can remark on how much stress there is and where the location is to
-// be an issue or not, suggesting fixing recommendations. It should also be
-// aware of the material used to know its limits... We should narrative
-// this information properly too, so its clean visually and also says what
-// it can and cant do."
+// Param, in September: "this new analysis tab actually helps us make
+// sense of the data... It should also be aware of the material used to
+// know its limits". And on 11 October 2026: "i dont think we need all
+// this descriptive text... if theres over explanation of things instead
+// of just showing the data with red for bad, and a basic layout for
+// information, then we need to remove it." So the tab is tables of name,
+// value and limit, a figure past its limit in deep red, and no sentences:
+// no pills, no recommendations, no disclaimer.
 //
 // Everything here is pure: plain data in, HTML strings and chart specs
-// out, no three.js and no DOM, so the whole narrative is testable under
-// node the way fields.js is. studio.js owns the wiring and the plotting
-// library; this module owns the judgement and the words.
+// out, no three.js and no DOM, so the whole tab is testable under node
+// the way fields.js is. studio.js owns the wiring and the plotting
+// library; this module owns the judgement.
 
 // Indicative strength values, MPa, in the spirit of the Eurocodes'
-// design values -- NOT project design values. Each entry says where its
-// numbers lean on so the narrative can repeat that honestly. Tension for
-// the unreinforced materials is the number that matters most in a
-// funicular shell: the whole game is keeping it near zero.
+// design values, NOT project design values. Each entry's comment says
+// where its numbers lean on; since his ruling of 11 October 2026 that is
+// no longer repeated on screen. Tension for the unreinforced materials
+// is the number that matters most in a funicular shell: the whole game
+// is keeping it near zero. slender is the band of span over thickness
+// the material's shells commonly live in, stocky to proven thin work: a
+// shell outside it goes red.
 export const MATERIAL_LIMITS = {
+  // EC2-style: fcd = fck/1.5 with fck 30 MPa; tension as fctk,0.05/1.5
+  // for unreinforced work.
   concrete: {
     label: "Concrete C30/37",
     compression: 20.0, tension: 1.3,
-    basis: "EC2-style: fcd = fck/1.5 with fck 30 MPa; tension as "
-      + "fctk,0.05/1.5 for unreinforced work",
     slender: [8, 300],
   },
+  // EC2-style: fcd = 50/1.5; tension as fctk,0.05/1.5, unreinforced.
   "concrete-c50": {
     label: "Concrete C50/60",
     compression: 33.3, tension: 1.9,
-    basis: "EC2-style: fcd = 50/1.5; tension as fctk,0.05/1.5, unreinforced",
     slender: [8, 300],
   },
+  // EC2-style: fcd = 25/1.5; sprayed placement, no reinforcement assumed.
   "concrete-sprayed": {
     label: "Sprayed concrete C25/30",
     compression: 16.7, tension: 1.2,
-    basis: "EC2-style: fcd = 25/1.5; sprayed placement, no reinforcement "
-      + "assumed",
     slender: [8, 250],
   },
+  // EC5-style: fc,0,k 24 and ft,0,k 19.2 with kmod 0.8 over gammaM 1.25.
   timber: {
     label: "Timber GL24h",
     compression: 15.4, tension: 12.3,
-    basis: "EC5-style: fc,0,k 24 and ft,0,k 19.2 with kmod 0.8 over "
-      + "gammaM 1.25",
     slender: [10, 120],
   },
+  // EC6-style: fk about 5 MPa over gammaM 2.2; joint tension taken as
+  // next to nothing.
   brick: {
     label: "Brick masonry",
     compression: 2.4, tension: 0.1,
-    basis: "EC6-style: fk about 5 MPa over gammaM 2.2; joint tension "
-      + "taken as next to nothing",
     slender: [10, 60],
   },
+  // Thin-tile (timbrel) masonry, indicative; the mortar bed governs.
   tile: {
     label: "Fired clay tile",
     compression: 3.5, tension: 0.2,
-    basis: "thin-tile (timbrel) masonry, indicative; the mortar bed "
-      + "governs",
     slender: [15, 80],
   },
+  // Limestone masonry, indicative; the joints govern tension.
   stone: {
     label: "Limestone",
     compression: 8.0, tension: 0.2,
-    basis: "limestone masonry, indicative; the joints govern tension",
     slender: [8, 50],
   },
 };
 
 // Densities, kg/m3, duplicating staging.py's table (which itself mirrors
-// ananke_fea) so the narrative can weigh the shell without a server call.
+// ananke_fea) so the tab can weigh the shell without a server call.
 export const DENSITIES = {
   concrete: 2400, "concrete-c50": 2400, "concrete-sprayed": 2300,
   timber: 385, brick: 1900, tile: 1800, stone: 2500,
 };
 
-// Where something is, in an architect's words rather than coordinates:
-// height band first, then compass bearing from the plan centre. North is
-// +y, matching the sun widget's compass.
+// Where something is, in an architect's words rather than coordinates,
+// a word or two each (his ruling of 11 October 2026): height band first,
+// then compass bearing from the plan centre, "crown, north-east". North
+// is +y, matching the sun widget's compass.
 export function describeLocation(centroid, bounds) {
   const height = bounds.max[2] - bounds.min[2] || 1;
   const zf = (centroid[2] - bounds.min[2]) / height;
-  const band = zf > 0.7 ? "near the crown"
-    : zf < 0.3 ? "at the springing level" : "on the flank";
+  const band = zf > 0.7 ? "crown" : zf < 0.3 ? "springing" : "flank";
   const cx = (bounds.min[0] + bounds.max[0]) / 2;
   const cy = (bounds.min[1] + bounds.max[1]) / 2;
   const dx = centroid[0] - cx, dy = centroid[1] - cy;
   const reach = Math.max(bounds.max[0] - bounds.min[0],
     bounds.max[1] - bounds.min[1]) / 2 || 1;
-  if (Math.hypot(dx, dy) < 0.15 * reach) return band + ", centrally";
+  if (Math.hypot(dx, dy) < 0.15 * reach) return band + ", centre";
   const octants = ["east", "north-east", "north", "north-west",
     "west", "south-west", "south", "south-east"];
   const angle = Math.atan2(dy, dx);
   const index = ((Math.round(angle / (Math.PI / 4)) % 8) + 8) % 8;
-  return band + ", to the " + octants[index];
+  return band + ", " + octants[index];
 }
 
 function faceCentroid(face, vertices) {
@@ -105,7 +108,7 @@ function faceCentroid(face, vertices) {
   return sum.map((total) => total / face.length);
 }
 
-// Everything the narrative and the graphs need, computed once from the
+// Everything the tables and the graphs need, computed once from the
 // bundle and the (possibly null) converged final stage.
 export function computeAnalysisInput(bundle, stage) {
   const vertices = bundle.analysis_mesh.vertices;
@@ -122,11 +125,11 @@ export function computeAnalysisInput(bundle, stage) {
   const staging = bundle.staging;
   const stages = (staging && staging.stages) || [];
   const unconverged = [];
-  let unavailable = 0;
   stages.forEach((row, index) => {
     const struck = row.struck_now;
-    if (!struck || struck.status === "unavailable") unavailable += 1;
-    else if (!struck.converged) unconverged.push(index + 1);
+    if (struck && struck.status !== "unavailable" && !struck.converged) {
+      unconverged.push(index + 1);
+    }
   });
 
   const input = {
@@ -136,7 +139,6 @@ export function computeAnalysisInput(bundle, stage) {
     slenderness: thickness > 0 ? span / thickness : null,
     stagesTotal: stages.length,
     unconverged,
-    allUnavailable: stages.length > 0 && unavailable === stages.length,
     formworkKN: stages.length
       ? (stages[stages.length - 1].formwork_carries_newtons || 0) / 1000
       : null,
@@ -247,15 +249,15 @@ export function computeAnalysisInput(bundle, stage) {
     input.loadPerM2 = input.totalLoadKN / area;
   }
   // What the vault was WEIGHED as. When a skin overrides the structural
-  // class's own density the narrative has to say so, or the reader will
-  // assume concrete and misread every number under it.
+  // class's own density the tab has to say so (the row is named Skin
+  // density), or the reader will assume concrete and misread every
+  // number under it.
   input.density = bundle.provenance.density
     || DENSITIES[bundle.material] || null;
   input.densityFromSkin = !!bundle.provenance.density_from_skin;
   // The estimate weighs the vault with the SAME density the solve was
-  // given, not the structural table's: a copper shell that reported its
-  // own 8940 kg/m3 two sentences earlier must not then be weighed as
-  // concrete here.
+  // given, not the structural table's: a copper shell whose Skin density
+  // row reads 8,940 kg/m3 must not then be weighed as concrete here.
   input.selfWeightKN = stage && stage.self_weight_newtons != null
     ? stage.self_weight_newtons / 1e3
     : input.density && thickness > 0 && area > 0
@@ -277,10 +279,8 @@ export function computeAnalysisInput(bundle, stage) {
     if (peakCarry.formworkKN > 0) {
       input.formworkPeak = { stage: peakCarry.stage, kN: peakCarry.formworkKN };
       // Some staging models let the formwork hold everything placed until
-      // striking: the carry then GROWS to the end instead of peaking and
-      // falling away, and the handover story must not pretend otherwise.
-      input.formworkGrowsToEnd = input.formworkKN != null
-        && input.formworkKN >= 0.95 * peakCarry.formworkKN;
+      // striking: the carry then GROWS to the end, the last stage is never
+      // under a tenth of the peak, and no stage is named self-supporting.
       let selfFrom = null;
       for (const row of input.stageSeries) {
         if (row.formworkKN <= 0.1 * peakCarry.formworkKN) {
@@ -296,9 +296,9 @@ export function computeAnalysisInput(bundle, stage) {
   if (stage) {
     input.peakTension = stage.peak_tension / 1e6;
     input.peakCompression = Math.abs(stage.peak_compression) / 1e6;
-    // The worst faces, for the "where" of the story -- and while walking
-    // them, the extent: how much of the surface runs beyond half of each
-    // limit, so the narrative can say spike or field.
+    // The worst faces, for the "where" of each peak, and while walking
+    // them the extent: how many faces run beyond half of each limit and
+    // beyond the limit itself.
     let worstT = -Infinity, worstC = -Infinity, faceT = null, faceC = null;
     let hotT = 0, overT = 0, hotC = 0, overC = 0, faceCount = 0;
     const faces = bundle.analysis_mesh.faces;
@@ -363,15 +363,14 @@ export function computeAnalysisInput(bundle, stage) {
   return input;
 }
 
+// The Graphs tab's utilisation bars wear these bands' colours. The words
+// that went with them were pills on the Analysis tab, gone with his
+// ruling of 11 October 2026.
 export function utilisationBand(ratio) {
-  if (ratio == null) return { word: "unknown", cls: "warn" };
-  if (ratio >= 1) return { word: "over the limit", cls: "bad" };
-  if (ratio >= 0.6) return { word: "approaching the limit", cls: "warn" };
-  return { word: "comfortable", cls: "good" };
-}
-
-function pill(band) {
-  return '<span class="pill ' + band.cls + '">' + band.word + "</span>";
+  if (ratio == null) return { cls: "warn" };
+  if (ratio >= 1) return { cls: "bad" };
+  if (ratio >= 0.6) return { cls: "warn" };
+  return { cls: "good" };
 }
 
 function mpa(value) {
@@ -384,284 +383,217 @@ function forceLabel(kN) {
   return kN >= 0.1 ? kN.toFixed(1) + " kN" : Math.round(kN * 1000) + " N";
 }
 
-export function buildRecommendations(input) {
-  const out = [];
-  if (input.tensionUtilisation >= 1) {
-    out.push("Tension exceeds what " + input.limits.label.toLowerCase()
-      + " can honestly carry"
-      + (input.tensionWhere ? " " + input.tensionWhere : "")
-      + ". Thicken the shell locally, soften the form toward the "
-      + "funicular so the thrust stays inside the section, or add a tie "
-      + "where the tension gathers.");
-  } else if (input.tensionUtilisation >= 0.6) {
-    out.push("Tension is approaching the material's limit"
-      + (input.tensionWhere ? " " + input.tensionWhere : "")
-      + "; watch it as loads are added, and consider a gentle local "
-      + "thickening before it governs.");
-  }
-  if (input.compressionUtilisation >= 1) {
-    out.push("Compression exceeds the design strength"
-      + (input.compressionWhere ? " " + input.compressionWhere : "")
-      + "; thicken the section there or choose a stronger grade.");
-  }
-  if (input.reactionStory && input.reactionStory.steepestDeg != null
-      && input.reactionStory.steepestDeg >= 35) {
-    out.push("The thrust leaves the worst springing at "
-      + Math.round(input.reactionStory.steepestDeg)
-      + " degrees from vertical ("
-      + input.reactionStory.steepestOutwardKN.toFixed(1) + " kN outward"
-      + (input.reactionStory.steepestWhere
-        ? ", " + input.reactionStory.steepestWhere : "")
-      + "): the abutment there must hold that push, or a tie between "
-      + "springings must close it.");
-  }
-  if (input.forceCensus && input.forceCensus.compressionShare < 0.85) {
-    out.push("Only " + Math.round(input.forceCensus.compressionShare * 100)
-      + "% of members work in compression: the form has drifted from the "
-      + "funicular. Revisit the form-finding before sizing anything, "
-      + "because thickening cannot buy back a load path.");
-  }
-  if (input.deflectionRatio != null && input.deflectionRatio < 250) {
-    out.push("Deflection is L/" + Math.round(input.deflectionRatio)
-      + ", slacker than the customary L/250 serviceability line: "
-      + "stiffen the shell or thicken it.");
-  }
-  if (input.unconverged.length) {
-    out.push("Stage" + (input.unconverged.length > 1 ? "s " : " ")
-      + input.unconverged.join(", ")
-      + " found no equilibrium when struck early: keep the formwork "
-      + "under those courses longer, or resequence the build.");
-  }
-  if (input.slenderness != null && input.limits
-      && input.slenderness > input.limits.slender[1]) {
-    out.push("At 1:" + Math.round(input.slenderness)
-      + " the shell is thinner than " + input.limits.label.toLowerCase()
-      + " has commonly been proven to (about 1:" + input.limits.slender[1]
-      + "); treat buckling as the governing question, which this tool "
-      + "does not check.");
-  }
-  if (!out.length) {
-    out.push("Nothing calls for action at this load: stresses sit "
-      + "comfortably inside the material's limits and the deflection is "
-      + "small. The margins above say how far the loading could grow.");
-  }
-  return out;
+// A whole number grouped in thousands, as the Cable net answer writes
+// its newtons.
+function whole(n) {
+  return Math.round(n).toLocaleString("en-GB");
 }
 
+function escapeHtml(text) {
+  return String(text).replace(/&/g, "&amp;").replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
+// The lines the old narrative judged by, kept as the red lines now the
+// sentences are gone: the customary L/250 serviceability ratio, a thrust
+// 35 degrees off vertical (the Support thrust lens buckets at the same
+// line), and 85% of members in compression, under which the form had
+// drifted from the funicular.
+const SPAN_RATIO_LIMIT = 250;
+const THRUST_LIMIT_DEG = 35;
+const COMPRESSION_SHARE_MIN = 0.85;
+
+// A figure past its limit in deep red, as the Cable net answer shows a
+// shortfall (his ruling of 11 October 2026: "red for bad"); nothing marks
+// a good one.
+function over(text, bad) {
+  return bad ? '<span class="over">' + text + "</span>" : text;
+}
+
+// One row: name, value, limit, the limit cell left empty where there is
+// none.
+function row(name, value, limit) {
+  return "<tr><th>" + name + "</th><td>" + value + "</td><td>"
+    + (limit || "") + "</td></tr>";
+}
+
+// One group: a bare heading over its table, or nothing when it has no
+// rows.
+function group(heading, rows) {
+  return rows.length
+    ? "<h3>" + heading + "</h3><table>" + rows.join("") + "</table>"
+    : "";
+}
+
+// The Analysis tab: Stresses, Deflection, Load path, Material and Build,
+// each a table of name, value and limit (his ruling of 11 October 2026:
+// "just showing the data with red for bad, and a basic layout for
+// information"). Every figure the old narrative put in a sentence is a
+// row here; where it judged a figure (over the limit, slacker than L/250,
+// thinner than common practice), that judgement is the red on the value,
+// and "approaching" is not red.
 export function buildAnalysisHtml(input) {
+  const limits = input.limits;
   const parts = [];
   if (!input.hasStage && !input.peaksOnly) {
-    parts.push("<h3>No staged run yet</h3>");
-    parts.push("<p>The narrative reads the staged analysis, and this "
-      + "bundle has none. Press <b>Run staged analysis</b> and come back: "
-      + "every stage of the build is then solved as if struck at that "
-      + "moment, and the story below fills in.</p>");
-    if (input.allUnavailable) {
-      parts.push("<p>Note: this material carries no FEA preset, so a "
-        + "staged run will report verdicts as unavailable rather than "
-        + "solved.</p>");
-    }
+    parts.push("<h3>No staged run</h3>");
   } else {
-    const tBand = utilisationBand(input.tensionUtilisation);
-    const cBand = utilisationBand(input.compressionUtilisation);
-    parts.push("<h3>The stresses</h3>");
-    parts.push("<p>Peak tension is <b>" + mpa(input.peakTension) + "</b> "
-      + pill(tBand)
-      + (input.tensionWhere ? ", found " + input.tensionWhere : "")
-      + ". Peak compression is <b>" + mpa(input.peakCompression) + "</b> "
-      + pill(cBand)
-      + (input.compressionWhere ? ", found " + input.compressionWhere : "")
-      + "." + (input.peaksOnly
-        ? " These are the verification file's peaks only; a staged run "
-          + "would place them on the surface."
-        : "") + "</p>");
+    const stresses = [row("Peak tension",
+      over(mpa(input.peakTension), input.tensionUtilisation >= 1),
+      limits ? mpa(limits.tension) : "")];
+    if (input.tensionWhere) stresses.push(row("Tension at", input.tensionWhere));
+    stresses.push(row("Peak compression",
+      over(mpa(input.peakCompression), input.compressionUtilisation >= 1),
+      limits ? mpa(limits.compression) : ""));
+    if (input.compressionWhere) {
+      stresses.push(row("Compression at", input.compressionWhere));
+    }
     if (input.stressExtent) {
       const extent = input.stressExtent;
-      parts.push("<p>Tension beyond half the limit touches <b>"
-        + extent.hotTension + " of " + extent.faces + " faces</b>"
-        + (extent.overTension
-          ? ", and " + extent.overTension + " exceed"
-            + (extent.overTension > 1 ? "" : "s") + " it outright"
-          : "")
-        + (extent.hotTension / extent.faces <= 0.1
-          ? ": a local spike, not a field"
-          : ": a spread condition, not one bad face")
-        + (extent.hotCompression
-          ? ". Compression runs past half its limit on "
-            + extent.hotCompression + " face"
-            + (extent.hotCompression > 1 ? "s" : "") + "."
-          : ". Compression stays below half its limit everywhere.")
-        + "</p>");
+      stresses.push(
+        row("Faces", whole(extent.faces)),
+        row("Faces over half the limit (tension)", whole(extent.hotTension)),
+        row("Faces over the limit (tension)",
+          over(whole(extent.overTension), extent.overTension > 0)),
+        row("Faces over half the limit (compression)",
+          whole(extent.hotCompression)),
+        row("Faces over the limit (compression)",
+          over(whole(extent.overCompression), extent.overCompression > 0)));
     }
-    if (input.limits) {
-      parts.push("<p>In a funicular shell the tension number is the one "
-        + "to watch: the form exists so the load path stays in "
-        + "compression, and tension appearing is the form drifting from "
-        + "that promise.</p>");
-    }
+    parts.push(group("Stresses", stresses));
     if (input.deflection != null) {
-      parts.push("<h3>The deflection</h3>");
-      parts.push("<p>The worst movement is <b>"
-        + (input.deflection * 1000).toFixed(2) + " mm</b>"
-        + (input.deflectionWhere ? ", found " + input.deflectionWhere : "")
-        + (input.deflectionRatio
-          ? ", which over the " + input.span.toFixed(1) + " m span is L/"
-            + Math.round(input.deflectionRatio)
-            + (input.deflectionRatio >= 250
-              ? " -- well inside the customary L/250"
-              : " -- slacker than the customary L/250")
-          : "") + ".</p>");
+      const deflection = [row("Deflection",
+        (input.deflection * 1000).toFixed(2) + " mm")];
+      if (input.deflectionWhere) {
+        deflection.push(row("Deflection at", input.deflectionWhere));
+      }
+      if (input.deflectionRatio) {
+        deflection.push(row("Span ratio",
+          over("L/" + whole(input.deflectionRatio),
+            input.deflectionRatio < SPAN_RATIO_LIMIT),
+          "L/" + SPAN_RATIO_LIMIT));
+      }
+      parts.push(group("Deflection", deflection));
     }
   }
 
   // The load path reads bundle-level data (member forces, reactions,
-  // loads), so it speaks even before any staged run exists.
+  // loads), so it shows even before any staged run exists.
   const path = [];
   if (input.forceCensus) {
     const census = input.forceCensus;
-    path.push("Of <b>" + census.members + " members</b>, "
-      + Math.round(census.compressionShare * 100)
-      + "% work in compression"
-      + (census.tensionCount
-        ? "; " + census.tensionCount + " pick"
-          + (census.tensionCount > 1 ? "" : "s") + " up tension, the "
-          + "worst at " + forceLabel(census.worstTensionKN) + " against "
-          + forceLabel(census.worstCompressionKN)
-          + " in the hardest-pushing strut."
-        : " -- every member, the funicular promise kept whole."));
+    path.push(row("Members", whole(census.members)),
+      row("In compression",
+        over(Math.round(census.compressionShare * 100) + "%",
+          census.compressionShare < COMPRESSION_SHARE_MIN),
+        "min " + Math.round(COMPRESSION_SHARE_MIN * 100) + "%"),
+      row("Members in tension", whole(census.tensionCount)));
+    if (census.tensionCount) {
+      path.push(row("Worst tension", forceLabel(census.worstTensionKN)));
+    }
+    if (census.compressionCount) {
+      path.push(row("Worst compression",
+        forceLabel(census.worstCompressionKN)));
+    }
   }
   if (input.reactionStory) {
     const story = input.reactionStory;
-    path.push("The vault stands on <b>" + story.count + " supports</b> "
-      + "carrying " + story.totalVerticalKN.toFixed(1)
-      + " kN of vertical load between them; the hardest-working takes "
-      + story.worstKN.toFixed(1) + " kN"
-      + (story.worstWhere ? ", " + story.worstWhere : "") + "."
-      + (story.steepestDeg != null
-        ? " The steepest thrust leaves at <b>"
-          + Math.round(story.steepestDeg)
-          + " degrees from vertical</b>, an outward push of "
-          + story.steepestOutwardKN.toFixed(1)
-          + " kN the abutment there must hold."
-        : ""));
+    path.push(row("Supports", whole(story.count)),
+      row("Vertical load", story.totalVerticalKN.toFixed(1) + " kN"),
+      row("Worst support", story.worstKN.toFixed(1) + " kN"));
+    if (story.worstWhere) path.push(row("Worst support at", story.worstWhere));
+    if (story.steepestDeg != null) {
+      path.push(row("Steepest thrust",
+        over(Math.round(story.steepestDeg) + "&deg;",
+          story.steepestDeg >= THRUST_LIMIT_DEG),
+        THRUST_LIMIT_DEG + "&deg;"));
+      if (story.steepestWhere) {
+        path.push(row("Steepest thrust at", story.steepestWhere));
+      }
+      path.push(row("Outward push", story.steepestOutwardKN.toFixed(1) + " kN"));
+    }
   }
   if (input.totalLoadKN != null || input.selfWeightKN != null) {
-    path.push((input.totalLoadKN != null
-      ? "The applied load totals " + input.totalLoadKN.toFixed(1)
-        + " kN over about " + input.shellArea.toFixed(1)
-        + " m<sup>2</sup> of shell"
-        + (input.loadPerM2 != null
-          ? " (" + input.loadPerM2.toFixed(1) + " kN/m<sup>2</sup>)" : "")
-      : "The shell surface is about " + input.shellArea.toFixed(1)
-        + " m<sup>2</sup>")
-      + (input.selfWeightKN != null
-        ? "; the shell itself weighs about "
-          + (input.selfWeightKN / 9.81).toFixed(1) + " tonnes."
-        : "."));
+    if (input.totalLoadKN != null) {
+      path.push(row("Load", input.totalLoadKN.toFixed(1) + " kN"));
+    }
+    path.push(row("Area", input.shellArea.toFixed(1) + " m<sup>2</sup>"));
+    if (input.loadPerM2 != null) {
+      path.push(row("Load per m<sup>2</sup>",
+        input.loadPerM2.toFixed(1) + " kN/m<sup>2</sup>"));
+    }
+    if (input.selfWeightKN != null) {
+      path.push(row("Shell weight",
+        (input.selfWeightKN / 9.81).toFixed(1) + " t"));
+    }
   }
-  if (path.length) {
-    parts.push("<h3>The load path</h3>");
-    parts.push(path.map((sentence) => "<p>" + sentence + "</p>").join(""));
-  }
+  parts.push(group("Load path", path));
 
-  if (input.limits) {
-    parts.push("<h3>The material</h3>");
-    parts.push("<p><b>" + input.limits.label + "</b>: takes about "
-      + mpa(input.limits.compression) + " in compression and "
-      + mpa(input.limits.tension) + " in tension before the limit "
-      + "(" + input.limits.basis + ").</p>");
-    if (input.density) {
-      parts.push("<p>Weighed at <b>" + Math.round(input.density)
-        + " kg/m<sup>3</sup></b>"
-        + (input.densityFromSkin
-          ? ", which is the SKIN's own density rather than the structural "
-            + "class's: the vault is cut like " + input.limits.label.toLowerCase()
-            + " and weighed as what it wears. Every load, stress and "
-            + "deflection number above follows from that weight."
-          : ", the structural material's own density.") + "</p>");
-    }
-    parts.push("<p>The shell is <b>"
-      + Math.round(input.thickness * 1000) + " mm</b> thick over a "
-      + input.span.toFixed(1) + " m span: a slenderness of 1:"
-      + Math.round(input.slenderness) + ". This material's shells "
-      + "commonly live between about 1:" + input.limits.slender[0]
-      + " (stocky) and 1:" + input.limits.slender[1]
-      + " (proven thin work), so "
-      + (input.slenderness > input.limits.slender[1]
-        ? "this is thinner than common practice: buckling, not strength, "
-          + "becomes the question."
-        : input.slenderness < input.limits.slender[0]
-          ? "this is on the stocky side: weight, not strength, is doing "
-            + "the arguing."
-          : "this sits inside the comfortable band.") + "</p>");
-    if (input.headroom != null) {
-      parts.push("<p>Linearly, the current load pattern could grow about "
-        + "<b>" + input.headroom.toFixed(1) + "x</b> before the first "
-        + "material limit is met. That is a straight-line estimate, not "
-        + "a collapse load.</p>");
-    }
-  } else {
-    parts.push("<h3>The material</h3>");
-    parts.push("<p>No limits are on file for this material key, so the "
-      + "narrative stops at the raw numbers.</p>");
+  // With no limits on file for the material key the rows are the raw
+  // figures alone, their limit cells empty and nothing red.
+  const material = [];
+  if (limits) {
+    material.push(row("Material", limits.label),
+      row("Compression limit", mpa(limits.compression)),
+      row("Tension limit", mpa(limits.tension)));
+  } else if (input.material) {
+    material.push(row("Material", escapeHtml(input.material)));
   }
+  if (input.density) {
+    material.push(row(input.densityFromSkin ? "Skin density" : "Density",
+      whole(input.density) + " kg/m<sup>3</sup>"));
+  }
+  if (input.thickness > 0) {
+    material.push(row("Thickness", whole(input.thickness * 1000) + " mm"));
+  }
+  material.push(row("Span", input.span.toFixed(1) + " m"));
+  if (input.slenderness != null) {
+    const band = limits ? limits.slender : null;
+    material.push(row("Slenderness",
+      over("1:" + whole(input.slenderness), !!band
+        && (input.slenderness > band[1] || input.slenderness < band[0])),
+      band ? "1:" + band[0] + " to 1:" + band[1] : ""));
+  }
+  if (input.headroom != null) {
+    // Under 1x the load already passes a limit, as the red peak says.
+    material.push(row("Headroom",
+      over(input.headroom.toFixed(1) + "x", input.headroom <= 1)));
+  }
+  parts.push(group("Material", material));
 
   if (input.stagesTotal) {
-    parts.push("<h3>The build</h3>");
-    parts.push("<p>" + input.stagesTotal + " staged course"
-      + (input.stagesTotal > 1 ? "s" : "") + ", "
-      + (input.unconverged.length
-        ? "of which stage" + (input.unconverged.length > 1 ? "s " : " ")
-          + input.unconverged.join(", ") + " found no equilibrium when "
-          + "struck early"
-        : "every one standing when struck at its own moment")
-      + (input.formworkKN != null
-        ? "; the formwork carries " + input.formworkKN.toFixed(1)
-          + " kN at the final stage"
-        : "") + ".</p>");
-    if (input.criticalStage && input.criticalStage.tension != null
-        && input.peakTension > 0) {
-      const ratio = input.criticalStage.tension / input.peakTension;
-      parts.push(ratio >= 1.2
-        ? "<p>The tender moment is <b>stage " + input.criticalStage.stage
-          + "</b>: struck then, tension would reach "
-          + mpa(input.criticalStage.tension) + ", about "
-          + (ratio >= 10 ? Math.round(ratio) : ratio.toFixed(1))
-          + "x the finished vault's " + mpa(input.peakTension)
-          + ". The formwork is not an accessory; it holds that promise "
-          + "until the ring closes.</p>"
-        : "<p>No stage is tenderer than the finished vault: struck-early "
-          + "tension never rises meaningfully past the final "
-          + mpa(input.peakTension) + ".</p>");
+    const build = [row("Stages", whole(input.stagesTotal))];
+    if (input.unconverged.length) {
+      build.push(row("Not in equilibrium",
+        over((input.unconverged.length > 1 ? "stages " : "stage ")
+          + input.unconverged.join(", "), true)));
+    }
+    if (input.formworkKN != null) {
+      build.push(row("Formwork at final stage",
+        input.formworkKN.toFixed(1) + " kN"));
+    }
+    const critical = input.criticalStage;
+    if (critical && critical.tension != null) {
+      build.push(row("Critical stage", String(critical.stage)),
+        row("Tension there",
+          over(mpa(critical.tension), !!limits && critical.tension >= limits.tension),
+          limits ? mpa(limits.tension) : ""));
+      if (input.peakTension > 0) {
+        const ratio = critical.tension / input.peakTension;
+        build.push(row("Against finished",
+          (ratio >= 10 ? Math.round(ratio) : ratio.toFixed(1)) + "x"));
+      }
     }
     if (input.formworkPeak) {
-      parts.push(input.formworkGrowsToEnd
-        ? "<p>The formwork's carry grows with the build to "
-          + input.formworkPeak.kN.toFixed(1) + " kN: in this staging "
-          + "model it holds everything placed until striking, and the "
-          + "shell takes the load only when it is struck.</p>"
-        : "<p>Formwork carry peaks at stage "
-          + input.formworkPeak.stage + " ("
-          + input.formworkPeak.kN.toFixed(1) + " kN)"
-          + (input.selfSupportingFrom != null
-            ? "; from stage " + input.selfSupportingFrom
-              + " the carry stays under a tenth of that peak -- the vault "
-              + "essentially carrying itself from there on."
-            : " and is still working at the final stage.") + "</p>");
+      build.push(row("Formwork peak", input.formworkPeak.kN.toFixed(1)
+        + " kN (stage " + input.formworkPeak.stage + ")"));
     }
+    if (input.selfSupportingFrom != null) {
+      build.push(row("Self-supporting from",
+        "stage " + input.selfSupportingFrom));
+    }
+    parts.push(group("Build", build));
   }
-
-  parts.push("<h3>Recommendations</h3><ul>"
-    + buildRecommendations(input).map((line) => "<li>" + line + "</li>").join("")
-    + "</ul>");
-
-  parts.push('<div class="data-note"><b>What this can and cannot tell '
-    + "you.</b> The numbers come from thrust-network form finding plus a "
-    + "linear-elastic solve of each build stage as if struck at that "
-    + "moment. It does not check buckling, creep, shrinkage, seismic or "
-    + "wind action, and the material limits are indicative code-style "
-    + "values, not project design values. It is a design companion, not "
-    + "an engineer's sign-off.</div>");
   return parts.join("");
 }
 
@@ -700,7 +632,7 @@ export function buildGraphSpecs(input, theme) {
         line: { color: "#cc2211", dash: "dot", width: 1 } });
     }
     specs.push({ id: "graph-stage-stress", data,
-      layout: layout("Peak stress per built stage, MPa") });
+      layout: layout("Peak stress, MPa") });
   }
   if (input.stageSeries.some((row) => row.displacementMM != null)) {
     specs.push({ id: "graph-stage-deflection",
@@ -708,7 +640,7 @@ export function buildGraphSpecs(input, theme) {
         y: input.stageSeries.map((row) => row.displacementMM),
         type: "scatter", mode: "lines+markers", name: "peak deflection",
         line: { color: theme.accent } }],
-      layout: layout("Peak deflection per built stage, mm",
+      layout: layout("Peak deflection, mm",
         { showlegend: false }) });
   }
   if (input.stageSeries.length) {
@@ -724,10 +656,7 @@ export function buildGraphSpecs(input, theme) {
         line: { color: theme.ink2 } });
     }
     specs.push({ id: "graph-formwork", data: handover,
-      layout: layout(weighed
-        ? "Formwork carry against placed weight, kN"
-        : "Formwork load per stage, kN",
-        { showlegend: weighed }) });
+      layout: layout("Formwork carry, kN", { showlegend: weighed }) });
   }
   if (input.tensionUtilisation != null) {
     const bands = [utilisationBand(input.tensionUtilisation),
@@ -741,10 +670,10 @@ export function buildGraphSpecs(input, theme) {
           type: "bar", name: "utilisation",
           marker: { color: bands.map((band) => bandColours[band.cls]) } },
         { x: ["tension", "compression"], y: [100, 100],
-          type: "scatter", mode: "lines", name: "the limit",
+          type: "scatter", mode: "lines", name: "limit",
           line: { color: "#cc2211", dash: "dot", width: 1 } },
       ],
-      layout: layout("Utilisation against material limits, %") });
+      layout: layout("Utilisation, %") });
   }
   if (input.memberForces && input.memberForces.length) {
     // Binned here, not by the plotting library, so the histogram is
@@ -761,7 +690,7 @@ export function buildGraphSpecs(input, theme) {
       data: [{ x: counts.map((_, i) => low + (i + 0.5) * width),
         y: counts, type: "bar", name: "members",
         marker: { color: theme.accent } }],
-      layout: layout("Member force distribution, kN",
+      layout: layout("Member force, kN",
         { showlegend: false, bargap: 0.05 }) });
   }
   return specs;
