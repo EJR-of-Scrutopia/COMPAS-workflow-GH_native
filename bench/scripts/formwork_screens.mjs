@@ -318,9 +318,15 @@ try {
   }
   await setSkin(page, 30);
 
-  // the mechanism pop-up
+  // the mechanism pop-up, its Cost and its Graphs
   await clickOn(page, "#mechanism-toggle");
   await shot(page, String(n++).padStart(2, "0") + "-mechanism");
+  await clickOn(page, '#mechanism-tabs button[data-mech-tab="mech-cost"]');
+  await waitFor(page, () => !!document.getElementById("cost-body").innerHTML, 30000);
+  await shot(page, String(n++).padStart(2, "0") + "-cost");
+  await clickOn(page, '#mechanism-tabs button[data-mech-tab="mech-graphs"]');
+  await shot(page, String(n++).padStart(2, "0") + "-graphs");
+  await clickOn(page, '#mechanism-tabs button[data-mech-tab="mech-choose"]');
   await clickOn(page, "#mechanism-popup-close");
 
   // a click on the view opens the card of the node there

@@ -109,6 +109,17 @@ export function mountMechanism({ studyName, onChange, onPopup = () => {} }) {
   }
   el.close.addEventListener("click", () => setPopup(false));
 
+  // the pop-up's tabs: Mechanism, Cost and Graphs (sections 8.1 to 8.3)
+  function showTab(id) {
+    for (const button of el.popup.querySelectorAll("[data-mech-tab]")) {
+      button.classList.toggle("active", button.dataset.mechTab === id);
+    }
+    for (const pane of el.popup.querySelectorAll(".mech-tab")) pane.classList.toggle("hidden", pane.id !== id);
+  }
+  for (const button of el.popup.querySelectorAll("[data-mech-tab]")) {
+    button.addEventListener("click", () => showTab(button.dataset.mechTab));
+  }
+
   return {
     reload, clear, chosen, entry,
     // the wires a motor changes every mechanism's pull: read them again
