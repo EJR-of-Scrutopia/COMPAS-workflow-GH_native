@@ -2473,9 +2473,9 @@ def test_the_entry_box_is_torn_down_exactly_once():
     boot = html[html.index("function bootFault(message)"):]
     boot = boot[:boot.index('window.addEventListener("error"')]
     assert "if (window.__studioReady) {" in boot
-    assert "<b>Something in the studio threw.</b>" in boot
+    assert "<b>Studio error.</b>" in boot
     assert boot.index("if (window.__studioReady) {") \
-        < boot.index("<b>The studio stopped setting itself up.</b>"), (
+        < boot.index("<b>Studio failed to start.</b>"), (
         "the ready check has to come FIRST or the boot message wins anyway")
 
 

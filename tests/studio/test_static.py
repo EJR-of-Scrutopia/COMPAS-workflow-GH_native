@@ -1262,7 +1262,7 @@ def test_the_analysis_and_study_controls_say_a_state_not_a_sentence():
         "lets the colour do the talking", "Arrow length multiplier",
         "On; press to put it down", "Raise this lens",
         "The net, the formwork and the machine are drawn",
-        '" (verified)"', "Failed to load study: ",
+        "Failed to load study: ",
         " vaults in this folder", "Click to stop following.",
         "Grasshopper pushes are ignored",
         "older code than is on disk", "(stills to the output folder",
@@ -4818,7 +4818,7 @@ def test_the_loaded_options_are_what_went_into_the_bundle_url_and_only_for_the_w
         "if (state.bundle && formworkTab) formworkTab.reload();")
 
 
-def test_no_title_on_the_page_runs_past_eight_words():
+def test_no_title_on_the_page_runs_past_five_words():
     """His ruling of 11 October 2026: "i dont think we need all this
     descriptive text. and that goes for all of the vaulted app. if theres
     over explanation of things instead of just showing the data with red
@@ -4832,8 +4832,8 @@ def test_no_title_on_the_page_runs_past_eight_words():
     page = (STATIC / "index.html").read_text(encoding="utf-8")
     titles = re.findall(r'(?<![\w-])title="([^"]*)"', page)
     assert len(titles) > 150, "the count reads the page's own titles"
-    long = [t for t in map(_html.unescape, titles) if len(t.split()) > 8]
-    assert not long, "titles over eight words: " + repr(long)
+    long = [t for t in map(_html.unescape, titles) if len(t.split()) > 5]
+    assert not long, "titles over five words: " + repr(long)
     # The one panel.js gives every dial reading.
     panel = (STATIC / "panel.js").read_text(encoding="utf-8")
     assert 'value.title = "Type a value";' in panel
@@ -4871,6 +4871,36 @@ def test_a_disabled_panel_button_looks_disabled():
     rule = "#panel button:disabled { color: var(--ink-3); cursor: default; border-color: var(--line); }"
     assert rule in css
     assert css.index("#panel button:hover") < css.index(rule), "after :hover, which weighs the same"
+
+
+def test_the_final_review_of_the_sweep_is_answered():
+    """Found by the final review of the text sweep (11 October 2026)."""
+
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    page = (STATIC / "index.html").read_text(encoding="utf-8")
+    css = (STATIC / "studio.css").read_text(encoding="utf-8")
+    # the live graphs say when the density is the skin's, in one word
+    build = _function_body(js, "buildLiveGraphs")
+    assert "const fromSkin = bundle.provenance.density_from_skin" in build
+    assert 'Math.round(density) + " kg/m3" + (fromSkin ? " skin" : "")' in build
+    # a taper and a rigid-block run not made are not faults: not red
+    assert '%, drawing only", true]' not in js
+    assert '["taper", Math.round(state.taper * 100) + "%, drawing only"]' in js
+    assert "verdict.stands === false]," in js
+    # the clamped figures have no limit of their own to be red against
+    assert "tess.clamped_max_m * 1000 > 5.0" not in js and "tess.clamped_median_m * 1000 > 5.0" not in js
+    # one notation for a span ratio
+    assert '", 1 / " + Math.round(' not in js and js.count('", L/" + Math.round(v.deflection.span_over_deflection)') == 2
+    # the study list marks a verified study again
+    assert 'option.textContent = study.export + (study.has_verification ? " (verified)" : "");' in js
+    # the page's own banners in a few words
+    for gone in ("It is not filling in", "The page is built and the rest of it still works",
+                 "The panel is half-built"):
+        assert gone not in page, gone
+    assert "<b>Server out of date.</b>" in page and "<b>Studio error.</b>" in page
+    assert "<b>Studio failed to start.</b>" in page
+    # no rule for a line that is gone
+    assert "#fixture-readout" not in css
 
 
 def test_the_data_sheets_tables_line_their_columns_up():

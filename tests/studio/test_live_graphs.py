@@ -592,8 +592,8 @@ def test_the_header_is_the_study_its_material_thickness_and_density():
     js = (STATIC / "studio.js").read_text(encoding="utf-8")
     build = _body(js, "async function buildLiveGraphs()")
     assert ('study.textContent = [bundle.export, bundle.material,\n'
-            '        Math.round(bundle.provenance.thickness * 1000) + " mm", '
-            'Math.round(density) + " kg/m3"].join("  ");') in build
+            '        Math.round(bundle.provenance.thickness * 1000) + " mm",\n'
+            '        Math.round(density) + " kg/m3" + (fromSkin ? " skin" : "")].join("  ");') in build
     assert "liveSkinWord" not in js and "weighed at" not in build
     html = (STATIC / "index.html").read_text(encoding="utf-8")
     css = (STATIC / "studio.css").read_text(encoding="utf-8")

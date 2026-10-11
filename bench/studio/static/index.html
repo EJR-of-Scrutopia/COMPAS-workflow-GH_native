@@ -1070,12 +1070,7 @@
     // so this is the server and not the cache.
     stamp.textContent = "stale";
     stamp.className = "stale";
-    shout("<b>The server is older than this page.</b> It is not filling in "
-      + "the build stamp, which means it started before that was added, and "
-      + "it is handing the browser un-versioned files. Close its window and "
-      + "run <code>bench/studio/serve.py</code> again. If its window is "
-      + "already gone, the process is still running: the new one will stop "
-      + "it for you.");
+    shout("<b>Server out of date.</b> Run <code>bench/studio/serve.py</code> again.");
   });
 
   // A module-level throw halfway down studio.js leaves half a panel built
@@ -1093,18 +1088,12 @@
     // Saying "half-built" there sent Param hunting a cached script for a
     // fault that was in a slider's entry box.
     if (window.__studioReady) {
-      shout("<b>Something in the studio threw.</b> "
-        + (message || "An error was thrown")
-        + ". The page is built and the rest of it still works; whatever you "
-        + "had just done is the thing that failed. The full story is in "
-        + "<code>bench/studio/diagnostics.log</code>.");
+      shout("<b>Studio error.</b> " + (message || "An error was thrown")
+        + ". <code>bench/studio/diagnostics.log</code>");
       return;
     }
-    shout("<b>The studio stopped setting itself up.</b> "
-      + (message || "An error was thrown")
-      + ". The panel is half-built. If the build stamp above is not the one "
-      + "you expect, this is a cached script: hard-reload (Ctrl+Shift+R on "
-      + "a computer, or clear this site's data on a tablet).");
+    shout("<b>Studio failed to start.</b> " + (message || "An error was thrown")
+      + ". Hard-reload: Ctrl+Shift+R.");
   }
   window.addEventListener("error", function (event) {
     bootFault(event && event.message);

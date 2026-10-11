@@ -1577,8 +1577,6 @@ body.recording #scale-bar { display: none; }
 body.stilling #fixture-panel { display: none; }
 #fixture-name { padding: 8px 10px 0; color: var(--ink);
   font-size: 12px; }
-#fixture-readout { padding: 6px 10px 10px; font-size: 11px;
-  color: var(--ink-3); }
 /* ONE DIAL A ROW. The eight-column default puts two dials side by
    side, which a 256 px card has no room for: photographed on the
    first run, Warmth showed a sliver of track and no reading at all

@@ -9081,11 +9081,17 @@ async function buildLiveGraphs() {
       liveGraphs.cards.delete(id);
     }
     // the study, its material, thickness and density, no sentence (his
-    // ruling of 11 October 2026)
+    // ruling of 11 October 2026), and the one word that says the density is
+    // the skin's: "concrete 8940 kg/m3" read as concrete's own (found by the
+    // final review of the sweep)
     const study = document.getElementById("graphs-study");
     if (study) {
+      const structural = STRUCTURAL_DENSITIES[bundle.material];
+      const fromSkin = bundle.provenance.density_from_skin
+        || (structural && Math.abs(density - structural) > 1);
       study.textContent = [bundle.export, bundle.material,
-        Math.round(bundle.provenance.thickness * 1000) + " mm", Math.round(density) + " kg/m3"].join("  ");
+        Math.round(bundle.provenance.thickness * 1000) + " mm",
+        Math.round(density) + " kg/m3" + (fromSkin ? " skin" : "")].join("  ");
     }
     // Every card is in place BEFORE any plot is drawn: the cards share the column's height, and a card
     // appended after an earlier one was drawn left that one clipped to
@@ -11974,10 +11980,10 @@ function updateHud() {
   if (v && v.thickness && Math.abs(v.thickness - provenanceThickness) > 1e-9) {
     rows.push(["verified at", Math.round(v.thickness * 1000) + " mm", true]);
   }
-  // The analysis used a uniform thickness, so a taper is a picture that
-  // disagrees with its own numbers.
+  // The analysis used a uniform thickness, so a taper is a picture only: a
+  // choice he set, not a fault (found by the final review of the sweep).
   if (state.taper > 0) {
-    rows.push(["taper", Math.round(state.taper * 100) + "%, drawing only", true]);
+    rows.push(["taper", Math.round(state.taper * 100) + "%, drawing only"]);
   }
   if (v && v.stress) {
     rows.push(["compression", (v.stress.peak_compression / 1e6).toFixed(2) + " MPa"]);
@@ -11985,7 +11991,7 @@ function updateHud() {
       v.stress.utilisation > 1]);
     rows.push(["deflection", (v.displacement.peak_magnitude * 1000).toFixed(2) + " mm"
       + (v.deflection && v.deflection.span_over_deflection
-        ? ", 1 / " + Math.round(v.deflection.span_over_deflection) : "")]);
+        ? ", L/" + Math.round(v.deflection.span_over_deflection) : "")]);
   } else {
     rows.push(["verification", "none"]);
   }
@@ -12206,10 +12212,10 @@ function renderDataPanel(v) {
     rows.push(["cap points clamped", tess.clamped_points + " of " + capPoints]);
     if (typeof tess.clamped_max_m === "number"
         && typeof tess.clamped_median_m === "number") {
-      rows.push(["clamped worst", (tess.clamped_max_m * 1000).toFixed(1) + " mm",
-        tess.clamped_max_m * 1000 > 5.0]);
-      rows.push(["clamped median", (tess.clamped_median_m * 1000).toFixed(1) + " mm",
-        tess.clamped_median_m * 1000 > 5.0]);
+      // no limit of their own to be red against (found by the final review
+      // of the sweep: 5 mm was the chord target, borrowed)
+      rows.push(["clamped worst", (tess.clamped_max_m * 1000).toFixed(1) + " mm"]);
+      rows.push(["clamped median", (tess.clamped_median_m * 1000).toFixed(1) + " mm"]);
     } else {
       rows.push(["clamped by", "not measured"]);
     }
@@ -12272,13 +12278,14 @@ function renderDataPanel(v) {
     craHeading.textContent = "CRA rigid-block verdict";
     content.appendChild(craHeading);
     const rows = [
-      // Standing is plain; anything else is bad.
+      // Not standing is bad; a run not made is no result, not a fault
+      // (found by the final review of the sweep).
       ["verdict", verdict.stands === true
         ? "stands"
         : verdict.stands === false
           ? "does not stand (" + verdict.status + ")"
           : "not run: " + (verdict.message || verdict.status),
-        verdict.stands !== true],
+        verdict.stands === false],
       ["mu", typeof verdict.mu === "number" ? verdict.mu.toFixed(2) : String(verdict.mu)],
       ["blocks", String(verdict.blocks)],
       ["interfaces", String(verdict.interfaces)],
@@ -12317,7 +12324,7 @@ function renderDataPanel(v) {
   if (v.displacement) {
     rows.push(["deflection", (v.displacement.peak_magnitude * 1000).toFixed(2) + " mm"
       + (v.deflection && v.deflection.span_over_deflection
-        ? ", 1 / " + Math.round(v.deflection.span_over_deflection) : "")]);
+        ? ", L/" + Math.round(v.deflection.span_over_deflection) : "")]);
   }
   if (v.stress) {
     rows.push(["compression", (v.stress.peak_compression / 1e6).toFixed(2) + " MPa"]);
@@ -12491,7 +12498,9 @@ function populateStudySelect(studies, selection) {
   for (const study of studies) {
     const option = document.createElement("option");
     option.value = study.export;
-    option.textContent = study.export;
+    // a verified study marked in the list, a word of data (found by the
+    // final review of the sweep)
+    option.textContent = study.export + (study.has_verification ? " (verified)" : "");
     select.appendChild(option);
     names.push(study.export);
   }

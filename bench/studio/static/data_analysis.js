@@ -448,6 +448,8 @@ export function buildAnalysisHtml(input) {
     if (input.compressionWhere) {
       stresses.push(row("Compression at", input.compressionWhere));
     }
+    // the verification file's peaks, placed nowhere: where they come from
+    if (input.peaksOnly && !input.hasStage) stresses.push(row("Source", "verification"));
     if (input.stressExtent) {
       const extent = input.stressExtent;
       stresses.push(
@@ -549,9 +551,10 @@ export function buildAnalysisHtml(input) {
   material.push(row("Span", input.span.toFixed(1) + " m"));
   if (input.slenderness != null) {
     const band = limits ? limits.slender : null;
+    // thinner than proven work is the concern; a stocky shell is only heavy
+    // (found by the final review of the sweep)
     material.push(row("Slenderness",
-      over("1:" + whole(input.slenderness), !!band
-        && (input.slenderness > band[1] || input.slenderness < band[0])),
+      over("1:" + whole(input.slenderness), !!band && input.slenderness > band[1]),
       band ? "1:" + band[0] + " to 1:" + band[1] : ""));
   }
   if (input.headroom != null) {

@@ -306,8 +306,9 @@ CHECK = textwrap.dedent("""
     same(row(thin, "Slenderness"), [red("1:400"), "1:8 to 1:300"],
       "thinner than the material's band is red");
     const stocky = buildAnalysisHtml({ ...input, slenderness: 5 });
-    same(row(stocky, "Slenderness"), [red("1:5"), "1:8 to 1:300"],
-      "stockier than the material's band is red");
+    same(row(stocky, "Slenderness"), ["1:5", "1:8 to 1:300"],
+      "stockier than the band is not red: the old code only ever warned of too thin "
+      + "(found by the final review of the sweep)");
     const short = buildAnalysisHtml({ ...input, headroom: 0.8 });
     same(row(short, "Headroom"), [red("0.8x"), ""],
       "under 1x the load is already past a limit");
@@ -376,8 +377,11 @@ CHECK = textwrap.dedent("""
     same(row(peaks, "Peak tension"), [red("2.00 MPa"), "1.30 MPa"],
       "a verification peak over its limit is red");
     same(row(peaks, "Deflection"), ["20.00 mm", ""], "the verification peak");
-    for (const gone of ["Tension at", "No staged run", "verification",
-        "<p>"]) {
+    // where the figures come from, a value and not a sentence (found by the
+    // final review of the sweep: the old "peaks only" line had gone with no
+    // trace)
+    same(row(peaks, "Source"), ["verification", ""], "the peaks' source");
+    for (const gone of ["Tension at", "No staged run", "<p>"]) {
       expect(!peaks.includes(gone), "peaks only, no " + gone);
     }
 
