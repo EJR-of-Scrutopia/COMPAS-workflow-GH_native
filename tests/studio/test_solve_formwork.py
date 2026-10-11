@@ -139,6 +139,13 @@ def test_the_entry_runs_as_its_own_process_reporting_progress(tmp_path):
     assert done.returncode == 0, done.stderr
     lines = [line for line in done.stdout.splitlines() if line.startswith("progress ")]
     assert [line.split()[1:3] for line in lines] == [[str(k), "7"] for k in range(1, 8)]
+    # and each capture's figures, as JSON, for the answer as the run goes
+    # (his choice of 11 October 2026)
+    figures = [line.split(None, 2) for line in done.stdout.splitlines()
+               if line.startswith("figures ")]
+    assert [int(parts[1]) for parts in figures] == list(range(1, 8))
+    assert {"wire", "offset_max", "offset_mean", "tree_utilisation", "tree_newtons",
+            "tendons"} <= set(json.loads(figures[-1][2]))
     document = json.loads((tmp_path / "out.json").read_text(encoding="utf-8"))
     assert len(document["captures"]) == 7
 

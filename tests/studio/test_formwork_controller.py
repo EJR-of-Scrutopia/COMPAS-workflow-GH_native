@@ -202,6 +202,23 @@ def test_the_answer_greys_when_out_of_date_and_its_needed_goes_to_the_wire():
     assert "camera.position.add(target.clone().sub(controls.target));" in aim
 
 
+def test_the_answer_fills_in_as_the_run_goes():
+    # his choice of 11 October 2026: while a run goes, the answer is the run's
+    # figures so far, never the run before it
+    watch = _inner(JS, "watch")
+    assert "tab.live = run.figures || [];" in watch and "renderAnswer();" in watch
+    answer = _inner(JS, "renderAnswer")
+    assert answer.index("if (tab.watcher != null) {") < answer.index("const stale =")
+    assert ("liveAnswer(tab.live, liveHave(), Number(el.tolerance.value), "
+            "Number(el.pull.value))") in answer
+    assert "tab.live = null;" in _inner(JS, "stopWatching")
+    # and no "Run again" over the run that is going
+    assert 'outOfDate().filter((line) => !line.startsWith("Run again"))' in _inner(JS, "renderWarnings")
+    route = (STATIC.parent / "app.py").read_text(encoding="utf-8")
+    assert '"figures": run.get("figures", []),' in route
+    assert "def progress(done, total, what, figures=None):" in route
+
+
 def test_colour_by_is_a_dropdown_and_values_a_button_lit_when_on():
     # his choice of 11 October 2026: Colour by a dropdown, and Values, Compare
     # and Weakest three equal buttons lit when on

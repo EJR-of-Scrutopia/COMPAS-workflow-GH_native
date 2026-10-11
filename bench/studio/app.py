@@ -1471,7 +1471,7 @@ def create_app(runner=None, cra_runner=None, formwork_runner=None) -> FastAPI:
                 "thickness": thickness, "source": source,
                 "kind": "formwork",
                 "state": "queued", "stage": 0, "of": 0, "phase": "queued",
-                "message": "",
+                "message": "", "figures": [],
             }
 
         def work():
@@ -1499,8 +1499,12 @@ def create_app(runner=None, cra_runner=None, formwork_runner=None) -> FastAPI:
                 run["message"] = ("laying the net out, raising it and tiling it: several "
                                   "minutes on a large study")
 
-                def progress(done, total, what):
+                # each capture's figures, as the run goes (his choice of 11
+                # October 2026: the answer fills in from them)
+                def progress(done, total, what, figures=None):
                     run["stage"], run["of"], run["message"] = done, total, what
+                    if figures is not None:
+                        run["figures"].append(dict(figures, capture=done))
 
                 formwork_sim.run_formwork(
                     inputs, cut.arrays, cut.binding, cut.plan, thickness,
@@ -1630,6 +1634,8 @@ def create_app(runner=None, cra_runner=None, formwork_runner=None) -> FastAPI:
             # "staged" or "formwork": which run a 409 is naming
             "kind": run.get("kind", ""),
             "message": run["message"],
+            # a formwork run's figures so far, capture by capture
+            "figures": run.get("figures", []),
             "bundle_url": "/api/studies/{}/bundle?material={}&pattern={}&size={}&thickness={}{}".format(
                 urllib.parse.quote(run["export"]), run["material"],
                 urllib.parse.quote(run["pattern"]), run["size"],

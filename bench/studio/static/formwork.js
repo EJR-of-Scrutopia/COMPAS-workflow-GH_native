@@ -8,8 +8,8 @@
 
 import {
   answer, answerHtml, captureLabel, captureTimes, colourKey, formworkPickHtml, modelLabels,
-  formworkWarnings, frameLine, frameLineHtml, labelsShown, nextScene, paintOverlay, playhead,
-  readSim, recordingCaption, weakestAt, withWall,
+  formworkWarnings, frameLine, frameLineHtml, labelsShown, liveAnswer, nextScene, paintOverlay,
+  playhead, readSim, recordingCaption, weakestAt, withWall,
 } from "./formwork_model.js";
 import { spreadLabels } from "./labels.js";
 import { costHtml, graphsHtml } from "./run_popup_model.js";
@@ -135,9 +135,22 @@ export function mountFormwork({ studyName, studyOptions, mechanism, view, hooks 
     return formworkWarnings(tab.sim, { mechanism: mechanism.chosen(), pullIn: Number(el.pull.value) });
   }
 
+  // one spool's pull of the mechanism chosen, which a run going is made with
+  function liveHave() {
+    const entry = mechanism.entry();
+    return entry ? entry.have_newtons : null;
+  }
+
   // The answer (spec section 4.3), greyed while the run is out of date.
   function renderAnswer() {
     if (tab.loading) { el.answer.innerHTML = ""; return; }
+    // while a run goes: its figures so far, never the run before it (his
+    // choice of 11 October 2026)
+    if (tab.watcher != null) {
+      const live = liveAnswer(tab.live, liveHave(), Number(el.tolerance.value), Number(el.pull.value));
+      el.answer.innerHTML = answerHtml(live);
+      return;
+    }
     const stale = outOfDate().some((line) => line.startsWith("Run again"));
     el.answer.innerHTML = answerHtml(answer(tab.judged, Number(el.tolerance.value)), { stale });
   }
@@ -147,7 +160,10 @@ export function mountFormwork({ studyName, studyOptions, mechanism, view, hooks 
   // the 6 MB document loaded).
   function renderWarnings() {
     if (tab.loading) { el.warnings.innerHTML = ""; return; }
-    el.warnings.innerHTML = outOfDate()
+    // no "Run again" over the run that is going
+    const lines = tab.watcher != null
+      ? outOfDate().filter((line) => !line.startsWith("Run again")) : outOfDate();
+    el.warnings.innerHTML = lines
       .map((line) => `<div class="cablenet-warning">${esc(line)}</div>`).join("");
   }
 
@@ -518,6 +534,7 @@ export function mountFormwork({ studyName, studyOptions, mechanism, view, hooks 
   function stopWatching() {
     if (tab.watcher != null) clearInterval(tab.watcher);
     tab.watcher = null;
+    tab.live = null;
   }
 
   function watch(runId) {
@@ -528,6 +545,8 @@ export function mountFormwork({ studyName, studyOptions, mechanism, view, hooks 
         if (tab.watcher !== poll) return;
         el.runStatus.textContent = run.of > 0 ? `capture ${run.stage} of ${run.of}`
           : run.state;
+        tab.live = run.figures || [];
+        renderAnswer();
         if (run.state === "done") {
           stopWatching();
           el.run.disabled = false;
@@ -542,15 +561,22 @@ export function mountFormwork({ studyName, studyOptions, mechanism, view, hooks 
           stopWatching();
           el.run.disabled = false;
           el.runStatus.textContent = run.message;
+          renderWarnings();
+          renderAnswer();
         }
       } catch (error) {
         if (tab.watcher !== poll) return;
         stopWatching();
         el.run.disabled = false;
         el.runStatus.textContent = error.message;
+        renderWarnings();
+        renderAnswer();
       }
     }, 1000);
     tab.watcher = poll;
+    // the run before it goes from the answer the moment this one starts
+    renderWarnings();
+    renderAnswer();
   }
 
   // The run takes the mechanism chosen in the pop-up; the server cuts the net

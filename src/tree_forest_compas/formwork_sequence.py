@@ -340,7 +340,8 @@ def _raise(model, net, plan, progress, total):
         captures.append(_capture(model, rest, contacts, reel, frame.net, frame.trees,
                                  frame.phase, float(frame.time), None, None))
         if progress is not None:
-            progress(len(captures), total, "{} at machine time {:g}".format(frame.phase, frame.time))
+            progress(len(captures), total, "{} at machine time {:g}".format(frame.phase, frame.time),
+                     captures[-1])
     return captures, needs, x, contacts, reel
 
 
@@ -372,7 +373,7 @@ def _jack_and_tile(model, net, progress, total, captures, x, contacts, reel, wir
         captures.append(_capture(model, rest, contacts, reel, model.design, tree_x,
                                  "holds", 100.0, None, None))
         if progress is not None:
-            progress(len(captures), total, "the holds jacked to the design")
+            progress(len(captures), total, "the holds jacked to the design", captures[-1])
     for row in model.rows:
         for quarter, skin in enumerate(row.quarters, start=1):
             loads = model.weight + np.asarray(skin, dtype=float)
@@ -382,11 +383,49 @@ def _jack_and_tile(model, net, progress, total, captures, x, contacts, reel, wir
             captures.append(_capture(model, rest, contacts, reel, model.design, tree_x,
                                      "tiling", None, row.name, quarter))
             if progress is not None:
-                progress(len(captures), total, "row {} quarter {}".format(row.name, quarter))
+                progress(len(captures), total, "row {} quarter {}".format(row.name, quarter),
+                         captures[-1])
     return captures
 
 
-def simulate(model, progress=None, state=None):
+def _reporter(progress, figures, offset, total, live):
+    """The callback the passes call with (done, total, what, capture): the
+    count told on to progress, offset into the run's whole count, and while
+    live the capture's figures to figures."""
+
+    if progress is None and figures is None:
+        return None
+
+    def told(done, _, what, capture=None):
+        if progress is not None:
+            progress(offset + done, total, what)
+        if figures is not None and live and capture is not None:
+            figures(offset + done, capture_figures(capture))
+    return told
+
+
+def capture_figures(capture):
+    """What the studio's answer reads from one capture, sent as the run goes
+    (his choice of 11 October 2026): the largest wire tension, N, and its
+    wire; the tree member judged worst, its utilisation and its force, N; the
+    largest and the mean offset, mm; and how many tendons the run carries."""
+
+    wires = np.asarray(capture.wire_tension, dtype=float)
+    util = np.asarray(capture.tree_utilisation, dtype=float)
+    k = int(np.argmax(util)) if util.size else -1
+    offsets = np.asarray(capture.deviation, dtype=float)
+    return {
+        "wire": float(wires.max()) if wires.size else 0.0,
+        "wire_index": int(np.argmax(wires)) if wires.size else -1,
+        "tree_utilisation": float(util[k]) if k >= 0 else 0.0,
+        "tree_newtons": abs(float(capture.tree_axial[k])) if k >= 0 else 0.0,
+        "offset_max": float(offsets.max()) if offsets.size else 0.0,
+        "offset_mean": float(offsets.mean()) if offsets.size else 0.0,
+        "tendons": int(len(capture.tendon_tension)),
+    }
+
+
+def simulate(model, progress=None, state=None, figures=None):
     """The whole sequence (module docstring), and the thinnest standard tube
     wall that holds every capture. With motors shared, the raise is first run
     with every wire on its own motor to learn what each wire needs; the
@@ -395,7 +434,10 @@ def simulate(model, progress=None, state=None):
     at every step. state, a HoldState from a run of the same model, starts at
     the hold: only the rods' jacking and the tiling are worked out (spec
     2026-10-11 one Cable net tab, section 7). progress, when given, is called
-    with (captures done, captures in all, what)."""
+    with (captures done, captures in all, what); figures, when given, with
+    (captures done, capture_figures of that capture), for every capture of the
+    run's own pass (a shared first pass, which only learns the needs, sends
+    none)."""
 
     if not model.frames:
         raise ne.EngineError("no frames: the raise follows the formwork's trees, and there "
@@ -413,8 +455,7 @@ def simulate(model, progress=None, state=None):
         rest_lengths, cut_force, groups = state.rest_lengths, state.cut_force, state.groups
         net = ne.ropes(model.edges, rest_lengths, model.ea)
         kept = len(state.captures)
-        told = None if progress is None else (
-            lambda done, _, what: progress(done - kept, per_run - kept, what))
+        told = _reporter(progress, figures, -kept, per_run - kept, True)
         captures, _, state, holds = _run(model, net, None, told, start=state)
     else:
         rest_lengths, cut_force = cut(model)
@@ -423,12 +464,11 @@ def simulate(model, progress=None, state=None):
         # the raise's, whatever rods go on after it
         total = per_run + (len(model.frames) if shared else 0)
 
-        def report(offset):
-            if progress is None:
-                return None
-            return lambda done, _, what: progress(offset + done, total, what)
+        def report(offset, live):
+            return _reporter(progress, figures, offset, total, live)
 
-        captures, needs, state, holds = _run(model, net, None, report(0), raise_only=shared)
+        captures, needs, state, holds = _run(model, net, None, report(0, not shared),
+                                             raise_only=shared)
         groups = None
         if shared:
             by_wire = {node: [c.reel[i] for c in captures] for i, node in enumerate(rim)}
@@ -437,7 +477,7 @@ def simulate(model, progress=None, state=None):
                       for machine in model.machines]
             motors = [group for machine in groups for group in machine]
             plan = [pg.common_reels(step, motors) for step in needs]
-            captures, _, state, holds = _run(model, net, plan, report(len(model.frames)))
+            captures, _, state, holds = _run(model, net, plan, report(len(model.frames), True))
         state = state._replace(rest_lengths=rest_lengths, cut_force=cut_force, groups=groups)
     thinnest = None
     for wall in sorted(tr.STANDARD_WALLS):

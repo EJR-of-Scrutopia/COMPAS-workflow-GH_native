@@ -50,6 +50,20 @@ out.none = [m.answer(null, 20), m.answerHtml(null)];
 out.held = [m.answer(held, 20), m.answerHtml(m.answer(held, 20))];
 const treesOver = m.readSim(%(treesOver)s);
 const judged = m.withWall(sim, 3.2);
+// the answer as the run goes (his choice of 11 October 2026): the worst
+// wire and the worst tree so far, the offsets at the latest capture, the
+// pull from the dial and the tendons the run carries
+const figures = [
+  { capture: 1, wire: 500, wire_index: 0, offset_max: 90, offset_mean: 40, tree_utilisation: 0.2,
+    tree_newtons: 400, tendons: 2 },
+  { capture: 2, wire: 1500, wire_index: 1, offset_max: 30, offset_mean: 12, tree_utilisation: 1.5,
+    tree_newtons: 3000, tendons: 2 },
+  { capture: 3, wire: 900, wire_index: 0, offset_max: 25, offset_mean: 8, tree_utilisation: 0.5,
+    tree_newtons: 1000, tendons: 2 }];
+out.live = m.liveAnswer(figures, 1200, 20, 300);
+out.liveHtml = m.answerHtml(out.live);
+out.liveNone = [m.liveAnswer([], 1200, 20, 300), m.liveAnswer(null, null, 20, 0)];
+out.liveNoMechanism = m.answerHtml(m.liveAnswer(figures, null, 20, 0));
 out.trees = { over: m.answer(treesOver, 20).trees, overHtml: m.answerHtml(m.answer(treesOver, 20)),
               within: m.answer(judged, 20).trees, withinHtml: m.answerHtml(m.answer(judged, 20)) };
 const chosen = %(chosen)s;
@@ -206,3 +220,24 @@ def test_a_new_wall_judges_the_trees_again_from_the_runs_own_forces(out):
     assert wall["scale"] == pytest.approx(900.0 / resistance, rel=1e-5)
     # the run as read is left as it was
     assert wall["untouched"] == pytest.approx([0.5])
+
+
+def test_the_answer_fills_in_as_the_run_goes(out):
+    # his choice of 11 October 2026
+    live = out["live"]
+    assert live["needed"]["newtons"] == 1500 and live["needed"].get("capture") is None
+    assert live["gap"] == {"newtons": 300, "missing": True}
+    assert live["form"] == {"mm": 25, "tolerance": 20, "within": False}
+    assert live["mean"] == {"mm": 8, "within": True}
+    assert live["trees"]["newtons"] == 3000 and live["trees"]["utilisation"] == 1.5
+    assert live["trees"]["capacity"] == 2000
+    assert live["pull"] == {"newtons": 300, "tendons": 2, "total": 600}
+    html = out["liveHtml"]
+    # not greyed, and Needed is no link while there is no capture to go to
+    assert 'class="answer"' in html and "data-capture" not in html
+    assert "<tr><th>Needed</th><td>1,500 N</td></tr>" in html
+    assert '<tr><th>Trees load</th><td><span class="over">3,000 N</span></td></tr>' in html
+    assert "<tr><th>Pull total</th><td>600 N</td></tr>" in html
+    assert out["liveNone"] == [None, None]
+    assert "<tr><th>Have</th><td>none</td></tr>" in out["liveNoMechanism"]
+    assert "Pull" not in out["liveNoMechanism"]

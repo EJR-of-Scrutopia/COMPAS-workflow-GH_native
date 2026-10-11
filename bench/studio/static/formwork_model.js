@@ -785,6 +785,38 @@ export function answer(sim, tolerance) {
   return { needed, have, gap, form, mean, trees: treesLoad(sim), pull };
 }
 
+// The answer as the run goes (his choice of 11 October 2026), from each
+// capture's figures so far (formwork_sequence.capture_figures): the worst
+// wire and the worst tree member so far, the offsets at the latest capture,
+// one spool's pull of the mechanism chosen (have, N, or null), and the
+// dial's pull on every tendon the run carries; null before the first
+// capture. Needed has no capture to go to until the run lands.
+export function liveAnswer(figures, have, tolerance, pull) {
+  const list = figures || [];
+  if (!list.length) return null;
+  let needed = null;
+  let trees = null;
+  for (const f of list) {
+    if (!needed || f.wire > needed.newtons) needed = { newtons: f.wire, wire: f.wire_index };
+    if (!trees || f.tree_utilisation > trees.utilisation) {
+      trees = { utilisation: f.tree_utilisation, newtons: f.tree_newtons,
+                capacity: f.tree_utilisation > 0 ? f.tree_newtons / f.tree_utilisation : null };
+    }
+  }
+  const last = list[list.length - 1];
+  const limit = Number(tolerance);
+  const spool = have == null ? null : { newtons: Number(have) };
+  const gap = spool
+    ? { newtons: Math.abs(needed.newtons - spool.newtons), missing: needed.newtons > spool.newtons }
+    : null;
+  const pulled = Number(pull) > 0 && last.tendons > 0
+    ? { newtons: Number(pull), tendons: last.tendons, total: Number(pull) * last.tendons } : null;
+  return { needed, have: spool, gap,
+           form: { mm: last.offset_max, tolerance: limit, within: last.offset_max <= limit },
+           mean: { mm: last.offset_mean, within: last.offset_mean <= limit },
+           trees, pull: pulled };
+}
+
 // The tree member the run judges worst, at the capture it is worst: its
 // force, N, what its tube takes there and the ratio; null with no trees.
 function treesLoad(sim) {
@@ -820,8 +852,8 @@ export function answerHtml(a, { stale = false } = {}) {
     `<tr${attrs}><th>${escapeHtml(name)}</th><td>${value}</td></tr>`;
   const rows = [];
   if (a.needed) {
-    rows.push(row("Needed", grouped(a.needed.newtons),
-                  ` data-capture="${a.needed.capture}" data-wire="${a.needed.wire}"`));
+    rows.push(row("Needed", grouped(a.needed.newtons), a.needed.capture == null ? ""
+      : ` data-capture="${a.needed.capture}" data-wire="${a.needed.wire}"`));
   }
   rows.push(row("Have", a.have ? grouped(a.have.newtons) : "none"));
   if (a.gap) rows.push(row(a.gap.missing ? "Missing" : "Spare", short(grouped(a.gap.newtons), a.gap.missing)));

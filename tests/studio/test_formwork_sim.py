@@ -272,3 +272,23 @@ def test_the_run_hands_the_engine_its_tendons_and_pull_and_writes_every_edges_fa
     written = json.loads((tmp_path / "sim.json").read_text(encoding="utf-8"))
     assert written["tendons_reason"] == formwork_sim.NO_TENDONS
     assert written["net"]["families"] is None
+
+
+def test_the_runner_hands_each_captures_figures_to_progress(tmp_path, monkeypatch):
+    # his choice of 11 October 2026: the answer fills in as the run goes
+    import json as _json
+    script = tmp_path / "fake_solve.py"
+    script.write_text(
+        "import json, sys\n"
+        "print('progress 1 2 raise at machine time 30', flush=True)\n"
+        "print('figures 1 ' + json.dumps({'wire': 5.0}), flush=True)\n"
+        "print('progress 2 2 hold at machine time 100', flush=True)\n"
+        "open(sys.argv[2], 'w').write(json.dumps({'captures': []}))\n", encoding="utf-8")
+    monkeypatch.setattr(formwork_sim, "SOLVE_FORMWORK", script)
+    heard = []
+    run = formwork_sim._subprocess_runner(Path(sys.executable))
+    assert run({}, lambda *args: heard.append(args)) == {"captures": []}
+    assert heard == [(1, 2, "raise at machine time 30"),
+                     (1, 2, "raise at machine time 30", {"wire": 5.0}),
+                     (2, 2, "hold at machine time 100")]
+    assert _json.dumps(heard[1][3]) == '{"wire": 5.0}'
