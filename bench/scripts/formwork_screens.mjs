@@ -26,7 +26,7 @@ const STUDIO_URL = process.env.STUDIO_URL || "http://127.0.0.1:8601";
 const BROWSER_EXE = process.env.BROWSER_EXE || path.join(process.env.LOCALAPPDATA || "",
   "ms-playwright", "chromium-1237", "chrome-win64", "chrome.exe");
 const OUT = process.env.SCREENS_OUT ||
-  path.join(REPO_ROOT, ".superpowers", "sdd", "2026-10-10-formwork-tab", "screens");
+  path.join(REPO_ROOT, ".superpowers", "sdd", "2026-10-11-one-cable-net-tab", "screens");
 const STUDY = process.env.STUDY || "5 sided form";
 const CUT = JSON.parse(process.env.CUT ||
   '{"material": "tile", "pattern": "bonded-courses", "source": "authored", "size": 1.0, "thickness": 0.02}');

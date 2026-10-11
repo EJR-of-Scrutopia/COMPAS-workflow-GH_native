@@ -276,6 +276,10 @@ def test_the_check_on_screen_reaches_the_drawing_and_never_his_studio():
     assert "formworkView, propsGroup" in hook
     script = (STATIC.parents[1] / "scripts" / "formwork_screens.mjs").read_text(encoding="utf-8")
     assert 'process.env.STUDIO_URL || "http://127.0.0.1:8601"' in script
+    # its pictures go to this plan's folder, never over the old tab's record
+    # (found by the final review)
+    assert '"2026-10-11-one-cable-net-tab", "screens"' in script
+    assert "2026-10-10-formwork-tab" not in script
     assert "8600" not in script.replace("never Param's 8600", "")
     for step in ("03-raise", "04-finish", "05-hold", "06-tiling", "-colour-", "-show-",
                  "-values", "-compare", "-weakest", "-skin-", "-mechanism", "-card", "-left"):
