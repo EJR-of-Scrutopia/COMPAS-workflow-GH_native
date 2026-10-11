@@ -68,6 +68,9 @@ def test_the_formwork_run_writes_the_captures_where_the_studio_reads_them(tmp_pa
     got = client.get("/api/studies/Tiny/formwork/sim", params=RUN)
     assert got.status_code == 200, got.text
     assert got.json()["schema"] == "bench.formwork-sim/1"
+    # never kept by the browser past a rerun: found on screen, a finished run
+    # left the tab drawing the run before it (spec 2026-10-11, section 10)
+    assert got.headers["cache-control"] == "no-cache"
 
 
 def _have(choices):
