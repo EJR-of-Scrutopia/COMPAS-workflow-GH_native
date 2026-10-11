@@ -4729,12 +4729,22 @@ def test_the_cable_net_tab_is_a_run_its_answer_a_player_and_its_views():
     # tendons, section 6)
     assert re.findall(r'data-show="([a-z]+)"', section) == [
         "net", "trees", "heads", "wires", "anchors", "ground", "tendons"]
-    assert section.count('class="chip"') == 8           # seven Show chips and Values
-    # Colour by as one segmented bar, Wires first and on
-    assert re.findall(r'name="formwork-colour" value="([a-z]+)"', section) == [
+    assert section.count('class="chip"') == 7           # the seven Show chips
+    # Colour by as one dropdown, Wires first and chosen (his choice of 11
+    # October 2026: the seven-way bar cut its labels off)
+    start = section.index('<select id="formwork-colour">')
+    options = section[start:section.index("</select>", start)]
+    assert re.findall(r'<option value="([a-z]+)"', options) == [
         "wire", "along", "across", "both", "deviation", "utilisation", "off"]
-    assert 'value="wire" checked' in section and 'class="segmented"' in section
-    assert '<input id="formwork-values" type="checkbox" checked>' in section
+    assert '<option value="wire" selected>Wires</option>' in options
+    assert 'name="formwork-colour"' not in section and 'class="segmented"' not in section
+    # Values, Compare and Weakest as three equal buttons in one row under it,
+    # lit when on, Values lit to start (Values off read as plain text)
+    views = section[section.index('<div id="formwork-views">'):]
+    views = views[:views.index("</div>")]
+    assert re.findall(r'<button id="formwork-([a-z]+)"', views) == ["values", "compare", "weakest"]
+    assert '<button id="formwork-values" class="active" type="button"' in views
+    assert start < section.index('<div id="formwork-views">')
     # the skin from hidden to opaque (his ask of 11 October 2026)
     assert '<input id="formwork-skin" type="range" min="0" max="100" step="1" value="30">' in section
     # the player in the studio's own symbols
@@ -4910,3 +4920,11 @@ def test_the_data_sheets_tables_line_their_columns_up():
     assert "#data-analysis table { width: 100%; table-layout: fixed;" in css
     assert "#data-analysis th { width: 42%; font-weight: normal; color: var(--ink-2); }" in css
     assert "#data-analysis td:last-child { width: 22%; color: var(--ink-2); }" in css
+
+
+def test_the_three_view_buttons_fit_the_panel():
+    # found on screen (11 October 2026): Values, Compare and Weakest side by
+    # side ran past the panel's edge; a flex item keeps its text's width
+    # unless told it may shrink
+    css = (STATIC / "studio.css").read_text(encoding="utf-8")
+    assert "#panel #formwork-views button { flex: 1; min-width: 0; margin: 0; }" in css

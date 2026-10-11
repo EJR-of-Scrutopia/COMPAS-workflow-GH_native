@@ -121,8 +121,7 @@ export function mountFormwork({ studyName, studyOptions, mechanism, view, hooks 
   function settings() {
     const show = {};
     for (const box of el.show.querySelectorAll("input[data-show]")) show[box.dataset.show] = box.checked;
-    const picked = el.colour.querySelector("input[name=formwork-colour]:checked");
-    return { show, colour: picked ? picked.value : "off", values: el.values.checked,
+    return { show, colour: el.colour.value || "off", values: el.values.classList.contains("active"),
              tolerance: Number(el.tolerance.value), compare: tab.compare, weakestOn: tab.weakest,
              skinOpacity: Number(el.skin.value) / 100 };
   }
@@ -284,7 +283,10 @@ export function mountFormwork({ studyName, studyOptions, mechanism, view, hooks 
     mechanism.setWires(Number(el.wires.value));
   });
   for (const holder of [el.show, el.colour]) holder.addEventListener("change", () => draw(true));
-  el.values.addEventListener("change", () => draw(true));
+  el.values.addEventListener("click", () => {
+    el.values.classList.toggle("active");
+    draw(true);
+  });
   el.compare.addEventListener("click", () => {
     tab.compare = !tab.compare;
     el.compare.classList.toggle("active", tab.compare);

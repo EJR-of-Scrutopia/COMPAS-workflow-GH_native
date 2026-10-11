@@ -643,8 +643,15 @@ export function weakestAt(sim, index, limits) {
   }
   all.sort((a, b) => b.ratio - a.ratio);
   const over = all.filter((item) => item.over);
-  return over.length ? over : all.slice(0, 5);
+  if (!over.length) return all.slice(0, 5);
+  // the worst WEAKEST_EACH of each kind over its limit (his choice of 11
+  // October 2026: a run with every node outside the tolerance ringed the
+  // whole net and said nothing)
+  const taken = {};
+  return over.filter((item) => (taken[item.kind] = (taken[item.kind] || 0) + 1) <= WEAKEST_EACH);
 }
+
+export const WEAKEST_EACH = 5;
 
 // Where a part is at a capture, in metres: a member's midpoint, a node, a
 // wire's rim node, a tree member's midpoint, the centre of a machine's rim

@@ -164,8 +164,8 @@ def test_pull_in_is_sent_with_the_run_and_a_change_reruns_it_in_full():
     assert "setPull(0);" in _inner(JS, "clear")
     # Colour by Along, Across and Both in place of Ropes, and the Tendons chip
     for value, name in (("along", "Along"), ("across", "Across"), ("both", "Both")):
-        assert 'name="formwork-colour" value="{}"><span>{}</span>'.format(value, name) in html
-    assert 'name="formwork-colour" value="tension"' not in html
+        assert '<option value="{}">{}</option>'.format(value, name) in html
+    assert '<option value="tension"' not in html
     assert 'data-show="tendons" checked><span>Tendons</span>' in html
 
 
@@ -200,6 +200,19 @@ def test_the_answer_greys_when_out_of_date_and_its_needed_goes_to_the_wire():
     assert 'hooks.aim(view.point({ kind: "wire", index: Number(row.dataset.wire) }));' in JS
     aim = _top(STUDIO, "aimFormworkAt")
     assert "camera.position.add(target.clone().sub(controls.target));" in aim
+
+
+def test_colour_by_is_a_dropdown_and_values_a_button_lit_when_on():
+    # his choice of 11 October 2026: Colour by a dropdown, and Values, Compare
+    # and Weakest three equal buttons lit when on
+    body = _inner(JS, "settings")
+    assert 'colour: el.colour.value || "off", values: el.values.classList.contains("active"),' in body
+    assert 'el.values.addEventListener("click", () => {' in JS
+    assert 'el.values.classList.toggle("active");' in JS
+    assert "input[name=formwork-colour]" not in JS
+    script = (STATIC.parents[1] / "scripts" / "formwork_screens.mjs").read_text(encoding="utf-8")
+    assert 'const select = document.getElementById("formwork-colour");' in script
+    assert 'if (button.classList.contains("active") !== wanted) button.click();' in script
 
 
 def test_the_player_draws_blended_values_the_weakest_and_its_key():
@@ -364,10 +377,13 @@ def test_the_wall_judges_the_trees_drawn_and_the_graphs_again():
 def test_the_colour_by_titles_say_what_is_coloured():
     # his answer of 11 October 2026: each rope by its own tension (found by the
     # final review: the titles still said the tendons' pull was in it)
+    # The options are names now (a dropdown, his choice of the same day); the
+    # key's title says what is coloured
     html = (STATIC / "index.html").read_text(encoding="utf-8")
-    assert '<label title="Across ropes\' tension, kN">' in html
-    assert '<label title="Every rope\'s tension, kN">' in html
+    assert '<option value="across">Across</option>' in html and '<option value="both">Both</option>' in html
     assert "tendons' pull" not in html and "whole force" not in html
+    model = (STATIC / "formwork_model.js").read_text(encoding="utf-8")
+    assert 'across: ["across, rope tension, kN", kilo, given.rope, working],' in model
 
 
 def test_the_run_status_and_the_folder_say_no_more_than_the_state():
