@@ -212,23 +212,19 @@ body { overflow: hidden;
 .data-tab { font-size: 12px; line-height: 1.55; }
 .data-tab.hidden { display: none; }
 #data-analysis h3 { font-size: var(--t); margin: var(--s3) 0 var(--s1); }
-#data-analysis p { margin: 0 0 var(--s2); color: var(--ink-2); }
-#data-analysis b { color: var(--ink); }
-#data-analysis ul { margin: 0 0 var(--s2); padding-left: var(--s4);
-  color: var(--ink-2); }
-#data-analysis li { margin-bottom: var(--s1); }
-.pill { display: inline-block; padding: 0 8px; border-radius: 9px;
-  font-size: var(--t-meta); line-height: 1.6; vertical-align: 1px; }
-.pill.good { background: #1e3a26; color: #7fd695; }
-.pill.warn { background: #3a331e; color: #d6bd7f; }
-.pill.bad { background: #3a1e1e; color: #d68f7f; }
-:root[data-theme="light"] .pill.good { background: #d9efdf; color: #1d6b34; }
-:root[data-theme="light"] .pill.warn { background: #f2e8cd; color: #7a5f18; }
-:root[data-theme="light"] .pill.bad { background: #f2d5cd; color: #8f2f1c; }
-.data-note { margin-top: var(--s3); padding: var(--s2) var(--s3);
-  border-left: 3px solid var(--line-lit); background: var(--raised);
-  border-radius: var(--radius); color: var(--ink-2);
-  font-size: var(--t-2); }
+/* The Analysis tab is tables of name, value and limit, no sentences (his
+   ruling of 11 October 2026: "just showing the data with red for bad, and
+   a basic layout for information"). */
+#data-analysis table { width: 100%; border-collapse: collapse; margin: 0 0 var(--s2); }
+#data-analysis th, #data-analysis td { text-align: left; padding: 2px 6px 2px 0;
+  border-bottom: 1px solid var(--line); }
+#data-analysis th { font-weight: normal; color: var(--ink-2); }
+#data-analysis td { color: var(--ink); white-space: nowrap; }
+#data-analysis td:last-child { color: var(--ink-2); }
+/* a figure past its limit: deep red, as the Cable net answer shows a
+   shortfall */
+#data-analysis .over { color: #e2453a; font-weight: 600; }
+:root[data-theme="light"] #data-analysis .over { color: #a3231a; }
 #data-graphs > div { margin-bottom: var(--s3); }
 #data-content { font-size: 12px; line-height: 1.5; }
 #data-content h3 { font-size: var(--t); margin: var(--s1) 0 var(--s2); }

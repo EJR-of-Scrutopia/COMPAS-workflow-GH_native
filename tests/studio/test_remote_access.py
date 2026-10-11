@@ -920,7 +920,7 @@ def test_the_skin_is_weighed_in_the_analysis():
 
     The skin stops being render-only for weight. Its density travels to
     the solver, earns its own cache slot, is recorded in provenance, and
-    the narrative says which density it used and why."""
+    the Analysis tab says which density it used and whose it was."""
 
     import sys
     sys.path.insert(0, str(REPO / "bench" / "studio"))
@@ -973,11 +973,13 @@ def test_the_skin_is_weighed_in_the_analysis():
     assert 'url += "&density=" + weighAs;' in js
     assert "density: params.density," in js, "the staged run is weighed too"
 
-    # And the narrative says which density it used, and whose it was.
+    # And the Analysis tab says which density it used, and whose it was:
+    # since his ruling of 11 October 2026 a row's name says it rather
+    # than a sentence, Skin density when the skin's own weighed the vault.
     narrative = (REPO / "bench" / "studio" / "static"
                  / "data_analysis.js").read_text(encoding="utf-8")
     assert "input.densityFromSkin = !!bundle.provenance.density_from_skin;" in narrative
-    assert "the SKIN's own density rather than the structural" in narrative
+    assert 'input.densityFromSkin ? "Skin density" : "Density"' in narrative
     # And the self-weight ESTIMATE weighs with the same density it just
     # reported, or a copper shell is announced at 8940 and then weighed as
     # concrete two sentences later.
@@ -2737,6 +2739,34 @@ def test_the_data_sheet_leads_with_the_analysis():
     assert '"data_analysis.js"' in app_py, (
         "the module must join the versioned import remap or a stale copy "
         "outlives every edit")
+
+
+def test_the_data_sheet_says_what_is_missing_in_a_word_or_two():
+    """His ruling of 11 October 2026: "i dont think we need all this
+    descriptive text... just showing the data with red for bad, and a
+    basic layout for information". The Data sheet's empty and failed
+    states are a heading's worth of words, and a figure past its limit
+    wears the same deep red the Cable net answer does."""
+
+    js = STUDIO_JS.read_text(encoding="utf-8")
+    render = _js_function(js, "function renderAnalysisTab()")
+    assert 'holder.innerHTML = "<h3>No study</h3>";' in render
+    assert 'holder.textContent = "Not built: " + error.message;' in render
+    graphs = _js_function(js, "async function renderDataGraphs()")
+    assert 'holder.innerHTML = "<p>No study</p>";' in graphs
+    assert 'holder.innerHTML = "<p>No staged run</p>";' in graphs
+    for gone in ("Load a study first", "could not be built",
+                 "the Overview tab still has", "come back"):
+        assert gone not in render + graphs, gone
+
+    css = (REPO / "bench" / "studio" / "static" / "studio.css").read_text(
+        encoding="utf-8")
+    assert "#data-analysis .over { color: #e2453a; font-weight: 600; }" in css
+    assert (':root[data-theme="light"] #data-analysis .over '
+            "{ color: #a3231a; }") in css
+    # The pills and the disclaimer box left with the prose they dressed.
+    for gone in (".pill", ".data-note"):
+        assert gone not in css, gone
 
 
 def test_the_waker_stays_on_loopback_and_stays_silent():
