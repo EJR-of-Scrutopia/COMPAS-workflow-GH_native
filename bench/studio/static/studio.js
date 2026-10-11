@@ -9868,11 +9868,9 @@ function paintScatter(solved) {
     return;
   }
   if (!solved) {
-    const names = rules.species.map((s) => {
-      const entry = propEntry(s.type);
-      return (entry ? entry.label || entry.key : s.type) + " x" + s.weight;
-    });
-    readout.textContent = names.join(", ") + "  \u00b7  Layer: " + placingOntoName();
+    // the species and their weights are the chips above: the layer alone
+    // (his ruling of 11 October 2026: nothing said twice)
+    readout.textContent = "Layer: " + placingOntoName();
     return;
   }
   readout.textContent = solved.items.length + " placed  \u00b7  Layer: "

@@ -3691,7 +3691,9 @@ def test_every_placement_lands_on_the_open_layer():
     # Say where things go: the layer by name, and no instructions round
     # it (his ruling of 11 October 2026: no descriptive text).
     paint = _js_function(js, "function paintScatter(solved)")
-    assert '"  \\u00b7  Layer: " + placingOntoName()' in paint
+    # the species and their weights are the chips above it: not said twice
+    assert 'readout.textContent = "Layer: " + placingOntoName();\n    return;' in paint
+    assert "names.join" not in paint
     assert '" placed  \\u00b7  Layer: "' in paint
     assert 'readout.textContent = "Layer: " + placingOntoName();' in _js_function(
         js, "function armScatterBrush()")
