@@ -54,7 +54,8 @@ def test_the_run_sends_the_mechanism_the_wall_and_the_rods_and_never_a_prestress
     assert "const choices = mechanism.chosen();" in body
     assert 'if (!choices) { el.runStatus.textContent = "Choose a mechanism"; return; }' in body
     assert ("const body = { ...sentOptions(options), mechanism: choices, wall: Number(el.wall.value),\n"
-            "                     holds_per_side: Number(el.holds.value), resume };") in body
+            "                     holds_per_side: Number(el.holds.value), pull_in: Number(el.pull.value),\n"
+            "                     resume };") in body
     assert "/formwork/run" in body and "prestress" not in body and "tolerance" not in body
     # Run is always a full run: the click's event is not a resume
     assert 'el.run.addEventListener("click", () => startRun(false));' in JS
@@ -105,10 +106,12 @@ def test_rods_a_side_rerun_from_the_hold_once_they_settle():
             "scheduleRerun(true);") in JS
     out_of_date = _inner(JS, "outOfDate")
     assert ("formworkWarnings(tab.sim, { mechanism: mechanism.chosen(),\n"
-            "                                       holdsPerSide: Number(el.holds.value) })"
+            "                                       holdsPerSide: Number(el.holds.value),\n"
+            "                                       pullIn: Number(el.pull.value) })"
             ) in out_of_date
     watch = _inner(JS, "watch")
-    assert ('if (lines.includes("Run again: mechanism changed")) scheduleRerun(false);\n'
+    assert ('if (lines.includes("Run again: mechanism changed")\n'
+            '              || lines.includes("Run again: pull changed")) scheduleRerun(false);\n'
             '          else if (lines.includes("Run again: rods a side changed")) '
             "scheduleRerun(true);") in watch
     # the slider shows the run's rods when a study's run is first read, and
@@ -151,6 +154,28 @@ def test_the_cost_and_the_graphs_follow_the_run_and_export_bom_writes_it():
     # the pop-up switches between its three tabs
     assert "function showTab(id) {" in PICK
     assert 'el.popup.querySelectorAll("[data-mech-tab]")' in PICK
+
+
+def test_pull_in_is_sent_with_the_run_and_a_change_reruns_it_in_full():
+    # spec 2026-10-11 across tendons, section 7: Pull in, 0 to 30,000 N a
+    # tendon in steps of 100, none by default; a change is a full run once the
+    # changes settle, as a mechanism change is
+    html = (STATIC / "index.html").read_text(encoding="utf-8")
+    assert ('<input id="formwork-pull" type="range" data-unit="1" min="0" max="30000" step="100" '
+            'value="0">') in html
+    assert '<b id="formwork-pull-value">0</b><em>N</em>' in html
+    assert ('if (tab.sim && outOfDate().includes("Run again: pull changed")) scheduleRerun(false);'
+            ) in JS
+    # the dial shows the run's pull when a study's run is first read, and none
+    # once the study goes
+    load = _inner(JS, "load")
+    assert "adoptMechanism(sim);\n      setPull(sim.options.pull_in ?? 0);" in load
+    assert "setPull(0);" in _inner(JS, "clear")
+    # Colour by Along, Across and Both in place of Ropes, and the Tendons chip
+    for value, name in (("along", "Along"), ("across", "Across"), ("both", "Both")):
+        assert 'name="formwork-colour" value="{}"><span>{}</span>'.format(value, name) in html
+    assert 'name="formwork-colour" value="tension"' not in html
+    assert 'data-show="tendons" checked><span>Tendons</span>' in html
 
 
 def test_a_studys_run_read_first_gives_the_mechanism_its_wires_and_its_motor():
@@ -276,10 +301,15 @@ def test_the_check_on_screen_reaches_the_drawing_and_never_his_studio():
     assert "formworkView, propsGroup" in hook
     script = (STATIC.parents[1] / "scripts" / "formwork_screens.mjs").read_text(encoding="utf-8")
     assert 'process.env.STUDIO_URL || "http://127.0.0.1:8601"' in script
-    # its pictures go to this plan's folder, never over the old tab's record
+    # its pictures go to this plan's folder, never over an older plan's record
     # (found by the final review)
-    assert '"2026-10-11-one-cable-net-tab", "screens"' in script
-    assert "2026-10-10-formwork-tab" not in script
+    assert '"2026-10-11-across-tendons", "screens"' in script
+    assert "2026-10-10-formwork-tab" not in script and "2026-10-11-one-cable-net-tab" not in script
+    # Along, Across and Both, the Tendons chip, and PULL=N's full run
+    # (spec 2026-10-11 across tendons, section 8)
+    assert 'const COLOURS = ["wire", "along", "across", "both", "deviation", "utilisation", "off"];' in script
+    assert '"holds", "tendons"];' in script
+    assert 'document.getElementById("formwork-pull")' in script and "process.env.PULL" in script
     assert "8600" not in script.replace("never Param's 8600", "")
     for step in ("03-raise", "04-finish", "05-hold", "06-tiling", "-colour-", "-show-",
                  "-values", "-compare", "-weakest", "-skin-", "-mechanism", "-card", "-left"):

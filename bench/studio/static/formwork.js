@@ -76,6 +76,7 @@ export function mountFormwork({ studyName, studyOptions, mechanism, view, hooks 
     tolerance: byId("formwork-tolerance"), toleranceValue: byId("formwork-tolerance-value"),
     wires: byId("formwork-wires"), wiresValue: byId("formwork-wires-value"),
     holds: byId("formwork-holds"), holdsValue: byId("formwork-holds-value"),
+    pull: byId("formwork-pull"), pullValue: byId("formwork-pull-value"),
     wall: byId("formwork-wall"), wallValue: byId("formwork-wall-value"),
     skin: byId("formwork-skin"), skinValue: byId("formwork-skin-value"),
     scrub: byId("formwork-scrub"), scrubValue: byId("formwork-scrub-value"),
@@ -134,7 +135,8 @@ export function mountFormwork({ studyName, studyOptions, mechanism, view, hooks 
 
   function outOfDate() {
     return formworkWarnings(tab.sim, { mechanism: mechanism.chosen(),
-                                       holdsPerSide: Number(el.holds.value) });
+                                       holdsPerSide: Number(el.holds.value),
+                                       pullIn: Number(el.pull.value) });
   }
 
   // The answer (spec section 4.3), greyed while the run is out of date.
@@ -278,6 +280,18 @@ export function mountFormwork({ studyName, studyOptions, mechanism, view, hooks 
     renderAnswer();
     if (tab.sim && outOfDate().includes("Run again: rods a side changed")) scheduleRerun(true);
   });
+  // Pull in, N a tendon (spec 2026-10-11 across tendons, section 7): a
+  // change is a full run once it settles, as a mechanism change is
+  function setPull(value) {
+    el.pull.value = String(value);
+    el.pullValue.textContent = el.pull.value;
+  }
+  el.pull.addEventListener("input", () => { el.pullValue.textContent = el.pull.value; });
+  el.pull.addEventListener("change", () => {
+    renderWarnings();
+    renderAnswer();
+    if (tab.sim && outOfDate().includes("Run again: pull changed")) scheduleRerun(false);
+  });
   el.wires.addEventListener("change", () => {
     tab.again = true;
     mechanism.setWires(Number(el.wires.value));
@@ -395,6 +409,7 @@ export function mountFormwork({ studyName, studyOptions, mechanism, view, hooks 
     if (sim && first) {
       setHolds(sim.holdsPerSide);
       adoptMechanism(sim);
+      setPull(sim.options.pull_in ?? 0);
     }
     judge();
     mechanism.setChecks(sim ? sim.checks : null);
@@ -533,7 +548,8 @@ export function mountFormwork({ studyName, studyOptions, mechanism, view, hooks 
           // a change made while this run went on: run again for it, from the
           // hold when only the rods changed
           const lines = outOfDate();
-          if (lines.includes("Run again: mechanism changed")) scheduleRerun(false);
+          if (lines.includes("Run again: mechanism changed")
+              || lines.includes("Run again: pull changed")) scheduleRerun(false);
           else if (lines.includes("Run again: rods a side changed")) scheduleRerun(true);
         }
         if (run.state === "failed") {
@@ -563,7 +579,8 @@ export function mountFormwork({ studyName, studyOptions, mechanism, view, hooks 
     el.runStatus.textContent = "starting: about two minutes";
     try {
       const body = { ...sentOptions(options), mechanism: choices, wall: Number(el.wall.value),
-                     holds_per_side: Number(el.holds.value), resume };
+                     holds_per_side: Number(el.holds.value), pull_in: Number(el.pull.value),
+                     resume };
       const response = await fetch(`/api/studies/${encodeURIComponent(studyName())}/formwork/run`,
         { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
       let started = null;
@@ -593,7 +610,7 @@ export function mountFormwork({ studyName, studyOptions, mechanism, view, hooks 
   el.record.addEventListener("click", () => hooks.record());
 
   // A change that needs a run (the mechanism, wires a motor, the rods a
-  // side) starts it once the changes settle; one already running is followed
+  // side, the pull) starts it once the changes settle; one already running is followed
   // by another. resume: from the hold, when only the rods changed; a full run
   // waiting wins.
   function scheduleRerun(resume = false) {
@@ -691,6 +708,7 @@ export function mountFormwork({ studyName, studyOptions, mechanism, view, hooks 
     el.costBody.innerHTML = "";
     el.graphs.innerHTML = "";
     setHolds(0);
+    setPull(0);
     el.label.textContent = "";
     el.runStatus.textContent = "";
     el.run.disabled = false;

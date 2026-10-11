@@ -1,7 +1,8 @@
 // The one Cable net tab on screen (spec 2026-10-11 one Cable net tab,
 // section 10): drives a studio in headless Chromium and photographs the tab
 // at a raise capture, a finish capture, the hold, the jacking and a tiling
-// quarter; each Colour by; each Show chip alone; the values; Compare;
+// quarter; each Colour by (Along, Across and Both among them); each Show chip
+// alone (Tendons among them); the values; Compare;
 // Weakest; the skin at nought and at half; the mechanism pop-up; the card.
 // Writes the pictures and a report of what each one carries.
 // Needs puppeteer-core next to studio_probe.mjs (bench/scripts/probe-env).
@@ -11,7 +12,8 @@
 // Env: STUDIO_URL (default http://127.0.0.1:8601), BROWSER_EXE (the
 // Playwright Chromium), SCREENS_OUT, STUDY (default the 5 sided form), CUT
 // (JSON, default its tile cut), GPU=1 to draw on the graphics card, RUN=1 to
-// press Run formwork analysis first:
+// press Run formwork analysis first, PULL=N to set Pull in to N newtons a
+// tendon and wait for its full run, HOLDS=N likewise for the rods a side:
 // about two minutes on the real study, and it rewrites the cut's capture
 // document under bench/studies, so copy that aside first.
 
@@ -26,13 +28,13 @@ const STUDIO_URL = process.env.STUDIO_URL || "http://127.0.0.1:8601";
 const BROWSER_EXE = process.env.BROWSER_EXE || path.join(process.env.LOCALAPPDATA || "",
   "ms-playwright", "chromium-1237", "chrome-win64", "chrome.exe");
 const OUT = process.env.SCREENS_OUT ||
-  path.join(REPO_ROOT, ".superpowers", "sdd", "2026-10-11-one-cable-net-tab", "screens");
+  path.join(REPO_ROOT, ".superpowers", "sdd", "2026-10-11-across-tendons", "screens");
 const STUDY = process.env.STUDY || "5 sided form";
 const CUT = JSON.parse(process.env.CUT ||
   '{"material": "tile", "pattern": "bonded-courses", "source": "authored", "size": 1.0, "thickness": 0.02}');
 const RUN = process.env.RUN === "1";
-const TICKS = ["net", "trees", "heads", "wires", "anchors", "ground", "holds"];
-const COLOURS = ["wire", "tension", "deviation", "utilisation", "off"];
+const TICKS = ["net", "trees", "heads", "wires", "anchors", "ground", "holds", "tendons"];
+const COLOURS = ["wire", "along", "across", "both", "deviation", "utilisation", "off"];
 
 mkdirSync(OUT, { recursive: true });
 const report = { study: STUDY, cut: CUT, shots: [], errors: [], requests: [] };
@@ -230,6 +232,29 @@ try {
     note("run " + JSON.stringify(report.run));
     await shot(page, "02-after-run");
   }
+  // PULL=N: Pull in moved to N newtons a tendon, and its full run waited for
+  if (process.env.PULL != null) {
+    const before = Date.now();
+    await page.evaluate((n) => {
+      const slider = document.getElementById("formwork-pull");
+      slider.value = String(n);
+      slider.dispatchEvent(new Event("input", { bubbles: true }));
+      slider.dispatchEvent(new Event("change", { bubbles: true }));
+    }, Number(process.env.PULL));
+    await waitFor(page, () => /running|capture|starting/.test(
+      document.getElementById("formwork-run-status").textContent), 30000);
+    const done = await waitFor(page, () => !document.getElementById("formwork-run").disabled
+      && !/Run again/.test(document.getElementById("formwork-warnings").innerText)
+      && !document.getElementById("formwork-run-status").textContent, 1800000);
+    report.pullRun = { seconds: Math.round((Date.now() - before) / 1000), done };
+    note("pull run " + JSON.stringify(report.pullRun));
+  }
+  report.pull = await page.evaluate(() => {
+    const row = [...document.querySelectorAll("#formwork-answer tr")]
+      .find((tr) => tr.querySelector("th") && tr.querySelector("th").textContent === "Pull in");
+    return row ? row.innerText.replace(/\s+/g, " ").trim() : null;
+  });
+  note("pull " + JSON.stringify(report.pull));
   // HOLDS=N: the rods a side moved to N, and the run from the hold waited for
   if (process.env.HOLDS != null) {
     const before = Date.now();

@@ -4639,12 +4639,14 @@ def test_the_cable_net_tab_is_a_run_its_answer_a_player_and_its_views():
     for tag in re.findall(r"<button[^>]*>", section):
         assert 'title="' in tag, tag
     # Show as chips; the skin is its slider and the design is Compare's
+    # (the Tendons chip and Along, Across and Both from spec 2026-10-11 across
+    # tendons, section 6)
     assert re.findall(r'data-show="([a-z]+)"', section) == [
-        "net", "trees", "heads", "wires", "anchors", "ground", "holds"]
-    assert section.count('class="chip"') == 8           # seven Show chips and Values
+        "net", "trees", "heads", "wires", "anchors", "ground", "holds", "tendons"]
+    assert section.count('class="chip"') == 9           # eight Show chips and Values
     # Colour by as one segmented bar, Wires first and on
     assert re.findall(r'name="formwork-colour" value="([a-z]+)"', section) == [
-        "wire", "tension", "deviation", "utilisation", "off"]
+        "wire", "along", "across", "both", "deviation", "utilisation", "off"]
     assert 'value="wire" checked' in section and 'class="segmented"' in section
     assert '<input id="formwork-values" type="checkbox" checked>' in section
     # the skin from hidden to half opaque

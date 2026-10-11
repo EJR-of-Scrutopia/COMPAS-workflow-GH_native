@@ -297,8 +297,8 @@ Glow was removed on 2026-09-11 (Param: "glow doesnt work well id
 rather remove it"), and the Lights row above is four dials. A fixture
 reads as a light by what it lights. The Skies drawer then took the
 atmosphere's nine dials, and Light rays made them ten on 2026-09-13, with Wind, Wind from and Gusts added the same day, and the Cable net
-section's Prestress and Rope speed on 2026-10-08 and its Tolerance and Wires a motor on 2026-10-09, and its Prestress went on 2026-10-10 (worked out from the load now), and the Formwork section's Wall, Capture and Speed came on 2026-10-10, and the one Cable net tab's Tolerance, Wires a motor and Skin came on 2026-10-11 as the old Cable net's Tolerance, Wires a motor and Rope speed went, and its Holds a side came the same day, so the count is now **66 of 72**: 66 visible
-dials, every one of them in the language, out of 72 range inputs, the
+section's Prestress and Rope speed on 2026-10-08 and its Tolerance and Wires a motor on 2026-10-09, and its Prestress went on 2026-10-10 (worked out from the load now), and the Formwork section's Wall, Capture and Speed came on 2026-10-10, and the one Cable net tab's Tolerance, Wires a motor and Skin came on 2026-10-11 as the old Cable net's Tolerance, Wires a motor and Rope speed went, and its Holds a side came the same day, and its Pull in the same day with the across tendons, so the count is now **67 of 73**: 67 visible
+dials, every one of them in the language, out of 73 range inputs, the
 other six being the three hidden models and the three exemptions named
 above. The figure is measured rather than remembered, by
 `test_the_dial_census_is_the_page_s_own_tally`, which counts the page
@@ -363,7 +363,7 @@ true of the SHELF drawers, which sit outside `#panel` and keep their
 labels; inside the panel a dial is one full-width scrub row. Both are
 the language.
 
-The inventory of section 10 is now 72 sliders. Since then: `site-
+The inventory of section 10 is now 73 sliders. Since then: `site-
 latitude`, `site-longitude`, `site-north` (Scene, Site), `section-offset`
 (Scene, Section), `camera-width` (Camera, shown in orthographic in place
 of Field of view), the Skies drawer's nine atmosphere dials, the
@@ -372,7 +372,8 @@ Output section's `still-size` segments, and `cablenet-tolerance`,
 `cablenet-prestress` came and went, the prestress now worked out from the
 load; and `formwork-wall`, `formwork-scrub` and `formwork-speed` (Formwork:
 the tree tube's wall, the capture the player is at, and the playback speed);
-and `formwork-holds` (Cable net: the rods a side the studio places).
+and `formwork-holds` (Cable net: the rods a side the studio places);
+and `formwork-pull` (Cable net: the pull on each across tendon).
 
 **Two gestures, written down.** A scatter tool never disables
 OrbitControls; it takes the LEFT button and leaves the camera the other
