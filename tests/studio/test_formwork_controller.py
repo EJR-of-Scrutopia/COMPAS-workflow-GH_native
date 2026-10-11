@@ -160,6 +160,14 @@ def test_a_studys_run_read_first_gives_the_mechanism_its_wires_and_its_motor():
     assert "localStorage.setItem(REMEMBERED_PREFIX + studyName(), choices.motor);" in PICK
 
 
+def test_a_rerun_keeps_the_players_place_and_a_new_study_starts_at_the_raise():
+    # found by the final review: a Holds change made at the end of the tiling
+    # jumped back to the raise when its run landed
+    load = _inner(JS, "load")
+    assert "tab.at = first ? 0 : Math.min(tab.at, end());" in load
+    assert "tab.at = 0;" not in load
+
+
 def test_the_answer_greys_when_out_of_date_and_its_needed_goes_to_the_wire():
     render = _inner(JS, "renderAnswer")
     assert 'const stale = outOfDate().some((line) => line.startsWith("Run again"));' in render

@@ -399,7 +399,9 @@ export function mountFormwork({ studyName, studyOptions, mechanism, view, hooks 
     judge();
     mechanism.setChecks(sim ? sim.checks : null);
     tab.times = sim ? captureTimes(sim.captures) : [];
-    tab.at = 0;
+    // a rerun keeps the player where it was, within the new run; a study's
+    // first run starts at the raise
+    tab.at = first ? 0 : Math.min(tab.at, end());
     tab.shown = -1;
     setPlaying(false);
     el.scrub.max = String(Math.max(1, tab.times.length));
