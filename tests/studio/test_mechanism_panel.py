@@ -77,10 +77,13 @@ def test_under_it_three_lines_have_limited_by_and_checks(out):
     # what gives way first, then the part by the name it is bought by; a
     # list from before the names were sent falls back on the part's key
     assert "<th>Limited by</th><td>motor, 23HS45-4204D-E1000</td>" in html["pass"]
-    assert "<th>Checks</th><td>all pass ✓</td>" in html["pass"]
-    # only what fails, a line each
-    assert "<th>Checks</th><td>rope on drum 4,000 of 3,616 mm ✗</td>" in html["fail"]
-    assert "<td>carriage 400 of 300 mm ✗</td>" in html["fail"]
+    assert "<th>Checks</th><td>all pass</td>" in html["pass"]
+    # only what fails, a line each, in deep red rather than marked with a
+    # cross (his ask of 11 October 2026)
+    assert ('<th>Checks</th><td><span class="over">rope on drum 4,000 of 3,616 mm</span></td>'
+            in html["fail"])
+    assert '<td><span class="over">carriage 400 of 300 mm</span></td>' in html["fail"]
+    assert "✗" not in html["fail"] and "✓" not in html["pass"]
     assert "all pass" not in html["fail"]
     # before a run there is nothing to check yet
     assert "<th>Checks</th><td>after a run</td>" in html["before"]

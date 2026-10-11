@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pytest
 
-from test_formwork_model import document, with_holds
+from test_formwork_model import document, pack, with_holds
 
 STATIC = Path(__file__).resolve().parents[2] / "bench" / "studio" / "static"
 CHOSEN = {"motor": "23HS45-4204D-E1000", "ratio": 20, "pulley": "Pfaff-DSRB-90-4",
@@ -48,6 +48,10 @@ out.spare = m.answerHtml(m.answer(spare, 30));
 out.plain = [m.answer(plain, 20), m.answerHtml(m.answer(plain, 20))];
 out.none = [m.answer(null, 20), m.answerHtml(null)];
 out.held = [m.answer(held, 20).holds, m.answerHtml(m.answer(held, 20)), out.answer.holds];
+const treesOver = m.readSim(%(treesOver)s);
+const judged = m.withWall(sim, 3.2);
+out.trees = { over: m.answer(treesOver, 20).trees, overHtml: m.answerHtml(m.answer(treesOver, 20)),
+              within: m.answer(judged, 20).trees, withinHtml: m.answerHtml(m.answer(judged, 20)) };
 const chosen = %(chosen)s;
 out.warnings = {
   none: m.formworkWarnings(null, { mechanism: chosen }),
@@ -83,6 +87,16 @@ def _resistance(diameter, wall, length, compression):
     return min(1.0, 1.0 / (phi + math.sqrt(phi ** 2 - slenderness ** 2))) * plastic
 
 
+def _trees_over():
+    # the tree member at the last capture pushed 250,000 N, over its 60.3 x
+    # 3.2 tube's resistance at its 500 mm, and judged so by the engine
+    doc = _run()
+    load = 250000.0
+    doc["captures"][3]["tree_axial"] = pack([-load])
+    doc["captures"][3]["tree_utilisation"] = pack([load / _resistance(60.3, 3.2, 500.0, True)])
+    return doc
+
+
 @pytest.fixture(scope="module")
 def out(tmp_path_factory):
     if shutil.which("node") is None:
@@ -94,6 +108,7 @@ def out(tmp_path_factory):
         "doc": json.dumps(_run()), "spare": json.dumps(_run(2000.0)),
         "plain": json.dumps(plain), "older": json.dumps(document(older=True)),
         "held": json.dumps(with_holds(_run())),
+        "treesOver": json.dumps(_trees_over()),
         "chosen": json.dumps(CHOSEN)}, encoding="utf-8")
     result = subprocess.run(["node", str(script)], capture_output=True, text=True,
                             encoding="utf-8")
@@ -115,18 +130,45 @@ def test_the_answer_is_the_force_needed_one_spools_pull_and_the_gap(out):
                           "label": "S1 q1"}
     assert a["have"]["newtons"] == 1200.0 and a["have"]["part"] == "23HS45-4204D-E1000"
     assert a["gap"] == {"newtons": 300.0, "missing": True}
-    # the form: the worst offset at the end of the tiling against the tolerance
+    # the form: the worst offset and the mean at the end of the tiling against
+    # the tolerance (his ask of 11 October 2026: the mean and the worst both)
     assert a["form"] == {"mm": 25.0, "tolerance": 20.0, "within": False}
+    assert a["mean"] == {"mm": 10.25, "within": True}
     html = out["html"]
     assert ('<tr data-capture="2" data-wire="0"><th>Needed</th><td>1,500 N</td>'
             "<td>worst wire w0, at S1 q1</td></tr>") in html
     assert "<th>Have</th><td>1,200 N</td><td>one spool, 23HS45-4204D-E1000 20:1</td>" in html
-    assert "<th>Missing</th><td>300 N ✗</td>" in html
-    assert "<th>Form</th><td>25 mm ✗</td><td>worst offset, tolerance 20 mm</td>" in html
+    # what falls short is in deep red, not marked with a cross (his ask of 11
+    # October 2026)
+    assert '<th>Missing</th><td><span class="over">300 N</span></td>' in html
+    assert ('<th>Worst offset</th><td><span class="over">25 mm</span></td>'
+            "<td>at the end, tolerance 20 mm</td>") in html
+    assert "<th>Mean offset</th><td>10 mm</td><td>at the end</td>" in html
     assert 'class="answer stale"' in out["staleHtml"] and 'class="answer stale"' not in html
     # a spool that pulls more than the run needs: spare, and the form within 30 mm
-    assert "<th>Spare</th><td>500 N ✓</td>" in out["spare"]
-    assert "<th>Form</th><td>25 mm ✓</td><td>worst offset, tolerance 30 mm</td>" in out["spare"]
+    assert "<th>Spare</th><td>500 N</td>" in out["spare"]
+    assert "<th>Worst offset</th><td>25 mm</td><td>at the end, tolerance 30 mm</td>" in out["spare"]
+    for marked in (html, out["spare"]):
+        assert "✗" not in marked and "✓" not in marked and "<th>Form</th>" not in marked
+
+
+def test_the_answer_gives_the_trees_load_and_what_its_tube_takes(out):
+    # his ask of 11 October 2026: the trees as a load, not a bare ratio. The
+    # member and capture the run judges worst, its force and its tube's
+    # resistance, in deep red past it
+    resistance = _resistance(60.3, 3.2, 500.0, True)
+    over = out["trees"]["over"]
+    assert over["capture"] == 3 and over["member"] == 0 and over["label"] == "S1 q2"
+    assert over["newtons"] == 250000.0
+    assert over["capacity"] == pytest.approx(resistance, rel=1e-6)
+    assert over["utilisation"] == pytest.approx(250000.0 / resistance, rel=1e-5)
+    tube = "{:,} N".format(round(resistance))
+    assert ('<th>Trees load</th><td><span class="over">250,000 N</span></td>'
+            "<td>worst member, its tube takes " + tube + "</td>") in out["trees"]["overHtml"]
+    within = out["trees"]["within"]
+    assert within["capture"] == 2 and within["newtons"] == 900.0
+    assert ("<th>Trees load</th><td>900 N</td><td>worst member, its tube takes " + tube + "</td>"
+            in out["trees"]["withinHtml"])
 
 
 def test_a_run_with_no_mechanism_says_none_for_what_one_spool_pulls(out):

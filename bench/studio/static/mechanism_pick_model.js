@@ -37,20 +37,22 @@ export function optionsHtml(list, chosen) {
 }
 
 // Checks: the run's drum and carriage (formwork_sim.travel_checks), all
-// passing in one line, else only what fails, a line each; before a run there
-// is nothing yet to check.
+// passing in one line, else only what fails, a line each, in deep red (his
+// ask of 11 October 2026: no cross); before a run there is nothing yet to
+// check. Each line as HTML.
 function checkLines(checks) {
   if (!checks) return ["after a run"];
   const failing = [];
+  const fails = (text) => `<span class="over">${esc(text)}</span>`;
   if (checks.drum && !checks.drum.fits) {
-    failing.push("rope on drum " + Math.round(checks.drum.value_mm).toLocaleString("en-GB") + " of "
-      + millimetres(checks.drum.limit_mm) + " ✗");
+    failing.push(fails("rope on drum " + Math.round(checks.drum.value_mm).toLocaleString("en-GB") + " of "
+      + millimetres(checks.drum.limit_mm)));
   }
   if (checks.carriage && !checks.carriage.fits) {
-    failing.push("carriage " + Math.round(checks.carriage.value_mm).toLocaleString("en-GB") + " of "
-      + millimetres(checks.carriage.limit_mm) + " ✗");
+    failing.push(fails("carriage " + Math.round(checks.carriage.value_mm).toLocaleString("en-GB") + " of "
+      + millimetres(checks.carriage.limit_mm)));
   }
-  return failing.length ? failing : ["all pass ✓"];
+  return failing.length ? failing : ["all pass"];
 }
 
 // The three lines under the dropdown: Have, Limited by, Checks.
@@ -59,7 +61,7 @@ export function mechanismHtml(entry, checks) {
   const rows = [["Have", newtons(entry.have_newtons) + " a spool"],
                 ["Limited by", esc(LIMIT_NAMES[entry.limit] || entry.limit) + ", "
                   + esc(entry.part_name || entry.part)]];
-  checkLines(checks).forEach((line, i) => rows.push([i === 0 ? "Checks" : "", esc(line)]));
+  checkLines(checks).forEach((line, i) => rows.push([i === 0 ? "Checks" : "", line]));
   return "<table>" + rows.map(([name, value]) => `<tr><th>${name}</th><td>${value}</td></tr>`).join("")
     + "</table>";
 }

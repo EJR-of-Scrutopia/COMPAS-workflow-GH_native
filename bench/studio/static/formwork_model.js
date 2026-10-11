@@ -640,8 +640,10 @@ export function grouped(n) {
 // The answer, from the run alone (spec 2026-10-11 one Cable net tab, section
 // 4.3): the largest wire tension anywhere in the run, its wire and capture;
 // one spool's pull of the run's mechanism; how much is missing or to spare;
-// and the form, the worst offset at the run's last capture, against the
-// tolerance. have and gap are null for a run cut for a named prestress.
+// the form, the worst offset and the mean at the run's last capture, against
+// the tolerance; and the trees' load, the member the run judges worst, its
+// force and what its tube takes (his ask of 11 October 2026). have and gap
+// are null for a run cut for a named prestress.
 export function answer(sim, tolerance) {
   if (!sim) return null;
   let needed = null;
@@ -665,13 +667,40 @@ export function answer(sim, tolerance) {
   const last = sim.captures[sim.captures.length - 1];
   const worst = largestOf(last.deviation);
   const form = { mm: worst, tolerance: Number(tolerance), within: worst <= Number(tolerance) };
+  const offsets = last.deviation || [];
+  let sum = 0;
+  for (let i = 0; i < offsets.length; i++) sum += offsets[i];
+  const meanMm = offsets.length ? sum / offsets.length : 0;
+  const mean = { mm: meanMm, within: meanMm <= Number(tolerance) };
   // the rods a side asked for and how many went on (spec section 6)
   const holds = { perSide: sim.holdsPerSide, rods: sim.holds.length };
   // the pull a tendon, the tendons and what they put into the column heads in
   // all (spec 2026-10-11 across tendons, section 5)
   const lines = sim.tendons ? sim.tendons.lines.length : 0;
   const pull = lines ? { newtons: sim.tendons.pull, tendons: lines, total: sim.tendons.pull * lines } : null;
-  return { needed, have, gap, form, holds, pull };
+  return { needed, have, gap, form, mean, trees: treesLoad(sim), holds, pull };
+}
+
+// The tree member the run judges worst, at the capture it is worst: its
+// force, N, what its tube takes there and the ratio; null with no trees.
+function treesLoad(sim) {
+  let worst = null;
+  sim.captures.forEach((c, k) => {
+    const u = c.treeUtilisation;
+    for (let m = 0; u && m < u.length; m++) {
+      if (!worst || u[m] > worst.utilisation) worst = { utilisation: u[m], member: m, capture: k };
+    }
+  });
+  if (!worst) return null;
+  const c = sim.captures[worst.capture];
+  const [p, q] = sim.trees.members[worst.member];
+  const length = Math.hypot(c.treeX[3 * q] - c.treeX[3 * p], c.treeX[3 * q + 1] - c.treeX[3 * p + 1],
+                            c.treeX[3 * q + 2] - c.treeX[3 * p + 2]) * 1000;
+  const n = c.treeAxial[worst.member] || 0;
+  const wall = Number(sim.trees.wall);
+  const capacity = length < FOLDED_MM || !(wall > 0) ? null
+    : resistance(sim.trees.diameter, wall, length, n < 0);
+  return { ...worst, newtons: Math.abs(n), capacity, label: captureLabel(c) };
 }
 
 // The mechanism as the answer names it: "23HS45-4204D-E1000 20:1".
@@ -685,7 +714,8 @@ function shortMechanism(mechanism) {
 // (stale) while the run is out of date.
 export function answerHtml(a, { stale = false } = {}) {
   if (!a) return "";
-  const mark = (ok) => (ok ? "✓" : "✗");
+  // what falls short in deep red (his ask of 11 October 2026: no cross)
+  const short = (text, bad) => (bad ? `<span class="over">${text}</span>` : text);
   const row = (name, value, note = "", attrs = "") =>
     `<tr${attrs}><th>${escapeHtml(name)}</th><td>${value}</td><td>${escapeHtml(note)}</td></tr>`;
   const rows = [];
@@ -696,9 +726,15 @@ export function answerHtml(a, { stale = false } = {}) {
   }
   rows.push(a.have ? row("Have", grouped(a.have.newtons), "one spool, " + shortMechanism(a.have.mechanism))
     : row("Have", "none"));
-  if (a.gap) rows.push(row(a.gap.missing ? "Missing" : "Spare", grouped(a.gap.newtons) + " " + mark(!a.gap.missing)));
-  rows.push(row("Form", millimetres(a.form.mm) + " " + mark(a.form.within),
-                "worst offset, tolerance " + Number(a.form.tolerance) + " mm"));
+  if (a.gap) rows.push(row(a.gap.missing ? "Missing" : "Spare", short(grouped(a.gap.newtons), a.gap.missing)));
+  rows.push(row("Worst offset", short(millimetres(a.form.mm), !a.form.within),
+                "at the end, tolerance " + Number(a.form.tolerance) + " mm"));
+  if (a.mean) rows.push(row("Mean offset", short(millimetres(a.mean.mm), !a.mean.within), "at the end"));
+  if (a.trees) {
+    rows.push(row("Trees load", short(grouped(a.trees.newtons), a.trees.utilisation > 1),
+                  a.trees.capacity == null ? "worst member"
+                    : "worst member, its tube takes " + grouped(a.trees.capacity)));
+  }
   const rods = a.holds ? a.holds.rods : 0;
   const counted = rods + (rods === 1 ? " rod" : " rods");
   rows.push(row("Holds", !rods ? "none"
