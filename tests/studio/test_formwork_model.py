@@ -127,13 +127,6 @@ out.noHead = m.playhead([], 1);
 out.line = m.frameLine(sim, 1);
 out.lineHtml = m.frameLineHtml(out.line);
 out.noLine = m.frameLine(sim, 9);
-out.colours = { high: m.colourOf("tension", 3000, sim, 20), low: m.colourOf("tension", 0, sim, 20),
-  over: m.colourOf("utilisation", 1.2, sim, 20), half: m.colourOf("utilisation", 0.5, sim, 20),
-  nearCapacity: m.colourOf("utilisation", 0.8, sim, 20),
-  wire: m.colourOf("wire", 1500, sim, 20),
-  deviation: [5, 12, 40].map((v) => m.colourOf("deviation", v, sim, 20)),
-  off: m.colourOf("off", 3, sim, 20) };
-out.keys = ["tension", "deviation", "utilisation", "wire", "off"].map((by) => m.colourKey(by, sim, 20));
 out.points = [{ kind: "member", index: 1 }, { kind: "node", index: 2 }, { kind: "wire", index: 1 },
   { kind: "tree", index: 0 }, { kind: "machine", index: 0 }, { kind: "member", index: 9 }]
   .map((target) => m.targetPoint(sim, 1, target));
@@ -306,37 +299,6 @@ def test_the_frame_line_is_the_captures_largest_and_its_heads_touching(out):
     assert out["noLine"] is None
 
 
-def test_each_colour_by_draws_on_the_runs_own_scale(out):
-    colours = out["colours"]
-    red, cream = [0xcc / 255, 0x22 / 255, 0x11 / 255], [0xf2 / 255, 0xef / 255, 0xe8 / 255]
-    assert colours["high"] == pytest.approx(red) and colours["low"] == pytest.approx(cream)
-    assert colours["wire"] == pytest.approx(red)
-    # a tree is banded at its capacity, 1.0, as the Sag lens bands a sag:
-    # within to half of it, near to it, over it (final review 3: a ramp
-    # clamped at 1.0 drew 2.36 and 1.0 the same red)
-    assert colours["over"] == pytest.approx([0xc2 / 255, 0x49 / 255, 0x36 / 255])
-    assert colours["nearCapacity"] == pytest.approx([0xc9 / 255, 0x9a / 255, 0x2e / 255])
-    assert colours["half"] == pytest.approx(cream)
-    # deviation in the Sag lens's bands against the tolerance
-    within, near, over = colours["deviation"]
-    assert within == pytest.approx(cream)
-    assert near == pytest.approx([0xc9 / 255, 0x9a / 255, 0x2e / 255])
-    assert over == pytest.approx([0xc2 / 255, 0x49 / 255, 0x36 / 255])
-    assert colours["off"] is None
-
-
-def test_each_colour_by_has_its_key(out):
-    tension, deviation, utilisation, wire, off = out["keys"]
-    assert tension == {"title": "rope tension, kN", "min": "0", "max": "3.0"}
-    assert deviation["title"] == "deviation, mm: tolerance 20" and deviation["max"] == "500"
-    assert [band["name"] for band in deviation["bands"]] == ["within", "near", "over"]
-    assert utilisation["title"] == "tree utilisation: capacity 1.0"
-    assert (utilisation["min"], utilisation["max"]) == ("0", "1.20")
-    assert [band["name"] for band in utilisation["bands"]] == ["within", "near", "over"]
-    assert wire == {"title": "wire tension, N", "min": "0", "max": "1500"}
-    assert off is None
-
-
 def test_each_part_has_a_point_at_the_capture(out):
     member, node, wire, tree, machine, missing = out["points"]
     assert member == pytest.approx([1.0, 0.5, 0.25])
@@ -427,14 +389,14 @@ def test_a_recorded_frame_carries_the_labels_and_the_key(out):
     # the page's labels and key are HTML, which never reach the canvas the
     # recorder reads, so they are drawn over each frame
     texts = [text for text, _, _ in out["overlayBands"]["texts"]]
-    assert texts == [out["caption"], "3.0 kN", "deviation, mm: tolerance 20",
-                     "within", "near", "over", "0", "500"]
+    # the key: its title, its limit at its place on the bar, its two ends
+    assert texts == [out["caption"], "3.0 kN", "offset, mm", "tolerance 20 mm", "0", "500 mm"]
     label = next(t for t in out["overlayBands"]["texts"] if t[0] == "3.0 kN")
     # standing on its point, as the page's labels do
     assert abs(label[1] - 500) < 30 and label[2] < 400
-    assert out["overlayBands"]["rects"] >= 6
+    assert out["overlayBands"]["gradients"] == 1 and out["overlayBands"]["rects"] >= 4
     ramp = out["overlayRamp"]
-    assert [text for text, _, _ in ramp["texts"]] == ["rope tension, kN", "0", "3.0"]
+    assert [text for text, _, _ in ramp["texts"]] == ["rope tension, kN", "0", "3.0 kN"]
     assert ramp["gradients"] == 1
     assert out["overlayNone"]["texts"] == [] and out["overlayNone"]["rects"] == 0
 

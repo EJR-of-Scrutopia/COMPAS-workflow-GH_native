@@ -256,14 +256,15 @@ export function frameLineHtml(line) {
       : [])]);
 }
 
-export const COLOUR_BY = [["tension", "Rope tension"], ["deviation", "Deviation"],
-  ["utilisation", "Tree utilisation"], ["wire", "Wire tension"], ["off", "Off"]];
+// Colour by (spec 2026-10-11 one Cable net tab, section 5.1), one at a time.
+export const COLOUR_BY = [["wire", "Wires"], ["tension", "Ropes"], ["deviation", "Offset"],
+  ["utilisation", "Trees"], ["off", "Off"]];
 
-// The two ends of the studio's one-sided ramp (#legend.deflection's bar), and
-// the deviation bands in the colours the Sag lens draws them.
-const RAMP_LOW = [0xf2, 0xef, 0xe8];
-const RAMP_HIGH = [0xcc, 0x22, 0x11];
-const DEVIATION_COLOURS = { within: "#f2efe8", near: "#c99a2e", over: "#c24936" };
+// The full ramp every Colour by is drawn on, from a cool blue that shows on the
+// net (so the whole object reads, not only its hotspots) through to red; and
+// the tolerance's bands, which Compare's offset lines wear.
+export const RAMP_STOPS = ["#3a6fc4", "#3fa6a0", "#e8c547", "#cc2211"];
+const DEVIATION_COLOURS = { within: "#3f9e57", near: "#c99a2e", over: "#c24936" };
 
 function hexRgb(hex) {
   const n = parseInt(hex.slice(1), 16);
@@ -271,8 +272,15 @@ function hexRgb(hex) {
 }
 
 export function ramp(fraction) {
-  const f = Math.min(1, Math.max(0, Number(fraction) || 0));
-  return RAMP_LOW.map((low, i) => (low + (RAMP_HIGH[i] - low) * f) / 255);
+  const f = Math.min(1, Math.max(0, Number(fraction) || 0)) * (RAMP_STOPS.length - 1);
+  const i = Math.min(RAMP_STOPS.length - 2, Math.floor(f));
+  const a = hexRgb(RAMP_STOPS[i]);
+  const b = hexRgb(RAMP_STOPS[i + 1]);
+  return a.map((v, k) => v + (b[k] - v) * (f - i));
+}
+
+export function bandColour(mm, tolerance) {
+  return hexRgb(DEVIATION_COLOURS[deviationBand(mm, tolerance)]);
 }
 
 // A deviation's band against the tolerance, as the Sag lens bands a sag: over
@@ -283,37 +291,120 @@ export function deviationBand(mm, tolerance) {
   return "within";
 }
 
+// The scale of each Colour by: the run's largest, so a colour is the same
+// value in every capture.
+const SCALE = { wire: "wire", tension: "tension", deviation: "deviation", utilisation: "utilisation" };
+
 // The colour a value is drawn in under a Colour by choice, [r, g, b] from 0 to
-// 1, on the run's own scale; null where the choice colours nothing (Off).
-export function colourOf(by, value, sim, tolerance) {
-  if (!sim || value == null) return null;
-  if (by === "tension") return ramp(sim.scales.tension > 0 ? value / sim.scales.tension : 0);
-  if (by === "wire") return ramp(sim.scales.wire > 0 ? value / sim.scales.wire : 0);
-  // banded at the tube's capacity, 1.0, as a sag is at the tolerance
-  // (final review 3: a ramp clamped at 1.0 drew 2.36 and 1.0 the same red)
-  if (by === "utilisation") return hexRgb(DEVIATION_COLOURS[deviationBand(value, 1)]);
-  if (by === "deviation") return hexRgb(DEVIATION_COLOURS[deviationBand(value, tolerance)]);
-  return null;
+// 1, on the full ramp over the run (spec 2026-10-11 section 5.1); null where
+// the choice colours nothing (Off). Whether a part is over its limit is
+// Weakest's to show, not the colour's.
+export function colourOf(by, value, sim) {
+  if (!sim || value == null || !SCALE[by]) return null;
+  const top = sim.scales[SCALE[by]];
+  return ramp(top > 0 ? value / top : 0);
 }
 
-// The key a Colour by choice draws, in the legend's own shape (lensLegend's).
-export function colourKey(by, sim, tolerance) {
-  if (!sim) return null;
-  if (by === "tension") {
-    return { title: "rope tension, kN", min: "0", max: (sim.scales.tension / 1000).toFixed(1) };
+function kilo(n) {
+  return (Number(n) / 1000).toFixed(1) + " kN";
+}
+
+// The key a Colour by choice draws: a real scale from nought to the run's
+// largest, and the limit named, with its place on the bar (fraction) when it
+// is on it; null for Off. limits: { have, rope, tolerance } (a bare number is
+// the tolerance, as the tab's older calls give it).
+export function colourKey(by, sim, limits) {
+  if (!sim || !SCALE[by]) return null;
+  const given = typeof limits === "number" ? { tolerance: limits } : (limits || {});
+  const top = sim.scales[SCALE[by]];
+  const keyed = {
+    wire: ["wire tension, N", grouped(top), given.have, (v) => "one spool " + grouped(v)],
+    tension: ["rope tension, kN", kilo(top), given.rope, (v) => "working load " + kilo(v)],
+    deviation: ["offset, mm", millimetres(top), given.tolerance, (v) => "tolerance " + Number(v) + " mm"],
+    utilisation: ["tree utilisation", top.toFixed(2), 1.0, (v) => "capacity " + Number(v).toFixed(1)],
+  }[by];
+  const [title, max, limit, named] = keyed;
+  const known = limit != null && Number.isFinite(Number(limit));
+  const fraction = known && top > 0 && Number(limit) <= top ? Number(limit) / top : null;
+  return { title, min: "0", max, limitText: known ? named(limit) : null, fraction };
+}
+
+// The parts a Colour by puts its values on, and which Show tick they need.
+const LABEL_PART = { wire: "wires", tension: "net", deviation: "net", utilisation: "trees", off: "heads" };
+
+export function labelsShown(by, show) {
+  return !!(show || {})[LABEL_PART[by]];
+}
+
+// Each value a capture has for a Colour by: [target, value, side], the side
+// the part is on (null where the run has none, and for the trees).
+function valuesFor(sim, c, by) {
+  const side = (node) => (sim.sides && node != null ? sim.sides[node] ?? null : null);
+  const out = [];
+  if (by === "wire") {
+    sim.rim.nodes.forEach((node, w) => out.push([{ kind: "wire", index: w }, c.wireTension[w], side(node)]));
+  } else if (by === "tension") {
+    sim.edges.forEach(([u], e) => out.push([{ kind: "member", index: e }, c.tension[e], side(u)]));
+  } else if (by === "deviation") {
+    for (let i = 0; i < sim.nodes; i++) out.push([{ kind: "node", index: i }, c.deviation[i], side(i)]);
+  } else if (by === "utilisation") {
+    sim.trees.members.forEach((_, k) => out.push([{ kind: "tree", index: k }, c.treeUtilisation[k], null]));
+  } else if (by === "off") {
+    sim.trees.heads.forEach(([node], h) => out.push([{ kind: "node", index: node }, pushOf(c, h), side(node)]));
   }
-  if (by === "wire") return { title: "wire tension, N", min: "0", max: sim.scales.wire.toFixed(0) };
-  if (by === "utilisation") {
-    return { title: "tree utilisation: capacity 1.0", min: "0",
-             max: sim.scales.utilisation.toFixed(2),
-             bands: ["within", "near", "over"].map((name) => ({ name, colour: DEVIATION_COLOURS[name] })) };
+  return out;
+}
+
+function textFor(by, value) {
+  if (by === "wire" || by === "off") return grouped(value);
+  if (by === "tension") return kilo(value);
+  if (by === "deviation") return millimetres(value);
+  return Number(value).toFixed(2);
+}
+
+// The values a capture puts on the model (spec 2026-10-11 section 5.2): for
+// the Colour by shown, its count largest, then the largest of each side not
+// yet among them; with Colour by off, the heads' pushes. Largest first, so
+// where they crowd the largest is the one kept.
+export function colourLabels(sim, index, by, count = 5) {
+  const c = sim && sim.captures[index];
+  if (!c || !LABEL_PART[by]) return [];
+  const values = valuesFor(sim, c, by).filter(([, value]) => value > 0);
+  values.sort((a, b) => b[1] - a[1] || a[0].index - b[0].index);
+  const picked = values.slice(0, count);
+  const sides = new Set(picked.map(([, , side]) => side));
+  for (const entry of values) {
+    if (entry[2] != null && !sides.has(entry[2])) {
+      picked.push(entry);
+      sides.add(entry[2]);
+    }
   }
-  if (by === "deviation") {
-    return { title: "deviation, mm: tolerance " + Number(tolerance), min: "0",
-             max: sim.scales.deviation.toFixed(0),
-             bands: ["within", "near", "over"].map((name) => ({ name, colour: DEVIATION_COLOURS[name] })) };
+  return picked.map(([target, value]) => ({ ...target, value, text: textFor(by, value) }));
+}
+
+// The weakest parts at a capture (spec 2026-10-11 section 5.3): every part
+// over its limit, the furthest over first (a wire over one spool's pull, a
+// rope over its working load, a tree member over 1.0, a node outside the
+// tolerance); with none over, the five closest to their limits. A kind with
+// no limit is not judged. limits: { have, rope, tolerance }.
+export function weakestAt(sim, index, limits) {
+  const c = sim && sim.captures[index];
+  if (!c) return [];
+  const given = limits || {};
+  const kinds = [["wire", "wire", given.have], ["tension", "member", given.rope],
+                 ["utilisation", "tree", 1.0], ["deviation", "node", given.tolerance]];
+  const all = [];
+  for (const [by, kind, limit] of kinds) {
+    if (limit == null || !(Number(limit) > 0)) continue;
+    for (const [target, value] of valuesFor(sim, c, by)) {
+      if (value == null || !Number.isFinite(value)) continue;
+      all.push({ kind, index: target.index, value, limit: Number(limit), ratio: value / Number(limit),
+                 over: value > Number(limit), text: textFor(by, value) });
+    }
   }
-  return null;
+  all.sort((a, b) => b.ratio - a.ratio);
+  const over = all.filter((item) => item.over);
+  return over.length ? over : all.slice(0, 5);
 }
 
 // Where a part is at a capture, in metres: a member's midpoint, a node, a
@@ -606,21 +697,24 @@ export function paintOverlay(ctx, { width, height, caption, labels, key }) {
     ctx.fillStyle = OVERLAY_INK;
     ctx.font = px(12) + "px sans-serif";
     ctx.fillText(key.title, barX, y0 + px(14));
-    if (key.bands) {
-      const each = barW / key.bands.length;
-      key.bands.forEach((band, i) => {
-        ctx.fillStyle = band.colour;
-        ctx.fillRect(barX + i * each, barY, each - 1, barH);
-        ctx.fillStyle = "#111111";
-        ctx.font = px(10) + "px sans-serif";
-        ctx.fillText(band.name, barX + i * each + px(4), barY + barH / 2);
-      });
-    } else {
-      const ramp = ctx.createLinearGradient(barX, 0, barX + barW, 0);
-      ramp.addColorStop(0, "#f2efe8");
-      ramp.addColorStop(1, "#cc2211");
-      ctx.fillStyle = ramp;
-      ctx.fillRect(barX, barY, barW, barH);
+    const gradient = ctx.createLinearGradient(barX, 0, barX + barW, 0);
+    RAMP_STOPS.forEach((stop, i) => gradient.addColorStop(i / (RAMP_STOPS.length - 1), stop));
+    ctx.fillStyle = gradient;
+    ctx.fillRect(barX, barY, barW, barH);
+    if (key.limitText) {
+      // the limit at its place on the bar, or named beside the title when it
+      // is past the run's largest
+      ctx.font = px(10) + "px sans-serif";
+      if (key.fraction != null) {
+        const at = barX + key.fraction * barW;
+        ctx.fillStyle = OVERLAY_INK;
+        ctx.fillRect(at - px(1), barY - px(3), px(2), barH + px(6));
+        ctx.fillText(key.limitText, Math.min(at + px(3), barX + barW - ctx.measureText(key.limitText).width),
+                     barY - px(7));
+      } else {
+        ctx.fillStyle = OVERLAY_INK;
+        ctx.fillText(key.limitText, barX + barW - ctx.measureText(key.limitText).width, y0 + px(14));
+      }
     }
     ctx.fillStyle = OVERLAY_INK;
     ctx.font = px(11) + "px sans-serif";
