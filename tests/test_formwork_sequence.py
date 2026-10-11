@@ -262,3 +262,88 @@ def test_the_thinnest_wall_holds_every_capture():
 def test_a_model_with_no_frames_is_refused():
     with pytest.raises(ne.EngineError, match="no frames"):
         fs.simulate(_toy()._replace(frames=[]))
+
+
+# spec 2026-10-11 one Cable net tab, sections 6 and 7: N rods a side, placed by
+# the studio at the hold, and a run again from the state there.
+#
+# Each node's side in the toy: its rim is four corners no boundary edge joins,
+# so each corner is a side of its own, numbered in the rim's order, and each
+# node goes with the corner fewest steps away, ties to the lower side.
+SIDES = (0, 0, 1, 0, 0, 1, 2, 2, 3)
+
+
+def _chain(sides=(0,) * 6, per_side=2):
+    # six nodes in a line, a wire on the first, a head under the last
+    return _toy()._replace(design=np.zeros((6, 3)), edges=np.array([(i, i + 1) for i in range(5)]),
+                           rim={0: None}, heads=[(5, 0)], sides=sides, holds_per_side=per_side)
+
+
+def test_the_rods_go_on_the_furthest_nodes_never_a_head_a_wire_node_or_a_neighbour():
+    x = np.zeros((6, 3))
+    x[:, 2] = [50.0, 9.0, 10.0, 8.0, 7.0, 100.0]
+    # 5 is furthest but a head, 0 a wire's node; 2 next, then 1 and 3 are its
+    # neighbours, so 4
+    assert fs.place_holds(_chain(), x) == (2, 4)
+    assert fs.place_holds(_chain(per_side=1), x) == (2,)
+    assert fs.place_holds(_chain(per_side=20), x) == (2, 4)      # all a side can take
+    assert fs.place_holds(_chain(per_side=0), x) == ()
+    assert fs.place_holds(_chain(sides=()), x) == ()             # a net with no sides
+    # each side on its own sag: the second side's 4 is held though the first
+    # side's 1 is further from the design, and its 3 is not, a rod's neighbour
+    assert fs.place_holds(_chain(sides=(0, 0, 0, 1, 1, 1), per_side=1), x) == (2, 4)
+
+
+def test_n_rods_a_side_go_where_the_run_without_holds_sags_most_and_are_jacked():
+    plain = fs.simulate(_toy())
+    off = np.linalg.norm(plain.captures[2].x - _toy().design, axis=1)    # at the hold
+    first = max((1, 3), key=lambda node: (off[node], -node))
+    model = _toy()._replace(sides=SIDES, holds_per_side=1)
+    result = fs.simulate(model)
+    # side 3, the corner 8 alone, has nothing to hold
+    assert result.holds == (first, 5, 7)
+    captures = result.captures
+    assert [c.phase for c in captures] == ["raise", "finish", "hold", "holds"] + ["tiling"] * 4
+    for c in captures[3:]:
+        assert c.hold_push.shape == (3, 3)
+        for node in result.holds:
+            assert c.x[node] == pytest.approx(model.design[node], abs=1.0e-6)
+    # two a side: side 0 takes both its edge midpoints, which are not neighbours
+    assert fs.simulate(model._replace(holds_per_side=2)).holds == (first, 4 - first, 5, 7)
+    # and nought a side is the run without holds
+    none = fs.simulate(model._replace(holds_per_side=0))
+    assert none.holds == () and [c.phase for c in none.captures] == [c.phase for c in plain.captures]
+
+
+def _same_capture(a, b):
+    for field in fs.Capture._fields:
+        mine, theirs = getattr(a, field), getattr(b, field)
+        if isinstance(mine, np.ndarray):
+            assert np.array_equal(mine, theirs), field
+        elif field == "tree_bending":
+            assert mine.keys() == theirs.keys()
+            assert all(np.array_equal(mine[k], theirs[k]) for k in mine)
+        else:
+            assert mine == theirs, field
+
+
+@pytest.mark.parametrize("wires_per_motor", [1, 2])
+def test_a_run_from_the_state_at_the_hold_is_the_full_run_with_the_same_holds(wires_per_motor):
+    base = fs.simulate(_toy(wires_per_motor)._replace(sides=SIDES))
+    # the state is the raise alone, kept as it was at the hold
+    assert [c.phase for c in base.state.captures] == ["raise", "finish", "hold"]
+    model = _toy(wires_per_motor)._replace(sides=SIDES, holds_per_side=2)
+    full = fs.simulate(model)
+    # the raise does not depend on the holds, motors paired and all
+    assert np.array_equal(full.state.x, base.state.x) and full.groups == base.groups
+    told = []
+    again = fs.simulate(model, lambda done, total, what: told.append((done, total)),
+                        state=base.state)
+    assert again.holds == full.holds and again.groups == full.groups
+    assert np.array_equal(again.rest_lengths, full.rest_lengths)
+    assert len(again.captures) == len(full.captures)
+    for mine, theirs in zip(again.captures, full.captures):
+        _same_capture(mine, theirs)
+    assert again.thinnest_wall == full.thinnest_wall
+    # only the jacking and the tiling are worked out again
+    assert told[-1] == (5, 5) and {total for _, total in told} == {5}
