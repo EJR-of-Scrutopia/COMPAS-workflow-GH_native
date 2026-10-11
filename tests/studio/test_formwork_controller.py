@@ -46,14 +46,18 @@ def test_the_controller_loads_where_there_is_no_page(tmp_path):
     assert result.stdout.strip() == "mountFormwork"
 
 
-def test_the_run_sends_the_mechanism_the_wall_and_the_tolerance_and_never_a_prestress():
-    # spec section 4.2: the server cuts the net for one spool's pull
+def test_the_run_sends_the_mechanism_the_wall_and_the_rods_and_never_a_prestress():
+    # spec section 4.2: the server cuts the net for one spool's pull; section
+    # 7: the tolerance is no run, and a run for other rods starts from the hold
     body = _inner(JS, "startRun")
+    assert body.startswith("function startRun(resume = false) {")
     assert "const choices = mechanism.chosen();" in body
     assert 'if (!choices) { el.runStatus.textContent = "Choose a mechanism"; return; }' in body
     assert ("const body = { ...sentOptions(options), mechanism: choices, wall: Number(el.wall.value),\n"
-            "                     tolerance_mm: Number(el.tolerance.value) };") in body
-    assert "/formwork/run" in body and "prestress" not in body
+            "                     holds_per_side: Number(el.holds.value), resume };") in body
+    assert "/formwork/run" in body and "prestress" not in body and "tolerance" not in body
+    # Run is always a full run: the click's event is not a resume
+    assert 'el.run.addEventListener("click", () => startRun(false));' in JS
     assert 'el.runStatus.textContent = "starting: about two minutes";' in body
     watch = _inner(JS, "watch")
     assert "`capture ${run.stage} of ${run.of}`" in watch and "await load();" in watch
@@ -80,13 +84,38 @@ def test_the_mechanism_is_the_pop_ups_and_a_change_reruns_once_it_settles():
             "choices, byHand); },") in STUDIO
     changed = _inner(JS, "mechanismChanged")
     assert ('if (wanted && choices && outOfDate().includes("Run again: mechanism changed")) '
-            "scheduleRerun();") in changed
+            "scheduleRerun(false);") in changed
     assert "const RERUN_SETTLE_MS = 1000;" in JS
     rerun = _inner(JS, "scheduleRerun")
-    assert "}, RERUN_SETTLE_MS);" in rerun and "startRun();" in rerun
+    assert "}, RERUN_SETTLE_MS);" in rerun and "startRun(tab.resume);" in rerun
     assert "mechanism.setWires(Number(el.wires.value));" in JS
     # the pop-up says whether a change was his hand or a list read again
     assert "onChange(chosen(), true);" in PICK and "onChange(chosen(), false);" in PICK
+
+
+def test_rods_a_side_rerun_from_the_hold_once_they_settle():
+    # spec sections 6 and 7: Holds a side, 0 to 20; a change reruns from the
+    # state at the hold one second after the last change, and a full run
+    # waiting wins over one from the hold
+    rerun = _inner(JS, "scheduleRerun")
+    assert rerun.startswith("function scheduleRerun(resume = false) {")
+    assert "tab.resume = tab.rerun == null ? resume : tab.resume && resume;" in rerun
+    assert "tab.rerun = null;" in rerun and "startRun(tab.resume);" in rerun
+    assert ('if (tab.sim && outOfDate().includes("Run again: rods a side changed")) '
+            "scheduleRerun(true);") in JS
+    out_of_date = _inner(JS, "outOfDate")
+    assert ("formworkWarnings(tab.sim, { mechanism: mechanism.chosen(),\n"
+            "                                       holdsPerSide: Number(el.holds.value) })"
+            ) in out_of_date
+    watch = _inner(JS, "watch")
+    assert ('if (lines.includes("Run again: mechanism changed")) scheduleRerun(false);\n'
+            '          else if (lines.includes("Run again: rods a side changed")) '
+            "scheduleRerun(true);") in watch
+    # the slider shows the run's rods when a study's run is first read, and
+    # is his from then on
+    load = _inner(JS, "load")
+    assert "const first = !tab.sim;" in load
+    assert "if (sim && first) setHolds(sim.holdsPerSide);" in load
 
 
 def test_the_answer_greys_when_out_of_date_and_its_needed_goes_to_the_wire():

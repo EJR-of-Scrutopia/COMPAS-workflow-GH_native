@@ -57,7 +57,8 @@ function checkLines(checks) {
 export function mechanismHtml(entry, checks) {
   if (!entry) return "";
   const rows = [["Have", newtons(entry.have_newtons) + " a spool"],
-                ["Limited by", esc(entry.part) + ", " + esc(LIMIT_NAMES[entry.limit] || entry.limit)]];
+                ["Limited by", esc(LIMIT_NAMES[entry.limit] || entry.limit) + ", "
+                  + esc(entry.part_name || entry.part)]];
   checkLines(checks).forEach((line, i) => rows.push([i === 0 ? "Checks" : "", esc(line)]));
   return "<table>" + rows.map(([name, value]) => `<tr><th>${name}</th><td>${value}</td></tr>`).join("")
     + "</table>";

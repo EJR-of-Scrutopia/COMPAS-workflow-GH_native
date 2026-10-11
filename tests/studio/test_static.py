@@ -4652,10 +4652,12 @@ def test_the_cable_net_tab_is_a_run_its_answer_a_player_and_its_views():
     # the player in the studio's own symbols
     assert ('<button id="formwork-play" class="icon-act" type="button" title="Play">&#9654;</button>'
             in section)
-    # no Worst, no holds search
+    # no Worst, no holds search: Holds a side instead, 0 to 20, none to start
     for gone in ("formwork-worst-toggle", "formwork-popup", "formwork-holds-choice",
-                 'id="formwork-holds"', "data-label="):
+                 "data-label="):
         assert gone not in html, gone
+    assert ('<input id="formwork-holds" type="range" data-unit="1" min="0" max="20" step="1" '
+            'value="0">' in section)
     for ident in ("formwork-labels", "formwork-pick"):
         assert 'id="{}"'.format(ident) in html, ident
     # the key's limit marker

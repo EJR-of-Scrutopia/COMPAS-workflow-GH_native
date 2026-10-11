@@ -71,6 +71,16 @@ def test_the_list_holds_one_whole_mechanism_a_buildable_motor_strongest_first():
     assert top["limit"] and top["part"]
 
 
+def test_the_part_that_limits_a_spool_is_named_as_it_is_bought():
+    parts = catalogue.load_parts()
+    assert machine.part_name(parts, "rope-8mm") == "8 mm 7x19"
+    assert machine.part_name(parts, "GPS-55-209464") == "GPS 55 mm polyamide"
+    assert machine.part_name(parts, "23HS45-4204D-E1000") == "23HS45-4204D-E1000"
+    assert machine.part_name(parts, "no-such-part") == "no-such-part"
+    for entry in machine.presets(parts, FACTS, ANGLE, 1):
+        assert entry["part_name"] == machine.part_name(parts, entry["part"])
+
+
 def test_sharing_a_motor_never_raises_a_spools_pull():
     parts = catalogue.load_parts()
     alone = {entry["choices"]["motor"]: entry["have_newtons"]

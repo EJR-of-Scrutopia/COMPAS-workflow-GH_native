@@ -44,17 +44,15 @@ def capture(phase, time, row, quarter, lift, tension, deviation, push, wire, uti
 
 def with_holds(doc):
     # node 3 held from the jacking on: the capture after the hold, pushing
-    # 40 N straight up (a strut), then pulling 50 N down and sideways (a tie),
-    # and the search that chose it
+    # 40 N straight up (a strut), then pulling 50 N down and sideways (a tie);
+    # one rod a side, its side 1 (spec 2026-10-11 one Cable net tab, section 6)
     doc = json.loads(json.dumps(doc))
     doc["net"]["holds"] = [3]
+    doc["net"]["holds_per_side"] = 1
+    doc["net"]["hold_sides"] = [1]
     pushes = [[0, 0, 0], [0, 0, 0], [0, 0, 40], [30, 0, -40]]
     for c, push in zip(doc["captures"], pushes):
         c["hold_push"] = pack([push])
-    doc["holds"] = {"spacing": 5, "bands": [5, 10], "count": 190, "tolerance_mm": 20.0,
-                    "met": True, "tried": [
-                        {"spacing": 10, "count": 95, "deviation_max_mm": 412.3},
-                        {"spacing": 5, "count": 190, "deviation_max_mm": 14.2}]}
     return doc
 
 
@@ -135,9 +133,9 @@ out.pickRim = m.formworkPickHtml(sim, 1, 0);
 out.pickNone = m.formworkPickHtml(sim, 1, 9);
 // the holds (spec 2026-10-10 formwork holds, section 5)
 const held = m.readSim(holdsDoc);
-out.heldRead = { holds: held.holds, search: held.search,
+out.heldRead = { holds: held.holds, perSide: held.holdsPerSide, sides: held.holdSides,
                  push: held.captures.map((c) => Array.from(c.holdPush)) };
-out.plainHolds = [sim.holds, sim.search, Array.from(sim.captures[0].holdPush)];
+out.plainHolds = [sim.holds, sim.holdsPerSide, sim.holdSides, Array.from(sim.captures[0].holdPush)];
 out.heldLine = [m.frameLine(held, 2), m.frameLineHtml(m.frameLine(held, 2)), m.frameLineHtml(m.frameLine(held, 3))];
 out.plainLine = m.frameLineHtml(m.frameLine(sim, 2));
 out.heldPick = [m.formworkPickHtml(held, 2, 3), m.formworkPickHtml(held, 3, 3), m.formworkPickHtml(held, 2, 2)];
@@ -326,12 +324,11 @@ def test_a_recorded_frame_carries_the_labels_and_the_key(out):
 
 def test_the_holds_are_read_with_each_holds_push(out):
     read = out["heldRead"]
-    assert read["holds"] == [3]
-    assert read["search"]["spacing"] == 5 and read["search"]["met"] is True
+    assert read["holds"] == [3] and read["perSide"] == 1 and read["sides"] == [1]
     assert read["push"] == [[0, 0, 0], [0, 0, 0], [0, 0, 40], [30, 0, -40]]
     # a run with no holds reads none
-    holds, search, push = out["plainHolds"]
-    assert holds == [] and search is None and push == []
+    holds, per_side, sides, push = out["plainHolds"]
+    assert holds == [] and per_side == 0 and sides is None and push == []
 
 
 def test_the_frame_line_and_the_card_count_the_struts_and_the_ties(out):

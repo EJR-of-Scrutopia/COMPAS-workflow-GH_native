@@ -101,10 +101,12 @@ export function readSim(doc) {
     trees: { members: trees.members || [], heads: trees.heads || [], feet: trees.feet || [],
              diameter: Number(trees.diameter) || 60.3, wall: trees.wall },
     captures,
-    // the holds (spec 2026-10-10 formwork holds): the held nodes, and the
-    // search that chose them, or none
+    // the holds (spec 2026-10-10 formwork holds): the held nodes, the rods a
+    // side asked for and each rod's side (spec 2026-10-11 one Cable net tab,
+    // section 6)
     holds: Array.isArray(net.holds) ? net.holds : [],
-    search: doc.holds || null,
+    holdsPerSide: Number(net.holds_per_side) || 0,
+    holdSides: Array.isArray(net.hold_sides) ? net.hold_sides : null,
     // each node's side (spec 2026-10-11 one Cable net tab, section 6), and the
     // mechanism's drum and carriage judged on the run's own reels (8.1)
     sides: Array.isArray(net.sides) ? net.sides : null,
@@ -483,6 +485,8 @@ export function formworkWarnings(sim, chosen) {
   if (mine && (!ran || MECHANISM_KEYS.some((key) => (ran[key] ?? null) !== (mine[key] ?? null)))) {
     out.push("Run again: mechanism changed");
   }
+  const rods = chosen && chosen.holdsPerSide;
+  if (rods != null && Number(rods) !== sim.holdsPerSide) out.push("Run again: rods a side changed");
   return out;
 }
 
@@ -519,7 +523,9 @@ export function answer(sim, tolerance) {
   const last = sim.captures[sim.captures.length - 1];
   const worst = largestOf(last.deviation);
   const form = { mm: worst, tolerance: Number(tolerance), within: worst <= Number(tolerance) };
-  return { needed, have, gap, form };
+  // the rods a side asked for and how many went on (spec section 6)
+  const holds = { perSide: sim.holdsPerSide, rods: sim.holds.length };
+  return { needed, have, gap, form, holds };
 }
 
 // The mechanism as the answer names it: "23HS45-4204D-E1000 20:1".
@@ -547,6 +553,10 @@ export function answerHtml(a, { stale = false } = {}) {
   if (a.gap) rows.push(row(a.gap.missing ? "Missing" : "Spare", grouped(a.gap.newtons) + " " + mark(!a.gap.missing)));
   rows.push(row("Form", millimetres(a.form.mm) + " " + mark(a.form.within),
                 "worst offset, tolerance " + Number(a.form.tolerance) + " mm"));
+  const rods = a.holds ? a.holds.rods : 0;
+  const counted = rods + (rods === 1 ? " rod" : " rods");
+  rows.push(row("Holds", !rods ? "none"
+    : a.holds.perSide ? a.holds.perSide + " a side, " + counted : counted));
   return `<table class="answer${stale ? " stale" : ""}">` + rows.join("") + "</table>";
 }
 
