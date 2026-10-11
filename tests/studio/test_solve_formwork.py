@@ -185,3 +185,36 @@ def test_a_state_for_another_request_or_none_readable_is_a_full_run(tmp_path):
         assert again["resumed"] is False and again["captures"] == full["captures"]
     state.write_bytes(b"not a state")
     assert solve_formwork.solve({**other, "state_in": str(state)})["resumed"] is False
+
+
+TENDON_LINES = [{"head": 0, "side": side, "path": [4, node]}
+                for side, node in ((0, 1), (0, 3), (1, 5), (2, 7))]
+
+
+def test_the_document_carries_the_pull_each_tendons_line_and_its_tension(tmp_path):
+    document = solve_formwork.solve({**_request(), "tendons": TENDON_LINES, "tendon_pull": 50.0})
+    tendons = document["tendons"]
+    assert tendons["pull_n"] == 50.0
+    assert [line["path"] for line in tendons["lines"]] == [[4, 1], [4, 3], [4, 5], [4, 7]]
+    assert [line["side"] for line in tendons["lines"]] == [0, 0, 1, 2]
+    assert tendons["lines"][0]["head"] == 0
+    # each line pulls once it is off the ground: from the hold on, all four
+    for c in document["captures"]:
+        pulls = solve_formwork.unpack(c["tendon_tension"]).tolist()
+        assert len(pulls) == 4 and set(pulls) <= {0.0, 50.0}
+        if c["phase"] not in ("raise", "finish"):
+            assert pulls == [50.0] * 4
+    assert document["summary"]["tendon_pull_n"] == 50.0
+    # no pull is no tendons
+    for asked in ({**_request(), "tendons": TENDON_LINES}, _request()):
+        plain = solve_formwork.solve(asked)
+        assert plain["tendons"] is None and plain["summary"]["tendon_pull_n"] is None
+        assert solve_formwork.unpack(plain["captures"][0]["tendon_tension"]).shape == (0,)
+    # and a state at the hold with tendons is a full run's to the bit
+    state = tmp_path / "state.json.gz"
+    pulled = {**_request(), "tendons": TENDON_LINES, "tendon_pull": 50.0, "sides": SIDES}
+    solve_formwork.solve({**pulled, "state_out": str(state)})
+    asked = {**pulled, "holds_per_side": 1}
+    again = solve_formwork.solve({**asked, "state_in": str(state)})
+    assert again["resumed"] is True
+    assert again["captures"] == solve_formwork.solve(asked)["captures"]

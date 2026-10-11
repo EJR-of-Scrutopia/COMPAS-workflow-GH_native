@@ -360,6 +360,79 @@ def sides_of(faces, edges, rim_nodes, node_count):
     return sides
 
 
+NO_TENDONS = "No tendons: this net's lines do not run across from a principal line"
+
+
+def across_lines(faces, heads, sides=None):
+    """The across lines (spec 2026-10-11 across tendons, section 2): the quads
+    sorted into two families from the principal lines out (an edge joining two
+    head nodes runs along; across a quad the opposite edge keeps its family and
+    a side edge takes the other), and from each head node each across edge
+    followed outward, a step further from the principal line each time, to its
+    end. heads: the column heads' net nodes in the run's order; sides: each
+    node's side, or None. Returns (families, lines, reason): {(a, b) ascending:
+    "along" | "across"}, [{"head": index in heads, "side": the last node's side,
+    "path": [nodes]}], and None; or (None, [], NO_TENDONS) for a net that does
+    not sort."""
+
+    if not faces or any(len(face) != 4 for face in faces):
+        return None, [], NO_TENDONS
+    head_nodes = [int(node) for node in heads]
+    heads_set = set(head_nodes)
+    key = lambda a, b: (a, b) if a < b else (b, a)
+    face_edges = [[key(int(f[i]), int(f[(i + 1) % 4])) for i in range(4)] for f in faces]
+    edge_faces = {}
+    for index, edges in enumerate(face_edges):
+        for k, edge in enumerate(edges):
+            edge_faces.setdefault(edge, []).append((index, k))
+    along = [edge for edge in edge_faces if edge[0] in heads_set and edge[1] in heads_set]
+    if not along:
+        return None, [], NO_TENDONS
+    families = {edge: "along" for edge in along}
+    queue = list(along)
+    while queue:
+        edge = queue.pop()
+        for index, k in edge_faces[edge]:
+            edges = face_edges[index]
+            other = "across" if families[edge] == "along" else "along"
+            for neighbour, wanted in ((edges[(k + 2) % 4], families[edge]),
+                                      (edges[(k + 1) % 4], other), (edges[(k + 3) % 4], other)):
+                if neighbour not in families:
+                    families[neighbour] = wanted
+                    queue.append(neighbour)
+                elif families[neighbour] != wanted:
+                    return None, [], NO_TENDONS
+    if len(families) != len(edge_faces):
+        return None, [], NO_TENDONS
+    across = {}
+    for (a, b), kind in families.items():
+        if kind == "across":
+            across.setdefault(a, []).append(b)
+            across.setdefault(b, []).append(a)
+    band = {node: 0 for node in heads_set}
+    frontier = sorted(heads_set)
+    while frontier:
+        reached = []
+        for a in frontier:
+            for b in across.get(a, []):
+                if b not in band:
+                    band[b] = band[a] + 1
+                    reached.append(b)
+        frontier = reached
+    lines = []
+    for index, head in enumerate(head_nodes):
+        for first in sorted(b for b in across.get(head, []) if band.get(b) == 1):
+            path = [head, first]
+            while True:
+                onward = [b for b in across.get(path[-1], []) if band.get(b) == band[path[-1]] + 1]
+                if len(onward) != 1:
+                    break
+                path.append(onward[0])
+            lines.append({"head": index, "path": path,
+                          "side": None if sides is None else sides[path[-1]]})
+    return families, lines, None
+
+
 def _floats(entry):
     """One packed array of a capture document (solve_formwork.pack), read with
     the standard library: the studio's server imports no numpy."""
@@ -401,16 +474,19 @@ def travel_checks(parts, configuration, document, reeve_by_node, rim_nodes):
 def run_formwork(inputs, arrays, binding, plan, thickness, density, out_path, ea,
                  mass_per_metre, prestress, wires_per_motor, wall, study=None, options=None,
                  note=None, runner=None, python_exe=None, progress=None, holds_per_side=0,
-                 state_path=None, resume=False, annotate=None):
+                 state_path=None, resume=False, annotate=None, pull_in=0.0):
     """From a checked study and its cut to a written capture document. runner,
     when given, replaces the subprocess: it takes the request and progress and
     returns the document. progress, when given, is called with (captures done,
     captures in all, what). The engine is told each node's side (sides_of) and
     places holds_per_side rods on each; it keeps its state at the hold at
     state_path, and with resume a state there is where it starts (spec
-    2026-10-11 one Cable net tab, sections 6 and 7). The document gains the
-    sides, and annotate, when given, adds what it returns from the finished
-    document."""
+    2026-10-11 one Cable net tab, sections 6 and 7). With a pull_in, N, the
+    engine is handed a tendon along each across line (across_lines) pulled in
+    with it (spec 2026-10-11 across tendons). The document gains the sides,
+    each edge's family (null for a net that does not sort), the reason a
+    pulled run has no tendons, and what annotate, when given, returns from the
+    finished document."""
 
     request = request_from(inputs, arrays, binding, plan, thickness, density, ea,
                            mass_per_metre, prestress, wires_per_motor, wall, study, options, note)
@@ -421,7 +497,11 @@ def run_formwork(inputs, arrays, binding, plan, thickness, density, out_path, ea
     if holds_per_side and sides is None:
         raise FormworkError("rods a side need the net's sides, and this net's rim does not "
                             "split into wired runs")
-    request.update(sides=sides, holds_per_side=int(holds_per_side))
+    families, lines, reason = across_lines(arrays.get("faces"),
+                                           [net for net, _ in inputs.heads], sides)
+    pulled = float(pull_in) > 0.0
+    request.update(sides=sides, holds_per_side=int(holds_per_side),
+                   tendons=lines if pulled else [], tendon_pull=float(pull_in) if pulled else 0.0)
     if state_path is not None:
         request["state_out"] = str(state_path)
         if resume and Path(state_path).is_file():
@@ -430,6 +510,9 @@ def run_formwork(inputs, arrays, binding, plan, thickness, density, out_path, ea
         runner = _subprocess_runner(python_exe or FORMWORK_PYTHON)
     document = runner(request, progress)
     document.setdefault("net", {})["sides"] = sides
+    document["net"]["families"] = None if families is None or edges is None else [
+        families.get((min(int(a), int(b)), max(int(a), int(b)))) for a, b in edges]
+    document["tendons_reason"] = reason if pulled else None
     if annotate is not None:
         document.update(annotate(document))
     bundle.write_json_atomically(Path(out_path), document)

@@ -2,8 +2,9 @@
 // sections 8.2 and 8.3): the run's mechanism priced as one spooling mechanism,
 // the spools, the cabinets and the total; and two graphs over the run's
 // captures, the worst wire against one spool's pull and the worst offset
-// against the tolerance, each limit a dashed line at its place. Pure, and
-// tested under node.
+// against the tolerance, each limit a dashed line at its place; and for a run
+// with tendons a third, their pull in all (spec 2026-10-11 across tendons,
+// section 6). Pure, and tested under node.
 
 import { escapeHtml } from "./labels.js";
 
@@ -38,12 +39,20 @@ function worst(values) {
   return most;
 }
 
-// The two series the graphs draw (section 8.3): at each capture, the largest
-// wire tension, N, and the largest offset from the design, mm.
+function total(values) {
+  let sum = 0;
+  for (let i = 0; values && i < values.length; i++) sum += values[i];
+  return sum;
+}
+
+// The series the graphs draw (section 8.3): at each capture, the largest
+// wire tension, N, the largest offset from the design, mm, and the tendons'
+// pull in all, N.
 export function graphSeries(sim) {
   const captures = (sim && sim.captures) || [];
   return { wire: captures.map((c) => worst(c.wireTension)),
-           offset: captures.map((c) => worst(c.deviation)) };
+           offset: captures.map((c) => worst(c.deviation)),
+           pull: captures.map((c) => total(c.tendonTension)) };
 }
 
 const W = 400;
@@ -92,5 +101,6 @@ export function graphsHtml(sim, have, tolerance) {
   return graphSvg(series.wire, pull, { title: "worst wire, N",
     limitText: pull == null ? "" : "one spool " + Math.round(pull).toLocaleString("en-GB") + " N" })
     + graphSvg(series.offset, Number(tolerance), { title: "worst offset, mm",
-      limitText: "tolerance " + Number(tolerance) + " mm" });
+      limitText: "tolerance " + Number(tolerance) + " mm" })
+    + (sim.tendons ? graphSvg(series.pull, null, { title: "pull in, all tendons, N" }) : "");
 }

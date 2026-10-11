@@ -75,6 +75,7 @@ export function readSim(doc) {
     ground: Array.isArray(c.ground) ? c.ground : null,
     addedFaces: Array.isArray(c.added_faces) ? c.added_faces : null,
     holdPush: decodeF32(c.hold_push) || new Float32Array(0),
+    tendonTension: decodeF32(c.tendon_tension) || new Float32Array(0),
   }));
   // a capture with no positions cannot be drawn: the document is not read
   // (final review 9)
@@ -91,6 +92,42 @@ export function readSim(doc) {
     }
   }
   const push = percentile95(pushes);
+  // the across tendons (spec 2026-10-11 across tendons, sections 4 and 6):
+  // each edge's family, the pull and each tendon's line, and the tendon whose
+  // path runs along each edge, and through each node past its head (-1 for
+  // none)
+  const edges = net.edges || [];
+  const families = Array.isArray(net.families) ? net.families : null;
+  const tendons = doc.tendons && Array.isArray(doc.tendons.lines)
+    ? { pull: Number(doc.tendons.pull_n) || 0, lines: doc.tendons.lines } : null;
+  const edgeTendon = new Int32Array(edges.length).fill(-1);
+  const nodeTendon = new Int32Array(Number(net.nodes) || 0).fill(-1);
+  if (tendons) {
+    const pair = (a, b) => Math.min(a, b) + "," + Math.max(a, b);
+    const index = new Map(edges.map(([a, b], e) => [pair(a, b), e]));
+    tendons.lines.forEach((line, t) => {
+      const path = line.path || [];
+      for (let k = 1; k < path.length; k++) {
+        const e = index.get(pair(path[k - 1], path[k]));
+        if (e != null) edgeTendon[e] = t;
+        if (path[k] >= 0 && path[k] < nodeTendon.length) nodeTendon[path[k]] = t;
+      }
+    });
+  }
+  // each family's largest over the run: along, its ropes alone; across, each
+  // rope with its tendon; both, every member so
+  let along = 0;
+  let across = 0;
+  let both = 0;
+  for (const c of captures) {
+    for (let e = 0; c.tension && e < edges.length; e++) {
+      const whole = memberForce({ edgeTendon }, c, e);
+      if (whole > both) both = whole;
+      const family = families && families[e];
+      if (family === "along" && c.tension[e] > along) along = c.tension[e];
+      if (family === "across" && whole > across) across = whole;
+    }
+  }
   return {
     study: doc.study, options: doc.options || {},
     nodes: Number(net.nodes) || 0, edges: net.edges || [],
@@ -111,10 +148,23 @@ export function readSim(doc) {
     // mechanism's drum and carriage judged on the run's own reels (8.1)
     sides: Array.isArray(net.sides) ? net.sides : null,
     checks: doc.checks || null,
+    families, tendons, edgeTendon, nodeTendon, tendonsReason: doc.tendons_reason || null,
     scales: { tension: scale("tension"), wire: scale("wireTension"),
-              deviation: scale("deviation"), utilisation: scale("treeUtilisation"), push },
-    older: !Array.isArray(net.faces) || doc.captures.some((c) => !Array.isArray(c.ground)),
+              deviation: scale("deviation"), utilisation: scale("treeUtilisation"), push,
+              along, across, both },
+    // a run from before the families were written cannot tell Along from
+    // Across (spec 2026-10-11 across tendons, section 7)
+    older: !Array.isArray(net.faces) || doc.captures.some((c) => !Array.isArray(c.ground))
+      || !("families" in net),
   };
+}
+
+// A member's whole force at a capture, N: its rope's tension and, on an across
+// line, the pull of the tendon beside it (spec 2026-10-11 across tendons,
+// section 6).
+export function memberForce(sim, c, e) {
+  const t = sim.edgeTendon ? sim.edgeTendon[e] : -1;
+  return c.tension[e] + (t >= 0 ? c.tendonTension[t] || 0 : 0);
 }
 
 // The capture's label: its machine time and phase during the raise, its row
@@ -188,8 +238,14 @@ function pushOf(capture, head) {
   return p ? Math.hypot(p[3 * head], p[3 * head + 1], p[3 * head + 2]) : 0;
 }
 
+// Two neighbouring rings of a tendon at most this far apart are at their stop
+// (net_engine.TENDON_STOP_MM, 20 mm), to within half a millimetre.
+export const RING_STOP_M = 0.0205;
+
 // The frame line (spec section 9): the largest rope, wire, tree and deviation
-// at the capture, and how many heads touch their nodes.
+// at the capture, and how many heads touch their nodes; and with tendons, how
+// many pull and how many rings are at their stop (spec 2026-10-11 across
+// tendons, section 6).
 export function frameLine(sim, index) {
   const c = sim && sim.captures[index];
   if (!c) return null;
@@ -204,9 +260,23 @@ export function frameLine(sim, index) {
     if (kind === "strut") struts += 1;
     else if (kind === "tie") ties += 1;
   }
+  const lines = sim.tendons ? sim.tendons.lines : [];
+  let pulling = 0;
+  let atStop = 0;
+  lines.forEach((line, t) => {
+    if ((c.tendonTension[t] || 0) > 0) pulling += 1;
+    const path = line.path || [];
+    for (let k = 1; k < path.length; k++) {
+      const a = 3 * path[k - 1];
+      const b = 3 * path[k];
+      if (Math.hypot(c.x[b] - c.x[a], c.x[b + 1] - c.x[a + 1], c.x[b + 2] - c.x[a + 2]) < RING_STOP_M) {
+        atStop += 1;
+      }
+    }
+  });
   return { rope: largestOf(c.tension), wire: largestOf(c.wireTension),
            trees: largestOf(c.treeUtilisation), deviation: largestOf(c.deviation), touching, heads,
-           holds, struts, ties };
+           holds, struts, ties, pulling, tendons: lines.length, atStop };
 }
 
 // The force a hold puts on its node at a capture, newtons; nought before the
@@ -255,12 +325,16 @@ export function frameLineHtml(line) {
     ["Trees", line.trees.toFixed(2)], ["Deviation max", millimetres(line.deviation)],
     ["Heads touching", line.touching + "/" + line.heads],
     ...(line.holds ? [["Struts", line.struts + "/" + line.holds], ["Ties", line.ties + "/" + line.holds]]
+      : []),
+    ...(line.tendons ? [["Pulling", line.pulling + "/" + line.tendons], ["At the stop", String(line.atStop)]]
       : [])]);
 }
 
-// Colour by (spec 2026-10-11 one Cable net tab, section 5.1), one at a time.
-export const COLOUR_BY = [["wire", "Wires"], ["tension", "Ropes"], ["deviation", "Offset"],
-  ["utilisation", "Trees"], ["off", "Off"]];
+// Colour by (spec 2026-10-11 one Cable net tab, section 5.1), one at a time;
+// Along, Across and Both in place of Ropes (spec 2026-10-11 across tendons,
+// section 6).
+export const COLOUR_BY = [["wire", "Wires"], ["along", "Along"], ["across", "Across"],
+  ["both", "Both"], ["deviation", "Offset"], ["utilisation", "Trees"], ["off", "Off"]];
 
 // The full ramp every Colour by is drawn on, from a cool blue that shows on the
 // net (so the whole object reads, not only its hotspots) through to red; and
@@ -295,7 +369,8 @@ export function deviationBand(mm, tolerance) {
 
 // The scale of each Colour by: the run's largest, so a colour is the same
 // value in every capture.
-const SCALE = { wire: "wire", tension: "tension", deviation: "deviation", utilisation: "utilisation" };
+const SCALE = { wire: "wire", tension: "tension", deviation: "deviation", utilisation: "utilisation",
+                along: "along", across: "across", both: "both" };
 
 // The colour a value is drawn in under a Colour by choice, [r, g, b] from 0 to
 // 1, on the full ramp over the run (spec 2026-10-11 section 5.1); null where
@@ -311,6 +386,26 @@ function kilo(n) {
   return (Number(n) / 1000).toFixed(1) + " kN";
 }
 
+// The other family's members under Along or Across, drawn in a quiet grey
+// (spec 2026-10-11 across tendons, section 6): a mid grey, so it stays under
+// the family coloured on a dark viewport and shows on a light one (found on
+// screen: a light grey read near white, louder than the family coloured).
+export const OTHER_FAMILY = hexRgb("#7d828a");
+
+// The colour a net member is drawn in under a Colour by choice: its rope's
+// tension under the old Ropes, its family's force under Along and Across (the
+// other family grey), its whole force under Both; null where the choice does
+// not colour members.
+export function memberColour(by, sim, c, e) {
+  if (by === "tension") return colourOf("tension", c.tension[e], sim);
+  if (by === "both") return colourOf("both", memberForce(sim, c, e), sim);
+  if (by === "along" || by === "across") {
+    if (!sim.families || sim.families[e] !== by) return OTHER_FAMILY;
+    return colourOf(by, by === "along" ? c.tension[e] : memberForce(sim, c, e), sim);
+  }
+  return null;
+}
+
 // The key a Colour by choice draws: a real scale from nought to the run's
 // largest, and the limit named, with its place on the bar (fraction) when it
 // is on it; null for Off. limits: { have, rope, tolerance } (a bare number is
@@ -322,6 +417,9 @@ export function colourKey(by, sim, limits) {
   const keyed = {
     wire: ["wire tension, N", grouped(top), given.have, (v) => "one spool " + grouped(v)],
     tension: ["rope tension, kN", kilo(top), given.rope, (v) => "working load " + kilo(v)],
+    along: ["along, rope tension, kN", kilo(top), given.rope, (v) => "working load " + kilo(v)],
+    across: ["across, rope and tendon, kN", kilo(top), null, null],
+    both: ["rope and tendon, kN", kilo(top), given.rope, (v) => "working load " + kilo(v)],
     deviation: ["offset, mm", millimetres(top), given.tolerance, (v) => "tolerance " + Number(v) + " mm"],
     utilisation: ["tree utilisation", top.toFixed(2), 1.0, (v) => "capacity " + Number(v).toFixed(1)],
   }[by];
@@ -332,7 +430,8 @@ export function colourKey(by, sim, limits) {
 }
 
 // The parts a Colour by puts its values on, and which Show tick they need.
-const LABEL_PART = { wire: "wires", tension: "net", deviation: "net", utilisation: "trees", off: "heads" };
+const LABEL_PART = { wire: "wires", tension: "net", deviation: "net", utilisation: "trees", off: "heads",
+                     along: "net", across: "net", both: "net" };
 
 export function labelsShown(by, show) {
   return !!(show || {})[LABEL_PART[by]];
@@ -347,6 +446,12 @@ function valuesFor(sim, c, by) {
     sim.rim.nodes.forEach((node, w) => out.push([{ kind: "wire", index: w }, c.wireTension[w], side(node)]));
   } else if (by === "tension") {
     sim.edges.forEach(([u], e) => out.push([{ kind: "member", index: e }, c.tension[e], side(u)]));
+  } else if (by === "along" || by === "across" || by === "both") {
+    sim.edges.forEach(([u], e) => {
+      if (by !== "both" && (!sim.families || sim.families[e] !== by)) return;
+      out.push([{ kind: "member", index: e }, by === "along" ? c.tension[e] : memberForce(sim, c, e),
+                side(u)]);
+    });
   } else if (by === "deviation") {
     for (let i = 0; i < sim.nodes; i++) out.push([{ kind: "node", index: i }, c.deviation[i], side(i)]);
   } else if (by === "utilisation") {
@@ -359,7 +464,7 @@ function valuesFor(sim, c, by) {
 
 function textFor(by, value) {
   if (by === "wire" || by === "off") return grouped(value);
-  if (by === "tension") return kilo(value);
+  if (by === "tension" || by === "along" || by === "across" || by === "both") return kilo(value);
   if (by === "deviation") return millimetres(value);
   return Number(value).toFixed(2);
 }
@@ -485,6 +590,10 @@ export function formworkPickHtml(sim, index, node) {
     rows.push(["Wire", escapeHtml(sim.rim.names[wire] || "#" + wire)],
               ["Wire tension", newtons(c.wireTension[wire])]);
   }
+  // a ring or free end's tendon (spec 2026-10-11 across tendons, section 6);
+  // a head's push already carries its tendons' pull
+  const tendon = sim.nodeTendon ? sim.nodeTendon[node] : -1;
+  if (tendon >= 0) rows.push(["Tendon", newtons(c.tendonTension[tendon] || 0)]);
   const members = [];
   sim.edges.forEach(([u, v], e) => {
     if (u === node || v === node) {
@@ -513,6 +622,13 @@ export function formworkWarnings(sim, chosen) {
   }
   const rods = chosen && chosen.holdsPerSide;
   if (rods != null && Number(rods) !== sim.holdsPerSide) out.push("Run again: rods a side changed");
+  // the pull a tendon (spec 2026-10-11 across tendons, section 7), and why a
+  // pulled run has none (section 2)
+  const pull = chosen && chosen.pullIn;
+  if (pull != null && Number(pull) !== Number((sim.options || {}).pull_in || 0)) {
+    out.push("Run again: pull changed");
+  }
+  if (sim.tendonsReason) out.push(sim.tendonsReason);
   return out;
 }
 
@@ -551,7 +667,11 @@ export function answer(sim, tolerance) {
   const form = { mm: worst, tolerance: Number(tolerance), within: worst <= Number(tolerance) };
   // the rods a side asked for and how many went on (spec section 6)
   const holds = { perSide: sim.holdsPerSide, rods: sim.holds.length };
-  return { needed, have, gap, form, holds };
+  // the pull a tendon, the tendons and what they put into the column heads in
+  // all (spec 2026-10-11 across tendons, section 5)
+  const lines = sim.tendons ? sim.tendons.lines.length : 0;
+  const pull = lines ? { newtons: sim.tendons.pull, tendons: lines, total: sim.tendons.pull * lines } : null;
+  return { needed, have, gap, form, holds, pull };
 }
 
 // The mechanism as the answer names it: "23HS45-4204D-E1000 20:1".
@@ -583,6 +703,11 @@ export function answerHtml(a, { stale = false } = {}) {
   const counted = rods + (rods === 1 ? " rod" : " rods");
   rows.push(row("Holds", !rods ? "none"
     : a.holds.perSide ? a.holds.perSide + " a side, " + counted : counted));
+  if (a.pull) {
+    rows.push(row("Pull in", grouped(a.pull.newtons) + " a tendon",
+                  a.pull.tendons + (a.pull.tendons === 1 ? " tendon, " : " tendons, ")
+                  + grouped(a.pull.total) + " in all"));
+  }
   return `<table class="answer${stale ? " stale" : ""}">` + rows.join("") + "</table>";
 }
 
@@ -642,6 +767,8 @@ export function recordingCaption(sim, index) {
     "Deviation max " + millimetres(line.deviation),
     "Heads touching " + line.touching + "/" + line.heads,
     ...(line.holds ? ["Struts " + line.struts + "/" + line.holds, "Ties " + line.ties + "/" + line.holds]
+      : []),
+    ...(line.tendons ? ["Pulling " + line.pulling + "/" + line.tendons, "At the stop " + line.atStop]
       : [])].join("   ");
 }
 

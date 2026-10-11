@@ -347,3 +347,89 @@ def test_a_run_from_the_state_at_the_hold_is_the_full_run_with_the_same_holds(wi
     assert again.thinnest_wall == full.thinnest_wall
     # only the jacking and the tiling are worked out again
     assert told[-1] == (5, 5) and {total for _, total in told} == {5}
+
+
+# spec 2026-10-11 across tendons, section 3 (amended): in the toy the column
+# head is the centre node, and its four across lines run out to the edge
+# midpoints; each tendon is pulled in with the same dialled tension
+TENDONS = ((4, 1), (4, 3), (4, 5), (4, 7))
+
+
+def test_the_net_is_laid_out_unpulled_and_pulled_from_the_raise_on(monkeypatch):
+    seen = []
+    real = ne.settle
+
+    def spy(x, net, *args, **kwargs):
+        seen.append((kwargs.get("slide", False), net.tendons))
+        return real(x, net, *args, **kwargs)
+
+    monkeypatch.setattr(ne, "settle", spy)
+    result = fs.simulate(_toy()._replace(tendons=TENDONS, tendon_pull=50.0))
+    assert seen[0][0] is True and seen[0][1] is None          # the layout, by hand
+    assert all(t is not None for _, t in seen[1:])
+    # each line pulls once none of its nodes rests on the ground: at the start
+    # of the raise the toy lies flat, its edge midpoints on the ground; from
+    # the hold on, all four pull
+    assert result.captures[0].tendon_tension.tolist() == [0.0] * 4
+    for c in result.captures:
+        assert c.tendon_tension.shape == (4,)
+        if c.phase not in ("raise", "finish"):
+            assert c.tendon_tension.tolist() == [50.0] * 4
+    # no pull, or no lines: none
+    monkeypatch.setattr(ne, "settle", real)
+    assert all(c.tendon_tension.shape == (0,)
+               for c in fs.simulate(_toy()._replace(tendons=TENDONS)).captures)
+    assert all(c.tendon_tension.shape == (0,)
+               for c in fs.simulate(_toy()._replace(tendon_pull=50.0)).captures)
+
+
+def test_the_tendons_pull_reaches_the_tree_at_the_head():
+    model = _toy()._replace(tendons=TENDONS, tendon_pull=50.0)
+    result = fs.simulate(model)
+    net = ne.ropes(model.edges, result.rest_lengths, model.ea)
+    for c in result.captures:
+        # the head holds the centre node against everything on it: its ropes,
+        # its tendons and its weight (a tiling quarter's skin is nought there)
+        on = ne.rope_forces(c.x, net)[0][4] + model.weight[4]
+        for path in TENDONS:
+            unit = (c.x[path[1]] - c.x[path[0]]) / np.linalg.norm(c.x[path[1]] - c.x[path[0]])
+            on = on + 50.0 * unit
+        assert c.head_push[0] == pytest.approx(-on, abs=0.05), c.phase
+
+
+@pytest.mark.parametrize("wires_per_motor", [1, 2])
+def test_a_run_from_the_state_at_the_hold_with_tendons_is_the_full_run(wires_per_motor):
+    pulled = _toy(wires_per_motor)._replace(sides=SIDES, tendons=TENDONS, tendon_pull=50.0)
+    base = fs.simulate(pulled)
+    model = pulled._replace(holds_per_side=1)
+    full = fs.simulate(model)
+    again = fs.simulate(model, state=base.state)
+    assert again.holds == full.holds
+    for mine, theirs in zip(again.captures, full.captures):
+        _same_capture(mine, theirs)
+
+
+def test_each_line_pulls_by_the_contacts_of_each_step_of_the_tiling(monkeypatch):
+    # found by the final review: the lift-off rule was read once at the hold
+    # and kept for the jacking and the tiling, so a line laid back on the
+    # ground there kept pulling and dragged it. Node 1, on the first line, put
+    # on the ground after the first quarter: the next quarter's settle is
+    # given that line unpulled, the other three pulling
+    model = _toy()._replace(tendons=TENDONS, tendon_pull=50.0)
+    real = ne.settle
+    tiling = []
+
+    def spy(x, net, loads, anchors, contacts, **kwargs):
+        if net.tendons is None or np.array_equal(loads, model.weight):
+            return real(x, net, loads, anchors, contacts, **kwargs)
+        tiling.append(net.tendons.pull.tolist())
+        rest, after = real(x, net, loads, anchors, contacts, **kwargs)
+        if len(tiling) == 1:
+            after = after._replace(resting={**after.resting, 1: np.array(rest.x[1])})
+        return rest, after
+
+    monkeypatch.setattr(ne, "settle", spy)
+    fs.simulate(model)
+    assert len(tiling) >= 2
+    assert tiling[0] == [50.0] * 4
+    assert tiling[1] == [0.0, 50.0, 50.0, 50.0]
