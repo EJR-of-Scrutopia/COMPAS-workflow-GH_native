@@ -114,7 +114,7 @@ stop at the panel and reach no drawer.
 
 **So is a toggle, and its unit cell stays empty.** Invisible is
 `<span>Invisible</span>`, a checkbox, a `<b id="lamp-invisible-value">`
-reading yes or no, and an empty `<em></em>`. A toggle has no unit, and
+left empty (the tick is the state), and an empty `<em></em>`. A toggle has no unit, and
 inventing one ("body", "state") is worse than a blank column: the four
 cells are what the whole block is read down, and the blank is the
 honest fourth. The box sits at its own width at the left of its cell
