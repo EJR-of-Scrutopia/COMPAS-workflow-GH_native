@@ -213,7 +213,7 @@ def test_thickness_control_is_wired_and_honest():
     assert 'id="thickness-input"' in html and 'id="thickness-input-value"' in html
     assert "state.thickness" in js
     assert "thickness=" in js, "loadStudy must send the thickness parameter"
-    assert "verified run used" in js, "the HUD must flag a thickness mismatch"
+    assert '["verified at", ' in js, "the HUD must flag a thickness mismatch"
 
 
 def test_hud_captions_the_thickness_the_bundle_is_actually_built_at():
@@ -240,12 +240,12 @@ def test_the_hud_does_not_call_an_unavailable_material_a_convergence_failure():
     end = js.index("\n}", start)
     body = js[start:end]
     assert 'struck.status === "unavailable"' in body
-    assert "not available for this material" in body
+    assert '"no solver"' in body
     # The two branches must be distinguishable at the text a user reads:
-    # the failure line must not be reachable through the unavailable line.
-    unavailable_start = body.index('struckLine = "struck now: not available')
+    # the failure row must not be reachable through the unavailable row.
+    unavailable_start = body.index('rows.push(["struck", "no solver"')
     unavailable_line = body[unavailable_start:body.index(";", unavailable_start)]
-    assert "no equilibrium found" not in unavailable_line
+    assert "no equilibrium" not in unavailable_line
 
 
 def test_the_pulse_is_gone_on_his_word():
@@ -292,7 +292,7 @@ def test_every_reader_of_struck_now_gives_the_unavailable_case_its_own_reading()
     # The two that print words must print the SAME words: they are on screen
     # at the same time, describing the same state.
     for name in ("updateHud", "layerAvailability"):
-        assert "not available for this material" in _function_body(js, name), (
+        assert "no solver" in _function_body(js, name), (
             "{} must use the wording the other reader already prints on the "
             "same screen".format(name)
         )
@@ -300,7 +300,7 @@ def test_every_reader_of_struck_now_gives_the_unavailable_case_its_own_reading()
     # already run and can never change the answer.
     availability = _function_body(js, "layerAvailability")
     unavailable_at = availability.index("stagingUnavailable()")
-    stale_at = availability.index("until a staged run exists")
+    stale_at = availability.index("not staged")
     assert unavailable_at < stale_at, (
         "the unavailable case must be decided before the fallback that "
         "tells the reader to wait for a staged run"
@@ -332,7 +332,7 @@ def test_every_reader_of_struck_now_gives_the_unavailable_case_its_own_reading()
     # pulse on 2026-09-06; the HUD carries the wording alone now.)
     assert "if (stage) return { on: true };" in availability
     assert "struck && struck.converged" in hud_body
-    assert '"struck now: stands' in hud_body
+    assert 'rows.push(["struck", "stands"]' in hud_body
 
     # State 2: staging ran but the final stage has no per-node field,
     # either because the material has no preset or because the solve did
@@ -340,12 +340,12 @@ def test_every_reader_of_struck_now_gives_the_unavailable_case_its_own_reading()
     # words ("no equilibrium found"), and the gate must be the presence of
     # a staged run, not the numeric value of any field on it.
     assert "staging.stages && staging.stages.length" in availability
-    assert "no equilibrium found on the last staged run" in availability
-    assert "no equilibrium found" in hud_body
+    assert "no equilibrium" in availability
+    assert "no equilibrium" in hud_body
     not_converged_peaks_at = availability.index(
-        'why: "peaks only: no equilibrium found on the last staged run"')
+        'why: "Peaks only: no equilibrium"')
     not_converged_off_at = availability.index(
-        'why: "no equilibrium found on the last staged run, and no verification data"')
+        'why: "No equilibrium, unverified"')
     assert unavailable_at < not_converged_peaks_at < not_converged_off_at < stale_at, (
         "both staged-but-no-field readings (no preset, not converged) must "
         "be decided before the fallback that assumes no staging exists at "
@@ -354,11 +354,11 @@ def test_every_reader_of_struck_now_gives_the_unavailable_case_its_own_reading()
 
     # State 3: no staging at all. Verification peaks if a file is present,
     # nothing otherwise; neither wording claims a run exists.
-    assert 'why: "peaks only until a staged run exists"' in availability
-    assert 'why: "no staging and no verification data"' in availability
+    assert 'why: "Peaks only: not staged"' in availability
+    assert 'why: "Not staged, unverified"' in availability
     staging_guard_at = hud_body.index(
         "if (staging && staging.stages && staging.stages.length)")
-    struck_line_at = hud_body.index("let struckLine")
+    struck_line_at = hud_body.index('rows.push(["struck"')
     assert staging_guard_at < struck_line_at, (
         "updateHud must never compute a struck-now line when there is no "
         "staged run to read one from"
@@ -990,57 +990,40 @@ def test_the_cra_badge_is_gone_and_the_pulse_and_hud_no_longer_need_it():
     assert "updateCraBadge()" not in js[build_start:build_end]
 
 
-def test_data_panel_reports_the_cra_verdict_with_provenance():
+def test_data_panel_reports_the_cra_verdict_as_names_and_values():
     js = (STATIC / "studio.js").read_text(encoding="utf-8")
     panel_start = js.index("function renderDataPanel(")
     panel_end = js.index("\n}", panel_start)
     body = js[panel_start:panel_end]
     assert "craVerdict()" in body
-    assert "EN 1992-1-1 clause 6.2.5" in js
-    assert "timber on timber" in js
+    # His ruling of 11 October 2026 (no descriptive text): the friction is
+    # mu and its value; the clause each material's figure came from is not
+    # printed under the verdict any more.
+    assert "EN 1992-1-1" not in js
+    assert "timber on timber" not in js
+    assert '["mu", ' in body
     # The CRA section must render BEFORE the verification early-out, so it
     # always appears even on staged-but-unverified studies. Verify source order.
     cra_index = body.index("craVerdict()")
-    verify_early_out = body.index("no verification run embedded yet")
+    verify_early_out = body.index('["verification", "none"]')
     assert cra_index < verify_early_out, (
         "CRA section must come before the verification early-return guard, "
         "or staged-but-unverified studies will never show the verdict"
     )
 
 
-def test_friction_provenance_is_keyed_by_material_not_by_value():
-    # Stone's friction is 0.6, the same number staging.py gives concrete, so
-    # a lookup keyed by the numeric mu value would attribute stone's dry
-    # stone rigid block literature source to concrete's EN 1992-1-1 clause
-    # 6.2.5 smooth precast joint. Keying by material name keeps the two
-    # apart even though the numbers collide.
+def test_the_friction_shown_is_the_verdicts_own_mu():
+    # The per-material table of sources (keyed by material so stone's 0.6
+    # was never credited to concrete's precast joint clause) went with his
+    # ruling of 11 October 2026: the panel prints mu and the number the
+    # verdict was solved with, which is the one figure the table and the
+    # verdict could never disagree on.
     js = (STATIC / "studio.js").read_text(encoding="utf-8")
-    start = js.index("const FRICTION_PROVENANCE = {")
-    end = js.index("\n};", start)
-    body = js[start:end]
-    for material in (
-        "concrete", "concrete-c50", "concrete-sprayed", "timber",
-        "brick", "tile", "stone",
-    ):
-        assert '"{}"'.format(material) in body, (
-            "FRICTION_PROVENANCE has no entry for {}".format(material)
-        )
-    assert '"0.6"' not in body and '"0.4"' not in body, (
-        "FRICTION_PROVENANCE must not be keyed by the numeric mu value"
-    )
-    assert "dry stone" in body, "stone must carry its own sourced provenance"
-    stone_start = body.index('"stone":')
-    stone_line = body[stone_start:]
-    assert "EN 1992-1-1" not in stone_line, (
-        "stone must not read as sourced from the concrete precast joint clause"
-    )
+    assert "FRICTION_PROVENANCE" not in js
     panel_start = js.index("function renderDataPanel(")
     panel_end = js.index("\n}", panel_start)
     panel_body = js[panel_start:panel_end]
-    assert "FRICTION_PROVENANCE[state.bundle.material]" in panel_body, (
-        "the Data panel must look the provenance up by the loaded study's "
-        "own material, not by the numeric verdict.mu it happens to carry"
-    )
+    assert "verdict.mu" in panel_body
 
 
 def test_the_data_panel_has_a_cut_section_with_every_measured_disclosure():
@@ -1117,27 +1100,23 @@ def test_the_data_panel_has_a_cut_section_with_every_measured_disclosure():
             "the Cut section must read the residual distribution's {}, not "
             "only the single worst corner".format(field)
         )
-    assert "median describes the cut" in body, (
-        "the panel must say plainly that the median, not the max, "
-        "describes the cut"
-    )
-    assert "rim course" in body, (
-        "the panel must say the residual's worst corners cluster in the "
-        "rim course, not just list numbers"
-    )
+    # His ruling of 11 October 2026: the distribution is the data. The
+    # sentences reading it for him (the median describes the cut, the worst
+    # corners sit in the rim course) are gone.
+    assert "median describes the cut" not in body
+    assert "rim course" not in body
     # An imported cut has to quote its own provenance verbatim and the
     # measured z offset, not the generated cut's target size.
     assert "tess.provenance" in body
     assert "tess.z_offset_max" in body
-    # A cut piece vertex is not a render mesh vertex, so a heatmap value at
-    # a point is an interpolated reading; that change in meaning has to be
-    # named, not just left implicit in sampleScalar's own code.
-    assert "interpolation" in body
+    # The paragraph on barycentric interpolation closed the section until
+    # his ruling of 11 October 2026; it explained, it did not measure.
+    assert "interpolation" not in body
     # The Cut section must render ahead of the verification early-out, the
     # same reason the CRA section does: it must show on a staged-but-
     # unverified study, not only once a verification run exists.
     cut_index = body.index("state.bundle.tessellation")
-    verify_early_out = body.index("no verification run embedded yet")
+    verify_early_out = body.index('["verification", "none"]')
     assert cut_index < verify_early_out, (
         "the Cut section must come before the verification early-return "
         "guard, or an unverified study never shows the cut's own disclosures"
@@ -1174,6 +1153,38 @@ def test_the_data_panel_survives_a_bundle_cached_before_a_field_existed():
         )
 
 
+def test_the_data_panel_and_the_hud_are_names_and_values_red_for_bad():
+    # His ruling of 11 October 2026: "if theres over explanation of things
+    # instead of just showing the data with red for bad, and a basic layout
+    # for information, then we need to remove it." The Overview tab and the
+    # HUD under the Data button are tables of a name and a value, and a
+    # value that is bad wears the deep red the Cable net answer uses.
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    body = _function_body(js, "renderDataPanel")
+    assert 'createElement("p")' not in body, "every reading is a row, not a sentence"
+    assert "nameValueTable(" in body
+    helper = _function_body(js, "nameValueTable")
+    assert 'className = "over"' in helper
+    # The verification run: the two agreements read yes plain, no in red.
+    assert '["reactions agree", cross.reactions_agree ? "yes" : "no", !cross.reactions_agree]' in body
+    assert '["per-member agree", cross.strict_agrees ? "yes" : "no", !cross.strict_agrees]' in body
+    # The server's own paragraphs are not printed, and tension is red,
+    # not shouted.
+    assert "material_assumptions" not in body and "member_note" not in body
+    assert '"TENSION"' not in body
+    for gone in ("retired ring and wedge", "read facets per piece",
+                 "Delete the cached bundle", "since a corner belongs",
+                 "enters none of the coverage counts", "inferred, not authored"):
+        assert gone not in body, gone
+    hud = _function_body(js, "updateHud")
+    assert "hud.replaceChildren(nameValueTable(rows))" in hud
+    for gone in ("drawing only: the analysis used", "no verification run embedded",
+                 "struck now", "shell thickness", "peak compression"):
+        assert gone not in hud, gone
+    css = (STATIC / "studio.css").read_text(encoding="utf-8")
+    assert "#data-content .over, #hud .over" in css
+
+
 def test_the_hud_and_the_size_control_do_not_call_an_authored_size_a_target():
     # bundle.py is explicit that document["size"] is the REQUESTED size and
     # that an authored (imported) cut ignores it entirely -- its own
@@ -1187,25 +1198,24 @@ def test_the_hud_and_the_size_control_do_not_call_an_authored_size_a_target():
         "the size label needs its units in their own span, or the authored "
         "case cannot correct them without garbling the number"
     )
-    for name in ("updateHud", "applyCut"):
-        body = _function_body(js, name)
-        assert 'source === "imported"' in body, (
-            "{} must branch on whether the cut is authored before quoting "
-            "the requested size as a target".format(name)
-        )
-    # The HUD carries the explanation, because a sentence belongs where
-    # there is room for one.
-    assert "size control is not used" in _function_body(js, "updateHud")
-    # The panel carries the correction and nothing more. It used to carry
-    # the sentence too -- 466 pixels of it inside a 300 pixel panel, which
-    # printed through the words "Piece size" and then off the right edge.
-    # The claim the original test was defending is unchanged: an authored
-    # size is never called a target.
-    cut = _function_body(js, "applyCut")
-    assert '" mm requested"' in cut and '" mm target"' in cut
-    assert "size control is not used" not in cut, (
-        "the panel row is a readout, not a paragraph; the HUD says why"
+    # The size control's unit cell no longer names the size at all (his
+    # ruling of 11 October 2026: a unit, not a qualifier), so only the HUD,
+    # which quotes the figure, still has to branch.
+    assert 'source === "imported"' in _function_body(js, "updateHud"), (
+        "updateHud must branch on whether the cut is authored before quoting "
+        "the requested size"
     )
+    # The HUD's size row reads "authored" for such a cut, and no sentence
+    # says why (his ruling of 11 October 2026).
+    hud = _function_body(js, "updateHud")
+    assert '"authored"' in hud
+    assert "size control is not used" not in js
+    # The panel's unit cell is the unit and nothing more: the claim the
+    # original test was defending is unchanged, an authored size is never
+    # called a target, and neither is any other.
+    cut = _function_body(js, "applyCut")
+    assert 'getElementById("size-units").textContent = " mm";' in cut
+    assert '" mm target"' not in js and '" mm requested"' not in js
 
 
 def test_a_finished_run_restores_the_material_note_with_the_material():
@@ -1462,38 +1472,24 @@ def test_the_legend_does_not_sit_on_top_of_the_hud():
     )
 
 
-def test_the_data_panel_says_the_verdict_is_on_a_faceted_model():
+def test_the_data_panel_no_longer_explains_the_faceted_model():
+    # His ruling of 11 October 2026 (no descriptive text): the paragraph
+    # under the verdict on the faceted analysis model (about 190 words on
+    # planar voussoirs, the volume they lose and where BENCH.md measured
+    # it) is gone; the verdict, mu and the counts are what remain. None of
+    # the stale figures it once quoted may come back either.
     js = (STATIC / "studio.js").read_text(encoding="utf-8")
     panel_start = js.index("function renderDataPanel(")
     panel_end = js.index("\n}", panel_start)
     body = js[panel_start:panel_end]
-    assert "faceted" in body
-    assert "planar" in body or "flat" in body
-    # I3: every figure this paragraph used to quote came from
-    # bench/scripts/cra_acceptance.py comparing voussoirs.segment_voussoirs
-    # against blocks.segment_blocks, the mesh-following prisms the viewer
-    # drew at the time. This branch replaced the drawn piece in exactly the
-    # dimension those numbers measured: boundary vertices are projected
-    # onto flat joint planes, the casting is shrunk by the joint gap, and
-    # the crown taper can thin it by half. Quoting them as a distance to
-    # what is on screen is a precision the code can no longer support.
+    assert "faceted" not in body
+    assert "mesh-following block model" not in body
     for stale in ("2.389", "1.964", "2.4 m", "51.3", "17.3", "63.7", "12.9", "29.5"):
         assert stale not in body, (
             "{} was measured against a drawing this branch replaced".format(stale)
         )
-    # The disclosure itself must not quietly vanish with the numbers. It
-    # still has to name what the analysis model does to the surface, which
-    # way each error runs, that the segmentation drives both, and where the
-    # measurement that does exist was taken.
-    assert "slightly" not in body, "the gap is measured, not a rounding error"
-    assert "less volume" in body
-    assert "coarsens" in body or "ring count" in body
-    assert "joint gap" in body and "taper" in body, (
-        "the reason a figure would be false is that the drawn casting moved"
-    )
-    assert "mesh-following block model" in body and "docs/BENCH.md" in body, (
-        "the surface actually measured has to be named"
-    )
+    for row in ('["verdict", ', '["blocks", ', '["interfaces", '):
+        assert row in body, row
 
 
 def test_skipped_pieces_are_reported_in_the_data_panel():
@@ -1506,7 +1502,10 @@ def test_skipped_pieces_are_reported_in_the_data_panel():
     panel_end = js.index("\n}", panel_start)
     panel_body = js[panel_start:panel_end]
     assert "cra_skipped" in panel_body
-    assert "absent from the rigid-block model" in panel_body
+    # A name and the pieces, in deep red: the sentence round them is gone
+    # (his ruling of 11 October 2026).
+    assert '["skipped", ' in panel_body
+    assert "absent from the rigid-block model" not in panel_body
 
 
 def test_the_skipped_piece_sentence_does_not_use_retired_ring_and_wedge_words():
@@ -1732,7 +1731,7 @@ def test_taper_is_a_drawing_parameter_and_the_hud_says_so():
     hud_end = js.index("\n}", hud_start)
     body = js[hud_start:hud_end]
     assert "state.taper" in body
-    assert "uniform thickness" in body, "the HUD must say the analysis did not taper"
+    assert '"%, drawing only"' in body, "the HUD must mark a taper the analysis did not use"
 
 
 def test_every_clock_reads_the_drop_order_at_the_same_rate():
