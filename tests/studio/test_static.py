@@ -4649,8 +4649,8 @@ def test_the_cable_net_tab_is_a_run_its_answer_a_player_and_its_views():
         "wire", "along", "across", "both", "deviation", "utilisation", "off"]
     assert 'value="wire" checked' in section and 'class="segmented"' in section
     assert '<input id="formwork-values" type="checkbox" checked>' in section
-    # the skin from hidden to half opaque
-    assert '<input id="formwork-skin" type="range" min="0" max="50" step="1" value="30">' in section
+    # the skin from hidden to opaque (his ask of 11 October 2026)
+    assert '<input id="formwork-skin" type="range" min="0" max="100" step="1" value="30">' in section
     # the player in the studio's own symbols
     assert ('<button id="formwork-play" class="icon-act" type="button" title="Play">&#9654;</button>'
             in section)

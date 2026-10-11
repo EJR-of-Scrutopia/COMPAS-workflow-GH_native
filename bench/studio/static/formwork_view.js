@@ -191,7 +191,7 @@ export function createFormworkView(THREE) {
   // side for the drawing, every colour from the nearer one (spec section 7).
   // settings: { show: {net, trees, heads, wires, anchors, ground, skin,
   // design, holds}, colour, tolerance, weakest (weakestAt's parts), compare,
-  // skinOpacity (0 to 0.5; 0 hides the skin) }.
+  // skinOpacity (0 to 1; 0 hides the skin) }.
   function show(head, settings) {
     if (!sim || !parts || !head) return;
     const a = sim.captures[head.from];
@@ -330,9 +330,18 @@ export function createFormworkView(THREE) {
     surface.attributes.position.array.set(at);
     surface.attributes.position.needsUpdate = true;
     if (surface.index && surface.index.count) surface.computeVertexNormals();
-    // the skin's slider (spec 2026-10-11 section 5.5): how opaque, 0 hiding it
+    // the skin's slider (spec 2026-10-11 section 5.5): how opaque, 0 hiding it,
+    // to fully opaque (his ask of 11 October 2026), a solid then
     const opacity = settings.skinOpacity;
-    if (opacity != null) parts.skin.material.opacity = Math.min(0.5, Math.max(0, Number(opacity)));
+    if (opacity != null) {
+      const material = parts.skin.material;
+      material.opacity = Math.min(1, Math.max(0, Number(opacity)));
+      const clear = material.opacity < 1;
+      if (material.transparent !== clear) {
+        material.transparent = clear;
+        material.needsUpdate = true;
+      }
+    }
 
     // the weakest parts (section 5.3): a ring round each, red over its limit,
     // amber the closest when none is over

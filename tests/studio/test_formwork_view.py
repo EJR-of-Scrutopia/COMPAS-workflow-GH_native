@@ -82,6 +82,10 @@ view.show({ from: 2, to: 2, blend: 0, nearer: 2 }, { show: every, colour: "off",
   weakest: [], skinOpacity: 0 });
 out.ringsOff = parts.rings.visible;
 out.skinNone = parts.skin.visible;
+// the skin fully opaque (his ask of 11 October 2026: 0 to 100)
+view.show({ from: 2, to: 2, blend: 0, nearer: 2 }, { show: every, colour: "off", tolerance: 20,
+  weakest: [], skinOpacity: 1 });
+out.skinFull = [parts.skin.visible, parts.skin.material.opacity, parts.skin.material.transparent];
 // Compare (section 5.4), half way through the lift: the design as translucent
 // formwork, and each node's line from where it should be to where it is
 view.show({ from: 0, to: 1, blend: 0.5, nearer: 1 }, { show: every, colour: "off", tolerance: 20,
@@ -255,6 +259,8 @@ def test_compare_draws_the_design_as_translucent_formwork_and_each_offset(out):
 def test_the_skin_slider_sets_how_opaque_the_skin_is(out):
     assert out["skinHalf"] == [True, pytest.approx(0.5)]
     assert out["skinNone"] is False
+    # all the way to opaque, drawn as a solid then
+    assert out["skinFull"] == [True, 1.0, False]
 
 
 def test_each_wire_runs_from_its_node_the_way_it_runs_in(out):
