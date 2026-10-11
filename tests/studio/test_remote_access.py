@@ -581,7 +581,7 @@ def test_the_analysis_lenses_are_buttons_one_at_a_time():
     assert 'setShowMode("framework");' in set_layer
     assert 'setShowMode(state.showModeBeforeForces || "both");' in set_layer
 
-    build = _js_function(js, "function buildLensButtons(holder, table, notes, alwaysShown)")
+    build = _js_function(js, "function buildLensButtons(holder, table)")
     assert 'className = "layer-btn"' in build
     assert "holder.appendChild(exaggerationRow)" in build, (
         "the exaggeration slider seats under the Deflection button")
@@ -595,8 +595,8 @@ def test_the_analysis_lenses_are_buttons_one_at_a_time():
     # Round two removed the stress threshold on his word.
     recolour = _js_function(js, "function recolourSegments()")
     assert "threshold" not in recolour
-    assert '"member force, kN (extremes clamped)"' in js, (
-        "the key speaks for the wires too, and admits its clamp")
+    assert '"member force, kN"' in js, "the key speaks for the wires too"
+    assert "extremes clamped" not in js, "a name and a unit (his ruling of 11 October 2026)"
 
     # Colours you can SEE (his report: "surely i should be seeing the
     # force colours?"): p95 normalisation spreads the body of the
@@ -638,13 +638,14 @@ def test_the_analysis_lenses_are_buttons_one_at_a_time():
     for shade in ("0x3f9e57", "0xc99a2e", "0xc24936"):
         assert shade in vectors, "the thrust buckets wear the verdict colours"
     assert "state.analysisSliders.thrustScale, magnitudeMax" in vectors
-    # And the lens explains itself ON the panel (the pulse taught this
-    # panel that much; a tooltip was not the answer).
-    build2 = _js_function(js, "function buildLensButtons(holder, table, notes, alwaysShown)")
-    assert '"layer-note"' in build2
-    assert ("buildLensButtons(holder, LAYERS, { thrust: THRUST_NOTE }, true)"
-            in _js_function(js, "function buildLayerToggles()")), (
-        "the thrust note is always shown under its button")
+    # The note under the Support thrust button went with his ruling of 11
+    # October 2026 (no descriptive text): the arrows' colours are the
+    # verdict colours, and the panel does not explain them.
+    build2 = _js_function(js, "function buildLensButtons(holder, table)")
+    assert '"layer-note"' not in build2
+    assert "THRUST_NOTE" not in js
+    assert ("buildLensButtons(holder, LAYERS);"
+            in _js_function(js, "function buildLayerToggles()"))
 
     arrows = _js_function(js, "function arrowField(entries, colour, anchor, lengthScale = 1,")
     assert "depthTest: false" in arrows
@@ -1443,9 +1444,11 @@ def test_a_fixture_can_be_made_invisible_and_still_picked_up():
     assert "its light does not change" in row, (
         "the title says what it does NOT do as well; a control that "
         "looked like it turned the light off would be read as one")
+    # The reading beside the tick is left empty: the tick shows the state
+    # (his ruling of 11 October 2026), in the drawer and on the card.
     sync = _js_function(js, "function syncLightControls()")
-    assert 'const said = document.getElementById("lamp-invisible-value");' in sync
-    assert 'said.textContent = hidden ? "yes" : "no";' in sync
+    assert 'getElementById("lamp-invisible-value")' not in sync
+    assert 'hidden ? "yes" : "no"' not in js
     assert 'writeLamps("invisible", !!e.target.checked);' in js
     aimed = _js_function(js, "function writeLamps(field, value)")
     assert 'else if (field === "invisible") state.lampInvisible = value;' in aimed
@@ -1593,7 +1596,7 @@ def test_the_spot_has_an_aperture_and_the_panel_has_one_face():
         "the selected fixture, or any spot in the scene when nothing is "
         "selected: the same rule the rest of the drawer follows")
     assert 'write("lamp-aperture", aperture, Math.round(aperture));' in sync
-    assert 'said.textContent = cast ? "on" : "off";' in sync
+    assert 'cast ? "on" : "off"' not in js
 
     # The four reach SPOTS alone. A sphere handed an aperture would
     # carry it through the layout and the scene for ever and never use it.
@@ -1980,7 +1983,8 @@ def test_the_machines_are_derived_when_the_document_places_none():
         "past it")
     # A derived placement is a studio OPINION and must never be mistaken
     # for his authoring, so it says so where he will see it.
-    assert '    showBanner("This mechanism carries no placements, so the machines are "' in build
+    assert ('    showBanner("Derived from the supports: " + derived.instances.length\n'
+            '      + " machines, " + derived.wires.length + " cables", "info");') in build
 
     # A SPOOL, not a pulley: they arrive under the same `reels` key and
     # only the winding radius separates them. The writer's own figure
@@ -2282,8 +2286,9 @@ def test_the_machine_draws_the_way_he_asked():
     assert "  if (!model.wires.length) {\n" \
         '    logStudio("machine: this document carries NO wires, so no cables are "' in build
     assert "  if (!model.instances.length || !model.wires.length) {\n" in build
-    assert '      + ", so the machine is drawn once and does not run", "error");' in build, (
+    assert '    showBanner("Mechanism export missing "\n' in build, (
         "loud enough to answer the question before he has to ask it")
+    assert '", so the machine is drawn once and does not run"' not in build
     assert '[model.instances.length ? null : "machine placements",\n' \
         '         model.wires.length ? null : "wires"].filter(Boolean).join(" and ")' in build, (
             "and it names which of the two is missing, not both blindly")
@@ -2700,13 +2705,15 @@ def test_a_scene_missing_its_sky_says_so_and_restores_the_rest():
     assert "the rest of the scene is restored" in after_load
 
 
-def test_the_folder_status_line_carries_the_reason():
-    """The client repeats the server's zero-vault hint beside the count
-    instead of leaving a bare "0 vaults in this folder" (the line Param
-    met when the picker took the cut cache)."""
+def test_the_folder_status_line_is_the_count():
+    """The client used to repeat the server's zero-vault hint beside the
+    count (the line Param met when the picker took the cut cache). His
+    ruling of 11 October 2026 keeps the data and drops the explanation:
+    the line is the number of vaults."""
 
     js = STUDIO_JS.read_text(encoding="utf-8")
-    assert 'folder.hint ? " -- " + folder.hint : ""' in js
+    assert "folder.hint" not in js
+    assert 'status.textContent = folder.studies + " vaults";' in js
 
 
 def test_the_data_sheet_leads_with_the_analysis():

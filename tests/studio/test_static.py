@@ -1218,21 +1218,16 @@ def test_the_hud_and_the_size_control_do_not_call_an_authored_size_a_target():
     assert '" mm target"' not in js and '" mm requested"' not in js
 
 
-def test_a_finished_run_restores_the_material_note_with_the_material():
-    # applyRunParamsToControls assigns material-select.value directly, which
-    # fires no change event, and the change handler is the only other writer
-    # of pattern-note. So: load in limestone with the note showing, click
-    # Run, switch material mid-run, let the run finish -- the material is
-    # restored and the stone vault is drawn with the note gone, which is the
-    # exact failure the note exists to prevent.
+def test_a_finished_run_restores_the_material_and_writes_no_note():
+    # The material's note under the Pattern control (the server's sentence
+    # on a pattern not built yet) went with his ruling of 11 October 2026:
+    # nothing writes pattern-note now, here or on a material change.
     js = (STATIC / "studio.js").read_text(encoding="utf-8")
     body = _function_body(js, "applyRunParamsToControls")
-    assert "pattern-note" in body, (
-        "restoring the material must restore its honesty note, since "
-        "assigning .value fires no change event"
-    )
-    assert "state.patternNotes[material]" in body
-    # The note only. updatePatternForMaterial also forces the material's
+    assert "pattern-note" not in js
+    assert "patternNotes[" not in js
+    assert '" (arrives "' not in js, "a planned pattern is listed and disabled, bare"
+    # Never updatePatternForMaterial here: it also forces the material's
     # default pattern, and calling it here would overwrite the pattern this
     # run actually solved with.
     assert "updatePatternForMaterial(" not in body, (
@@ -1249,6 +1244,41 @@ def test_the_run_status_says_cutting_rather_than_stage_zero_of_zero():
     body = _function_body(js, "watchRun")
     assert "run.of ?" in body, "the zero case must be branched on"
     assert "cutting" in body
+    # The stage and nothing narrating it (his ruling of 11 October 2026):
+    # the server's running message ("fea + cra per stage") is not shown,
+    # and a failure keeps its own.
+    assert '"failed: " + run.message' in body
+    assert 'run.state === "running" ? progress : run.state' in body
+
+
+def test_the_analysis_and_study_controls_say_a_state_not_a_sentence():
+    # His ruling of 11 October 2026 (no descriptive text): the long titles
+    # and status lines of the Analysis section, the study and folder
+    # controls, Live and the server's own buttons are cut to the state, a
+    # few words, or a warning that says what to do.
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    for gone in (
+        '"The push each springing gives the ground, the reaction "',
+        "lets the colour do the talking", "Arrow length multiplier",
+        "On; press to put it down", "Raise this lens",
+        "The net, the formwork and the machine are drawn",
+        '" (verified)"', "Failed to load study: ",
+        " vaults in this folder", "Click to stop following.",
+        "Grasshopper pushes are ignored",
+        "older code than is on disk", "(stills to the output folder",
+        "close its window and start it again", "Every open page loses it",
+        "this server is older than the button",
+        "asking the desktop to start the studio",
+        "the desktop did not answer", "lost contact with the server",
+        "This mechanism carries no placements, so",
+    ):
+        assert gone not in js, gone
+    lens = _function_body(js, "buildLensButtons")
+    assert '"Hide this lens" : "Show this lens"' in lens
+    assert 'showBanner("No skin: " + refusal, "error");' in _function_body(js, "applyCut")
+    stale = _function_body(js, "checkServerCode")
+    assert 'status.textContent = "Restart needed";' in stale
+    assert 'status.textContent === "Restart needed"' in stale
 
 
 def test_a_refused_run_reports_the_reason_the_server_gave():
@@ -1281,9 +1311,8 @@ def test_the_analysis_section_watches_a_409_only_when_the_live_run_is_staged():
     assert checked < branch.index("watchRun(body.run, exportName, status, params)")
     # in the refusing branch itself: the sentence, then a return before any watch
     refusal = branch[checked:branch.index("watchRun(")]
-    assert ('"a formwork run is live on this study; " +\n'
-            '          "run the analysis when it finishes"') in refusal
-    assert refusal.index("run the analysis when it finishes") < refusal.index("return;")
+    assert 'status.textContent = "Cable net run live: wait";' in refusal
+    assert refusal.index("Cable net run live: wait") < refusal.index("return;")
 
 
 def test_hdri_mode_loads_estimates_and_persists():
@@ -1921,7 +1950,6 @@ def test_an_explicit_pattern_choice_survives_material_changes():
     select_body = js[select_start:js.index("\n});", select_start)]
     assert "state.patternChosen = true" in select_body
     body = _function_body(js, "updatePatternForMaterial")
-    assert "pattern-note" in body
     guard_at = body.index("if (!state.patternChosen)")
     default_at = body.index("state.patternDefaults[material]")
     assert guard_at < default_at, (

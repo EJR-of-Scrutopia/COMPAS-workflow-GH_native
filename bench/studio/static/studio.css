@@ -268,9 +268,6 @@ body { overflow: hidden;
   flex: 1; width: auto; }
 #layer-toggles .layer-slider.hidden.hidden {
   display: none; }
-#layer-toggles .layer-note {
-  margin: 0 0 var(--s1) var(--s3);
-  color: var(--ink-3); font-size: var(--t-meta); line-height: 1.4; }
 #overlays-tuck { display: flex; gap: var(--s2); align-items: center;
   margin-top: var(--s3); color: var(--ink-3); font-size: var(--t-2); }
 /* Bottom right, clear of the panel (derived from its width token), rather

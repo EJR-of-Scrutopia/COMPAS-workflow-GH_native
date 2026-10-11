@@ -11181,9 +11181,7 @@ function applyCut(preserve) {
     && state.bundle.tessellation.cut_refusal;
   if (refusal && refusal !== lastCutRefusal) {
     lastCutRefusal = refusal;
-    showBanner("No skin on this study: " + refusal
-      + " The net, the formwork and the machine are drawn; there are no "
-      + "voussoirs to draw.", "error");
+    showBanner("No skin: " + refusal, "error");
     logStudio("no cut: " + refusal);
   }
   // The cut always follows the LOADED bundle's own size, never the
@@ -11273,10 +11271,6 @@ const LAYERS = [
   ["thrust", "Support thrust"],
 ];
 
-const THRUST_NOTE = "The push each springing gives the ground, the reaction "
-  + "reversed: green stands near vertical, amber leans, red past 35 degrees is "
-  + "a push the abutment or a tie must hold.";
-
 // The lenses that PAINT the same surface: two heatmaps recolouring the
 // shell and the force-coloured wires. Layered together they read as mud
 // (Param: "they overlap eachother, they can only be viewed individually"),
@@ -11288,17 +11282,16 @@ const EXCLUSIVE_LAYERS = ["stress", "deflection", "forces"];
 const LAYER_SLIDERS = {
   forces: { key: "forcesScale", label: "Size",
             min: 0, max: 3, step: 0.1,
-            title: "How much a wire thickens with its force; 0 keeps "
-              + "them uniform and lets the colour do the talking" },
+            title: "Wire thickness by force" },
   loads: { key: "loadsScale", label: "Scale",
            min: 0.2, max: 4, step: 0.1,
-           title: "Arrow length multiplier" },
+           title: "Arrow length" },
   reactions: { key: "reactionsScale", label: "Scale",
                min: 0.2, max: 4, step: 0.1,
-               title: "Arrow length multiplier" },
+               title: "Arrow length" },
   thrust: { key: "thrustScale", label: "Scale",
             min: 0.2, max: 4, step: 0.1,
-            title: "Arrow length multiplier" },
+            title: "Arrow length" },
 };
 
 function finalStage() {
@@ -11399,7 +11392,7 @@ function layerAvailability(name) {
   return { on: true };
 }
 
-function buildLensButtons(holder, table, notes, alwaysShown) {
+function buildLensButtons(holder, table) {
   holder.innerHTML = "";
   for (const [name, label] of table) {
     const availability = layerAvailability(name);
@@ -11408,17 +11401,9 @@ function buildLensButtons(holder, table, notes, alwaysShown) {
     button.className = "layer-btn" + (state.layers[name] ? " active" : "");
     button.textContent = label;
     button.disabled = !availability.on;
-    button.title = availability.why || (state.layers[name] ? "On; press to put it down" : "Raise this lens");
+    button.title = availability.why || (state.layers[name] ? "Hide this lens" : "Show this lens");
     button.addEventListener("click", () => setLayer(name, !state.layers[name]));
     holder.appendChild(button);
-    // A lens explains itself where the question is asked, not in a tooltip:
-    // the thrust note always.
-    if (notes[name] && (alwaysShown || state.layers[name])) {
-      const note = document.createElement("div");
-      note.className = "layer-note";
-      note.textContent = notes[name];
-      holder.appendChild(note);
-    }
     if (name === "deflection") {
       const exaggerationRow = document.getElementById("exaggeration-row");
       holder.appendChild(exaggerationRow);
@@ -11459,7 +11444,7 @@ function buildLayerToggles() {
   const exaggerationRow = document.getElementById("exaggeration-row");
   document.getElementById("analysis-section").appendChild(exaggerationRow);
   exaggerationRow.classList.add("hidden");
-  buildLensButtons(holder, LAYERS, { thrust: THRUST_NOTE }, true);
+  buildLensButtons(holder, LAYERS);
 }
 
 function setLayer(name, on) {
@@ -11610,7 +11595,7 @@ function paintForceLegend(magnitude) {
   legend.classList.remove("bands", "ramp");
   legend.classList.remove("deflection");
   document.getElementById("legend-title").textContent =
-    "member force, kN (extremes clamped)";
+    "member force, kN";
   document.getElementById("legend-min").textContent = (-magnitude / 1e3).toFixed(1);
   document.getElementById("legend-zero").textContent = "0";
   document.getElementById("legend-max").textContent = (magnitude / 1e3).toFixed(1);
@@ -12475,11 +12460,10 @@ async function fetchJson(url) {
 }
 
 // ---------- pattern control (Task 9) ----------
-// generators.PLANNED and generators.MATERIAL_NOTES are the honesty
-// mechanism: a pattern named in the spec but not built yet is listed and
-// disabled rather than silently absent, and a material whose intended
-// pattern is not built yet says so in pattern-note instead of quietly
-// drawing bonded courses under the missing pattern's name.
+// generators.PLANNED is the honesty mechanism: a pattern named in the spec
+// but not built yet is listed and disabled rather than silently absent.
+// The server's notes on a material whose pattern is not built yet are not
+// shown (his ruling of 11 October 2026: no descriptive text).
 function patternLabel(pattern) {
   // The monolithic cut IS the sprayed option now, and the control says so
   // in the builder's own words (Param: "add the sprayed option there").
@@ -12503,24 +12487,23 @@ function populatePatternSelect(payload) {
   for (const pattern of Object.keys(payload.patterns_planned)) {
     const option = document.createElement("option");
     option.value = pattern;
-    option.textContent = patternLabel(pattern) + " (arrives " + payload.patterns_planned[pattern] + ")";
+    option.textContent = patternLabel(pattern);
     option.disabled = true;
     select.appendChild(option);
   }
 }
 
-// Changing the material writes the material's honesty note always, but
-// only applies the material's default pattern while the user has never
-// explicitly chosen one: an explicit choice (state.patternChosen) rides
-// through every material change, which is what makes comparing timber
-// and sprayed concrete under the same monolithic bands possible at all.
+// Changing the material only applies the material's default pattern
+// while the user has never explicitly chosen one: an explicit choice
+// (state.patternChosen) rides through every material change, which is
+// what makes comparing timber and sprayed concrete under the same
+// monolithic bands possible at all.
 function updatePatternForMaterial(material) {
   if (!state.patternChosen) {
     const pattern = state.patternDefaults[material] || state.pattern;
     state.pattern = pattern;
     document.getElementById("pattern-select").value = pattern;
   }
-  document.getElementById("pattern-note").textContent = state.patternNotes[material] || "";
 }
 
 // A commit whose requested parameters equal what the loaded bundle
@@ -12577,7 +12560,7 @@ function populateStudySelect(studies, selection) {
   for (const study of studies) {
     const option = document.createElement("option");
     option.value = study.export;
-    option.textContent = study.export + (study.has_verification ? " (verified)" : "");
+    option.textContent = study.export;
     select.appendChild(option);
     names.push(study.export);
   }
@@ -12719,7 +12702,7 @@ async function loadStudy(exportName) {
     overlay.classList.add("hidden");
     status.textContent = "";
     state.lastRefusal = error.detail || error.message;
-    showBanner("Failed to load study: " + error.message, "error");
+    showBanner("Load failed: " + error.message, "error");
     // A failed SWITCH leaves the previous study's scene on screen, and
     // the source row would otherwise sit there labelled with that
     // study's Skin against a study that never loaded.
@@ -12742,7 +12725,6 @@ async function boot(preferredExport) {
     state.studies = payload.studies;
     state.patterns = payload.patterns;
     state.patternDefaults = payload.pattern_defaults;
-    state.patternNotes = payload.pattern_notes;
     populatePatternSelect(payload);
     updatePatternForMaterial(document.getElementById("material-select").value);
     const names = populateStudySelect(payload.studies, null);
@@ -12849,11 +12831,10 @@ document.getElementById("folder-choose").addEventListener("click", async () => {
   }
   const folder = await response.json();
   logStudio("reading vaults from " + folder.path);
-  // A zero with a reason: picking the studio's own cut cache (its name
-  // says "studies") silenced the import with a bare count once. The
-  // server recognises the near-miss and says what a vault export IS.
-  status.textContent = folder.studies + " vaults in this folder"
-    + (folder.hint ? " -- " + folder.hint : "");
+  // The count alone. The server's hint on a near-miss folder (the
+  // studio's own cut cache, say) explains, and his ruling of 11 October
+  // 2026 keeps the data.
+  status.textContent = folder.studies + " vaults";
   // The vault on screen came from the old folder and may not exist in the
   // new one, so the scene is emptied rather than left standing under a
   // list it no longer belongs to.
@@ -12961,9 +12942,7 @@ function paintLive(fresh) {
   if (fresh) liveFlash = Date.now() + 1200;
   const flaring = state.live && Date.now() < liveFlash;
   button.className = state.live ? (flaring ? "on fresh" : "on") : "off";
-  button.title = state.live
-    ? "Live: this study reloads as Grasshopper pushes it. Click to stop following."
-    : "Live is off: Grasshopper pushes are ignored. Click to follow again.";
+  button.title = state.live ? "Live: following Grasshopper" : "Live: off";
 }
 document.getElementById("live-toggle").addEventListener("click", () => {
   state.live = !state.live;
@@ -13198,14 +13177,12 @@ async function checkServerCode() {
   const status = document.getElementById("restart-status");
   button.classList.toggle("attention", stale);
   if (stale) {
-    status.textContent = "the server is running older code than is on disk: restart it";
+    status.textContent = "Restart needed";
     if (!serverStaleSaid) {
       serverStaleSaid = true;
-      showBanner("The studio server is older than its own code, so recent fixes "
-        + "(stills to the output folder among them) are not running yet. Press "
-        + "Restart studio at the foot of the panel.", "error");
+      showBanner("Server out of date: press Restart studio", "error");
     }
-  } else if (status.textContent.startsWith("the server is running older code")) {
+  } else if (status.textContent === "Restart needed") {
     status.textContent = "";
   }
   return stale;
@@ -13233,8 +13210,7 @@ document.getElementById("restart-studio").addEventListener("click", async () => 
     // waiting forty seconds for it to is the wrong thing to do next.
     if (asked.status === 404) {
       button.disabled = false;
-      status.textContent = "this server is older than the button; "
-        + "close its window and start it again";
+      status.textContent = "Server too old: restart it by hand";
       return;
     }
   } catch (error) {
@@ -13267,7 +13243,7 @@ document.getElementById("restart-studio").addEventListener("click", async () => 
     status.textContent = "the old server is still answering...";
   }
   button.disabled = false;
-  status.textContent = "it did not come back; start it from the shortcut";
+  status.textContent = "Did not restart: use the shortcut";
 });
 
 // Stopping, from anywhere. The desktop can end the server from a shortcut;
@@ -13277,8 +13253,7 @@ document.getElementById("restart-studio").addEventListener("click", async () => 
 // proxy a dead server still gets the page a reply, a 502 from the proxy
 // itself, so "not ok" has to count as quiet alongside "no connection".
 document.getElementById("stop-studio").addEventListener("click", async () => {
-  if (!window.confirm("Stop the studio server? Every open page loses it "
-      + "until the server is started again.")) return;
+  if (!window.confirm("Stop the studio server?")) return;
   const button = document.getElementById("stop-studio");
   const status = document.getElementById("restart-status");
   button.disabled = true;
@@ -13287,8 +13262,7 @@ document.getElementById("stop-studio").addEventListener("click", async () => {
     const asked = await fetch("/api/stop", { method: "POST" });
     if (asked.status === 404) {
       button.disabled = false;
-      status.textContent = "this server is older than the button; "
-        + "stop it from the desktop";
+      status.textContent = "Server too old: stop it from the desktop";
       return;
     }
   } catch (error) {
@@ -13314,7 +13288,7 @@ document.getElementById("stop-studio").addEventListener("click", async () => {
     }
   }
   button.disabled = false;
-  status.textContent = "it would not stop; end it from the desktop";
+  status.textContent = "Did not stop: end it from the desktop";
 });
 
 // Starting again, from the page that stopped it. The studio is gone, but
@@ -13328,7 +13302,7 @@ document.getElementById("start-studio").addEventListener("click", async () => {
   const button = document.getElementById("start-studio");
   const status = document.getElementById("restart-status");
   button.disabled = true;
-  status.textContent = "asking the desktop to start the studio...";
+  status.textContent = "starting...";
   fetch("/start", { cache: "no-store" }).catch(() => {});
   fetch("http://127.0.0.1:8611/start", { mode: "no-cors", cache: "no-store" })
     .catch(() => {});
@@ -13349,7 +13323,7 @@ document.getElementById("start-studio").addEventListener("click", async () => {
     }
   }
   button.disabled = false;
-  status.textContent = "the desktop did not answer; use the Vaulted shortcut";
+  status.textContent = "No answer: use the Vaulted shortcut";
 });
 
 // The banner folds away on its own handle (Param: "a little tile arrow
@@ -13707,15 +13681,12 @@ function syncLightControls() {
     const reading = document.getElementById("lamp-tint-value");
     if (reading) reading.textContent = tint;
   }
-  // Invisible: a toggle rather than a dial, but it keeps the same
-  // reading cell so the block can still be read straight down.
+  // Invisible: a toggle rather than a dial. Its reading cell stays empty
+  // so the block can still be read straight down; the tick is the state
+  // (his ruling of 11 October 2026).
   const hidden = one ? !!one.invisible : !!state.lampInvisible;
   const box = document.getElementById("lamp-invisible");
-  if (box) {
-    box.checked = hidden;
-    const said = document.getElementById("lamp-invisible-value");
-    if (said) said.textContent = hidden ? "yes" : "no";
-  }
+  if (box) box.checked = hidden;
   // THE SPOT'S OWN FOUR, offered only when a spot is what the dials
   // are pointed at: a sphere has no aperture, and a control that does
   // nothing in the current mode is hidden rather than shown dead.
@@ -13735,11 +13706,7 @@ function syncLightControls() {
     write("lamp-reach", reach, reach.toFixed(reach ? 1 : 0));
     const cast = beam.shadow !== false;
     const box = document.getElementById("lamp-shadow");
-    if (box) {
-      box.checked = cast;
-      const said = document.getElementById("lamp-shadow-value");
-      if (said) said.textContent = cast ? "on" : "off";
-    }
+    if (box) box.checked = cast;
   }
 }
 
@@ -13889,11 +13856,7 @@ function syncFixturePanel() {
   if (lengthRow) lengthRow.classList.toggle("hidden", !fixtureStretches(record));
   const hidden = !!record.invisible;
   const body = document.getElementById("fixture-invisible");
-  if (body) {
-    body.checked = hidden;
-    const said = document.getElementById("fixture-invisible-value");
-    if (said) said.textContent = hidden ? "yes" : "no";
-  }
+  if (body) body.checked = hidden;
   // The spot's four, and only for a spot.
   const beamed = isSpot(record);
   for (const row of document.querySelectorAll("#fixture-dials .fixture-spot")) {
@@ -13910,11 +13873,7 @@ function syncFixturePanel() {
     write("fixture-reach", reach, reach.toFixed(reach ? 1 : 0));
     const cast = record.shadow !== false;
     const box = document.getElementById("fixture-shadow");
-    if (box) {
-      box.checked = cast;
-      const said = document.getElementById("fixture-shadow-value");
-      if (said) said.textContent = cast ? "on" : "off";
-    }
+    if (box) box.checked = cast;
   }
 }
 
@@ -15420,20 +15379,9 @@ document.getElementById("run-button").addEventListener("click", startRun);
 // stays honest about what's on screen.
 function applyRunParamsToControls({ material, pattern, size, thickness }) {
   document.getElementById("material-select").value = material;
-  // Assigning .value fires no change event, and the change handler is the
-  // only other writer of pattern-note. So: load in limestone with the note
-  // showing, switch material mid-run, let the run finish, and the material
-  // is restored here with the note left at whatever the mid-run switch put
-  // there -- empty for every material but tile and stone. The studio then
-  // draws bonded courses under a limestone label with the caveat that the
-  // Armadillo dual is not built gone from the screen, which is the exact
-  // failure the note exists to prevent.
-  //
-  // The note only, never the pattern: updatePatternForMaterial also forces
-  // the material's default pattern, and calling it here would overwrite
-  // the pattern this run actually solved with.
-  document.getElementById("pattern-note").textContent =
-    state.patternNotes[material] || "";
+  // Never updatePatternForMaterial here: it forces the material's default
+  // pattern, which would overwrite the pattern this run actually solved
+  // with.
   document.getElementById("pattern-select").value = pattern;
   document.getElementById("size-slider").value = size;
   document.getElementById("size-slider-value").textContent = Math.round(size * 1000);
@@ -15451,9 +15399,12 @@ function watchRun(runId, exportName, status, params) {
       // "of" is 0 until the cut finishes, because the number of stages is
       // the number of courses the cut produces and nothing knows it before
       // then. "stage 0 of 0" reads as a run that has nothing to do; say
-      // what it is actually doing instead.
-      const progress = run.of ? "stage " + run.stage + " of " + run.of : "cutting";
-      status.textContent = run.state + " (" + progress + ") " + run.message;
+      // what it is actually doing instead. The server's running message
+      // narrates ("fea + cra per stage") and is not shown (his ruling of 11
+      // October 2026); a failure's message is the error, and is.
+      const progress = run.of ? "stage " + run.stage + " / " + run.of : "cutting";
+      status.textContent = run.state === "failed" ? "failed: " + run.message
+        : run.state === "running" ? progress : run.state;
       if (run.state === "done") {
         clearInterval(poll);
         applyRunParamsToControls(params);
@@ -15466,7 +15417,7 @@ function watchRun(runId, exportName, status, params) {
       }
     } catch (error) {
       clearInterval(poll);
-      status.textContent = "lost contact with the server: " + error.message;
+      status.textContent = "Server lost: " + error.message;
     }
   }, 1000);
 }
@@ -15502,8 +15453,7 @@ async function startRun() {
       // reload the study when it ends and log an analysis that never ran.
       const live = await fetchJson("/api/runs/" + encodeURIComponent(body.run));
       if (live.kind !== "staged") {
-        status.textContent = "a formwork run is live on this study; " +
-          "run the analysis when it finishes";
+        status.textContent = "Cable net run live: wait";
         return;
       }
       status.textContent = "watching the live run";
@@ -15515,7 +15465,7 @@ async function startRun() {
     // pattern it does not offer, each naming what to use instead. Without
     // this check the refusal body has no "run" key, watchRun polls
     // /api/runs/undefined, that 404s, and the one thing the user is told
-    // is "lost contact with the server" -- a connection failure that never
+    // is "Server lost" -- a connection failure that never
     // happened, in place of a sentence saying exactly what to change.
     if (!response.ok) {
       status.textContent = "run refused: " + (body && body.detail
@@ -15525,7 +15475,7 @@ async function startRun() {
     logStudio("analysis started: " + exportName);
     watchRun(body.run, exportName, status, params);
   } catch (error) {
-    status.textContent = "run failed to start: " + error.message;
+    status.textContent = "Run failed: " + error.message;
   }
 }
 
@@ -16886,9 +16836,8 @@ async function buildMachine() {
     // instances: the writer emits them whenever a result is wired, and
     // a document that carries its own is never second-guessed.
     if (!model.anchors.length) model.anchors = derived.anchors;
-    showBanner("This mechanism carries no placements, so the machines are "
-      + "derived from the vault's own supports: " + derived.instances.length
-      + " machines pulling " + derived.wires.length + " cables", "info");
+    showBanner("Derived from the supports: " + derived.instances.length
+      + " machines, " + derived.wires.length + " cables", "info");
   }
   const instances = model.instances.length ? model.instances
     : [{ side: 0, mechanism: 0, matrix: null, mirrored: false, wireIds: [] }];
@@ -16915,10 +16864,9 @@ async function buildMachine() {
   if (!model.instances.length || !model.wires.length) {
     // showBanner logs the text itself, so the two lines above carry the
     // detail and this one carries only what he needs at a glance.
-    showBanner("This mechanism export is missing its "
+    showBanner("Mechanism export missing "
       + [model.instances.length ? null : "machine placements",
-         model.wires.length ? null : "wires"].filter(Boolean).join(" and ")
-      + ", so the machine is drawn once and does not run", "error");
+         model.wires.length ? null : "wires"].filter(Boolean).join(" and "), "error");
   }
 
   // The drums' axes, and the radius each actually winds at, taken from the
