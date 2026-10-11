@@ -961,20 +961,6 @@ def test_the_diagram_says_not_established_and_never_that_it_holds():
     assert "does not hold" in failing and "not established" not in failing
 
 
-def test_the_panel_and_the_documents_agree_on_what_is_unknown():
-    import re
-    js = (Path(__file__).resolve().parents[2] / "bench" / "studio" / "static"
-          / "cablenet_model.js").read_text(encoding="utf-8")
-    for demand in _degenerate_demands().values():
-        why = _model(demand=demand)["verdict"]["shape"]["why_unknown"]
-        assert why in js          # the panel carries the documents' wording
-    assert re.search(r"acceptance === null", js)
-
-
-# ---------------------------------------------------------------------------
-# Review fixes: one truth test for `reachable`, one rounding for lengths
-# ---------------------------------------------------------------------------
-
 @pytest.mark.parametrize("missing", ["absent", "null"])
 def test_a_stage_with_no_reachable_is_told_the_same_way_everywhere(
         tmp_path, monkeypatch, missing):
@@ -1005,13 +991,6 @@ def test_a_stage_that_is_false_is_unreachable_in_every_document():
     rows = exports._sheet_rows(model)["Stages"]
     assert {r[1]: r[5] for r in rows if len(r) == 7}["S7"] == "no"
     assert "does not hold" in exports.diagram_svg(model)
-
-
-def test_the_panel_tests_reachable_against_false_only():
-    js = (Path(__file__).resolve().parents[2] / "bench" / "studio" / "static"
-          / "cablenet_model.js").read_text(encoding="utf-8")
-    assert "stage.reachable === false" in js
-    assert "stage.reachable ===" not in js.replace("stage.reachable === false", "")
 
 
 def test_workbook_lengths_use_the_data_sheets_rounding(tmp_path, monkeypatch):
@@ -1118,41 +1097,6 @@ def test_the_route_exports_a_different_rope_and_says_so(client, monkeypatch, tmp
 
 # newtons() lives in the model, where the panel's sentences are made; the
 # controller beside it writes the rest and is held to the same rule.
-_CABLENET_JS = (Path(__file__).resolve().parents[2] / "bench" / "studio"
-                / "static" / "cablenet_model.js")
-_CABLENET_CONTROLLER_JS = _CABLENET_JS.with_name("cablenet.js")
-
-
-def test_the_panel_never_rounds_a_force_to_whole_newtons():
-    import re
-    model = _CABLENET_JS.read_text(encoding="utf-8")
-    controller = _CABLENET_CONTROLLER_JS.read_text(encoding="utf-8")
-    # a number followed by " N" must come out of newtons(), not toFixed
-    for js in (model, controller):
-        assert not re.search(r"toFixed\(\d\)\}? N\b", js)
-    # the calls, across both files (not the definition, nor kilonewtons)
-    assert len(re.findall(r"(?<![A-Za-z])(?<!function )newtons\(", model + controller)) >= 4
-
-
-def test_the_panels_formatter_renders_what_exports_newtons_renders():
-    import json
-    import re
-    import shutil
-    import subprocess
-    node = shutil.which("node")
-    if node is None:
-        pytest.skip("needs node")
-    js = _CABLENET_JS.read_text(encoding="utf-8")
-    source = re.search(r"function newtons\(value\) \{.*?\n\}", js, re.S).group(0)
-    values = [1471.0, 1471, 1470.96, 1470.94, 1500, 1471.4, 0, 450000, 0.04, None]
-    out = subprocess.run(
-        [node, "-e", source + "console.log(JSON.stringify({}.map(newtons)))".format(
-            json.dumps(values))],
-        capture_output=True, text=True, check=True).stdout
-    assert json.loads(out) == [exports._newtons(v) for v in values]
-    # the case that made this more than cosmetic: a fractional ceiling just
-    # under the floor must not read as "1471 N against 1471 N"
-    assert exports._newtons(1470.94) != exports._newtons(1471.0)
 
 
 def test_with_eye_m20_chosen_no_rung_drops_to_a_weaker_eye_bolt(

@@ -1271,7 +1271,7 @@ def test_the_analysis_section_watches_a_409_only_when_the_live_run_is_staged():
     assert checked < branch.index("watchRun(body.run, exportName, status, params)")
     # in the refusing branch itself: the sentence, then a return before any watch
     refusal = branch[checked:branch.index("watchRun(")]
-    assert ('"a cable net run is live on this study; " +\n'
+    assert ('"a formwork run is live on this study; " +\n'
             '          "run the analysis when it finishes"') in refusal
     assert refusal.index("run the analysis when it finishes") < refusal.index("return;")
 
@@ -2033,9 +2033,9 @@ def test_three_buttons_replace_the_show_select():
     # Re-pinned 2026-09-04: the two locals became the one netClearance()
     # record that the finished net, Both mode and the formwork act all read.
     # Still two lifts, still one per object's own radius.
-    # Re-pinned 2026-10-08: a cable net lens draws the shell ghosted over the
-    # net in every mode, so the net clears it then too, as in Both.
-    assert 'const lifted = state.showMode === "both" || ghost;' in body
+    # Re-pinned 2026-10-11: the cable net lenses' see-through shell went with
+    # the old tab, so the net is lifted in Both alone again.
+    assert 'const lifted = state.showMode === "both";' in body
     assert 'position.z = lifted ? clearance.wires' in body
     assert 'position.z = lifted ? clearance.nodes' in body
 
@@ -4674,97 +4674,8 @@ def test_the_rail_has_a_cable_net_section_and_the_data_popup_lost_its_tab():
                        "camera-section", "scene-section", "output-section"]
     assert '<button data-section="formwork-section" type="button">Cable net</button>' in rail
     assert ">Formwork</button>" not in rail
-    assert '<details id="cablenet-section" class="hidden">' in html
+    assert 'id="cablenet-section"' not in html
     assert "cablenet-panel" not in html
-    for ident in ("cablenet-run", "cablenet-speed", "cablenet-lenses",
-                  "cablenet-stage", "cablenet-motor", "cablenet-recommend",
-                  "cablenet-wires", "cablenet-price", "cablenet-holds",
-                  "cablenet-graphs", "cablenet-export", "cablenet-export-choose",
-                  "cablenet-popup", "cablenet-popup-toggle"):
-        assert 'id="{}"'.format(ident) in html, ident
-    # the run is the section's one primary action. The slice starts AFTER the
-    # section's own opening tag, or the count of nested <details> below could
-    # never be nought.
-    opening = '<details id="cablenet-section" class="hidden">'
-    section = html[html.index(opening) + len(opening):]
-    section = section[:section.index("</details>")]
-    assert section.count('class="primary"') == 1
-    # nothing in the section leans on a <details> toggle: #panel hides summaries
-    assert section.count("<details") == 0
-    # every button says what it does
-    for tag in re.findall(r"<button[^>]*>", section):
-        assert 'title="' in tag, tag
-
-
-def test_the_cable_net_lenses_are_a_sibling_table_read_by_the_same_builder():
-    js = (STATIC / "studio.js").read_text(encoding="utf-8")
-    start = js.index("const CABLENET_LAYERS = [") + len("const CABLENET_LAYERS = [")
-    body = js[start:js.index("];", start)]
-    for name in ("tension", "nodeforce", "sag", "prestress", "reel"):
-        assert '"{}"'.format(name) in body, name
-    toggles = _function_body(js, "buildLayerToggles")
-    assert toggles.count("buildLensButtons(") == 2
-    assert '"cablenet-lenses"' in toggles and "CABLENET_LAYERS" in toggles
-    exclusive = js[js.index("const EXCLUSIVE_LAYERS = ["):]
-    exclusive = exclusive[:exclusive.index("];")]
-    assert '"tension"' in exclusive and '"sag"' in exclusive
-    assert '"nodeforce"' not in exclusive and '"reel"' not in exclusive
-
-
-def test_a_cable_net_lens_ghosts_the_skin_without_touching_visibility_or_the_raycast():
-    js = (STATIC / "studio.js").read_text(encoding="utf-8")
-    show = _function_body(js, "applyShowMode")
-    assert "state.cablenetGhost" in show and "ghostPiece(" in show
-    ghost = _function_body(js, "ghostPiece")
-    assert ".visible" not in ghost and "raycast" not in ghost
-    assert "opacity" in ghost and "depthWrite" in ghost
-    layer = _function_body(js, "setLayer")
-    assert "state.cablenetGhost = cableNetLensUp()" in layer
-    assert "applyTimeline(" not in layer
-
-
-def test_the_lenses_read_the_demand_document_and_follow_the_timeline():
-    js = (STATIC / "studio.js").read_text(encoding="utf-8")
-    at = _function_body(js, "cablenetStageAt")
-    for call in ("instantAt(", "machineTime(", "cablenetCourseIndex(build)", "duringFormworkAct("):
-        assert call in at, call
-    paint = _function_body(js, "applyCableNetPaint")
-    for key in ("member_tensions", "node_sag_mm", "setColorAt", "sagBand("):
-        assert key in paint, key
-    # Re-pinned in review: the cable net arrows are drawn by a function of
-    # their own, which updateVectorLayers calls, so the clock repaints them
-    # without rebuilding Load, Reaction and Thrust.
-    vectors = _function_body(js, "updateCableNetVectors")
-    for key in ("node_residual", "node_sag", "actuator_travel", "wire_reel_commands",
-                "wire_tensions", "cablenetStageAt(", "state.cablenetCeiling"):
-        assert key in vectors, key
-    assert "updateCableNetVectors();" in _function_body(js, "updateVectorLayers")
-    scrub = js[js.index('scrubber.addEventListener("input"'):]
-    scrub = scrub[:scrub.index("\n});")]
-    assert "paintCableNetLenses()" in scrub
-    availability = _function_body(js, "layerAvailability")
-    assert "run the cable net analysis from this section" in availability
-    assert "earlier analysis" in availability
-
-
-def test_without_a_staging_document_the_lenses_follow_the_pieces_dropping():
-    """With no staging document for the loaded options the lenses used to show
-    the last course for the whole build. The course is then read from the
-    pieces, by the walk the HUD's stage line makes (coursesDropped), and
-    instantAt clamps it to the demand's courses; a staging document, when there
-    is one, still decides."""
-
-    js = (STATIC / "studio.js").read_text(encoding="utf-8")
-    course = _function_body(js, "cablenetCourseIndex")
-    staged = course.index("if (state.bundle.staging) return currentStageIndex(build);")
-    walked = course.index("return Math.max(0, coursesDropped(build) - 1);")
-    assert staged < walked
-    assert "state.bundle.pieces" in course[staged:walked]
-    assert "courseIndex: cablenetCourseIndex(build)" in _function_body(js, "cablenetStageAt")
-    assert "state.bundle.staging ? currentStageIndex(build) : null" not in js
-    walk = _function_body(js, "coursesDropped")
-    assert "for (const piece of state.bundle.pieces)" in walk
-    assert "piece.course + 1" in walk and "placementStep()" in walk
 
 
 def test_the_principal_bars_step_aside_for_every_lens_that_paints_the_wires():
@@ -4775,15 +4686,9 @@ def test_the_principal_bars_step_aside_for_every_lens_that_paints_the_wires():
 
     js = (STATIC / "studio.js").read_text(encoding="utf-8")
     assert "principal.visible = netOn && !wiresPainted();" in _function_body(js, "applyShowMode")
-    painted = _function_body(js, "wiresPainted")
-    for test in ("state.layers.forces", 'state.layers.tension && layerAvailability("tension").on',
-                 'state.layers.sag && layerAvailability("sag").on'):
-        assert test in painted, test
-    paint = _function_body(js, "applyCableNetPaint")
-    assert 'state.layers.tension && layerAvailability("tension").on' in paint
-    assert 'state.layers.sag && layerAvailability("sag").on' in paint
-    # every lens change and every new demand runs applyShowMode, so the bars follow
-    assert "if (cableLens) applyShowMode();" in _function_body(js, "setLayer")
+    # Wire forces is the one lens left that paints the wires (spec 2026-10-11:
+    # the cable net's Wire tension and Sag went with the old tab)
+    assert "return !!state.layers.forces;" in _function_body(js, "wiresPainted")
 
 
 def test_the_net_nodes_can_be_coloured_and_the_options_are_the_loaded_ones():
@@ -4798,39 +4703,7 @@ def test_the_net_nodes_can_be_coloured_and_the_options_are_the_loaded_ones():
     assert "state.loadedOptions" in options
     assert "state.loadedOptions = " in js
     assert "cablenet-panel" not in js
-    assert "mountCableNet({" in js
-
-
-def test_a_lens_that_cannot_draw_does_not_ghost_and_an_unchanged_ghost_costs_nothing():
-    # Found on the page (2026-10-08): a lens left up when the demand went (a new
-    # cut, a restored scene) ghosted the skin with nothing drawn, behind a
-    # button too greyed to put it down; and a ghost asked of every piece on
-    # every applyShowMode, lens or none, re-asked each material's program.
-    js = (STATIC / "studio.js").read_text(encoding="utf-8")
-    assert "state.layers[name] && layerAvailability(name).on" in _function_body(js, "cableNetLensUp")
-    ghost = _function_body(js, "ghostPiece")
-    assert ghost.index("return;", ghost.index("const kept")) < ghost.index("needsUpdate"), (
-        "a piece already in the state asked for is left alone")
-    show = _function_body(js, "applyShowMode")
-    assert show.index("ghostPiece(") < show.index('if (state.showMode === "timeline") return;'), (
-        "the ghost follows the lens in a take as well")
-
-
-def test_a_painter_put_down_takes_its_arrows_key_and_caption_with_it():
-    js = (STATIC / "studio.js").read_text(encoding="utf-8")
-    layer = _function_body(js, "setLayer")
-    # every press repaints colours, arrows and caption, after the force lens
-    # has given the wires back: Sag draws arrows, and any painter puts it down
-    assert "\n  paintCableNetLenses(true);" in layer
-    assert layer.index("applyWireForces();") < layer.index("paintCableNetLenses(true);")
-    repaint = _function_body(js, "paintCableNetLenses")
-    for call in ("applyCableNetPaint();", "updateCableNetVectors();", "paintCableNetStageLine();"):
-        assert call in repaint, call
-    legend = _function_body(js, "updateLegend")
-    assert 'if (!state.layers.tension && !state.layers.sag) legend.classList.add("hidden");' in legend
-    assert 'legend.classList.add("deflection");' in _function_body(js, "paintScalarLegend"), (
-        "the tension and sag keys wear the one-sided bar")
-    assert "magnitude.toFixed(1)" in _function_body(js, "applyCableNetPaint")
+    assert "mountFormwork({" in js
 
 
 def test_the_loaded_options_are_what_went_into_the_bundle_url_and_only_for_the_winner():
@@ -4842,8 +4715,9 @@ def test_the_loaded_options_are_what_went_into_the_bundle_url_and_only_for_the_w
     assert "fetchedWith.source = state.source;" in load[load.index('url += "&source="'):][:120]
     won = load.rindex('if (sequence !== state.loadSequence) return "superseded";')
     assert won < load.index("state.loadedOptions = fetchedWith;") < load.index("buildScene(fresh, preserve);")
-    assert load.index("buildScene(fresh, preserve);") < load.index("cableNet.reload();")
-    assert load.index("cableNet.clear();") < load.index("let url =")
+    assert load.index("buildScene(fresh, preserve);") < load.index(
+        "if (formworkTab) formworkTab.reload();")
+    assert load.index("if (formworkTab) formworkTab.clear();") < load.index("let url =")
     # the study's name rides with them, so the section runs and reads the
     # study on screen whatever the select says by then
     assert "study: exportName" in load[load.index("const fetchedWith = {"):][:120]
@@ -4853,60 +4727,7 @@ def test_the_loaded_options_are_what_went_into_the_bundle_url_and_only_for_the_w
     # a refused load: the section describes the study still on screen again
     refused = load[load.index("} catch (error) {"):]
     assert refused.index("if (sequence !== state.loadSequence) return;") < refused.index(
-        "if (state.bundle) cableNet.reload();")
-
-
-def test_a_lens_repaint_frees_what_it_replaces_and_waits_for_another_instant():
-    js = (STATIC / "studio.js").read_text(encoding="utf-8")
-    # what is taken off the scene is freed: three keeps the buffers otherwise
-    free = _function_body(js, "disposeArrowField")
-    for call in ("scene.remove(field)", "geometry.dispose()", "material.dispose()",
-                 "isInstancedMesh) object.dispose()"):
-        assert call in free, call
-    vectors = _function_body(js, "updateVectorLayers")
-    assert "disposeArrowField(key)" in vectors
-    assert "scene.remove(state.objects[key])" not in vectors
-    assert "node_residual" not in vectors, "the cable net arrows are drawn apart"
-    assert "disposeArrowField(key)" in _function_body(js, "updateCableNetVectors")
-    # the clock repaints only at another instant; everything else forces
-    repaint = _function_body(js, "paintCableNetLenses")
-    assert "(stage ? stage.name : \"\")" in repaint
-    assert "if (!force && drawn === state.cablenetPainted) return;" in repaint
-    assert "paintCableNetLenses(true)" in _function_body(js, "buildLensButtons"), "a dial"
-    mount = js[js.index("const cableNet = mountCableNet({"):]
-    mount = mount[:mount.index("\n});")]
-    assert mount.count("paintCableNetLenses(true)") == 2, "a new demand and a new ceiling"
-    # every clock asks: the scrubber, a take (on the HUD's throttle), Stop,
-    # the rewind, a seek from the live graphs, and a recorded take
-    for name in ("stopTake", "rewindTake", "seekLiveGraphs"):
-        assert "if (cableNetLensUp()) paintCableNetLenses();" in _function_body(js, name), name
-    frame = js[js.index("function frame(now)"):]
-    frame = frame[:frame.index("\n}")]
-    throttled = frame[frame.index("if (playingFrameCount % 15 === 0) {"):]
-    assert "if (cableNetLensUp()) paintCableNetLenses();" in throttled[:throttled.index("    }")]
-    take = js[js.index("async function recordAnimation()"):]
-    take = take[:take.index("\n}")]
-    assert take.index("applyTimeline(frameIndex * speed / fps);") < take.index(
-        "if (cableNetLensUp()) paintCableNetLenses();") < take.index("renderView();")
-
-
-def test_a_demand_for_another_net_or_a_slack_wire_draws_nothing():
-    js = (STATIC / "studio.js").read_text(encoding="utf-8")
-    availability = _function_body(js, "layerAvailability")
-    assert "this demand is from an earlier geometry; run the cable net analysis again" in availability
-    assert availability.index('"bench.cablenet/2"') < availability.index("demandFitsNet()")
-    fits = _function_body(js, "demandFitsNet")
-    for key in ("analysis_mesh.vertices.length", "analysis_mesh.edges.length", "node_residual",
-                "node_sag,", "node_sag_mm", "member_tensions", "net_vertex", "actuators",
-                "state.cablenetFit", "try {", "} catch (error) {"):
-        assert key in fits, key
-    assert "if (!tension) return;" in _function_body(js, "updateCableNetVectors"), (
-        "a slack wire is not a 0.4 m arrow straight down")
-    # the instant is read only for a lens that can draw, so a document that
-    # does not fit is never walked (found in the browser: a null stage threw)
-    calls = [line for line in js.splitlines() if "cablenetStageAt(" in line
-             and "function cablenetStageAt(" not in line and not line.strip().startswith("//")]
-    assert len(calls) == 4 and all(" ? cablenetStageAt(" in line for line in calls), calls
+        "if (state.bundle && formworkTab) formworkTab.reload();")
 
 
 def test_a_disabled_panel_button_looks_disabled():

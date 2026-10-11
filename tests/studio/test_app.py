@@ -1487,15 +1487,16 @@ def test_the_atmosphere_module_is_remapped_to_its_versioned_address(
         page), "atmosphere.js must be remapped to its versioned address"
 
 
-def test_the_cable_net_modules_are_remapped_to_their_versioned_addresses(
+def test_the_labels_module_is_remapped_and_the_old_cable_net_is_not(
         tmp_path, monkeypatch):
-    """The section's controller imports its model, so a stale model file would
-    put old sentences and old verdicts on a new page: the exact fault this
-    remap exists for. Both files are versioned like the rest."""
+    """The one Cable net tab's modules import labels.js, so a stale copy would
+    put old labels on a new page: the exact fault this remap exists for. The
+    old Cable net's two files are gone (spec 2026-10-11, section 9)."""
 
     client, _ = make_client(tmp_path, monkeypatch)
     page = client.get("/").text
-    for module in ("cablenet.js", "cablenet_model.js"):
+    assert "cablenet.js" not in page and "cablenet_model.js" not in page
+    for module in ("labels.js",):
         escaped = re.escape(module)
         assert re.search(
             r'"/static/' + escaped + r'": "/static/' + escaped + r'\?v=[0-9a-f]{6,}"',

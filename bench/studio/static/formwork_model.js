@@ -3,7 +3,7 @@
 // player's clock over it. Pure: no page and no three.js, so it runs under node
 // in the tests. formwork.js wires it to the page, formwork_view.js draws it.
 
-import { escapeHtml, forceLabel } from "./cablenet_model.js";
+import { escapeHtml, forceLabel } from "./labels.js";
 
 export const SCHEMA = "bench.formwork-sim/1";
 // The studio plays machine time 0 to 100 in its 12 s formwork act; the raise,
