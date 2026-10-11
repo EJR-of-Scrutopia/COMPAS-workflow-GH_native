@@ -12128,31 +12128,20 @@ function updateHud() {
   hud.textContent = lines.join("\n");
 }
 
-// The event log is UI chrome, not scene state: the purity contract below
-// covers the scene functions (applyTimeline, applySceneAtTime and their
-// kin), which must stay pure in t so a recording is deterministic. Reading
-// the wall clock here is unrelated to that; logStudio only timestamps a
-// line for the reader, it never drives anything drawn in the scene.
-const eventLog = { lines: [], timer: null };
-
+// The studio's log is not scene state: the purity contract below covers the
+// scene functions (applyTimeline, applySceneAtTime and their kin), which must
+// stay pure in t so a recording is deterministic. Reading the wall clock here
+// is unrelated to that; logStudio only timestamps a line, it never drives
+// anything drawn in the scene. The lines are kept off the screen (his ruling
+// of 11 October 2026: no descriptive text over the view): each goes to the
+// browser's console and travels with any problem report.
 function logStudio(message) {
   const stamp = new Date().toLocaleTimeString("en-GB", { hour12: false });
-  // The same line travels with any problem report: what the user did just
-  // before is usually the half of the story the error message leaves out.
+  // what the user did just before is usually the half of the story the error
+  // message leaves out
   recentLog.push(stamp + "  " + message);
   while (recentLog.length > 40) recentLog.shift();
-  eventLog.lines.push(stamp + "  " + message);
-  while (eventLog.lines.length > 7) eventLog.lines.shift();
-  const element = document.getElementById("event-log");
-  element.textContent = "";
-  for (const line of eventLog.lines) {
-    const row = document.createElement("div");
-    row.textContent = line;
-    element.appendChild(row);
-  }
-  element.classList.remove("faded");
-  if (eventLog.timer) clearTimeout(eventLog.timer);
-  eventLog.timer = setTimeout(() => element.classList.add("faded"), 8000);
+  console.info(stamp + "  " + message);
 }
 
 const bannerState = { timer: null, remaining: 0, since: 0, level: "info" };

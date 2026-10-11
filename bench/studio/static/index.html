@@ -17,9 +17,8 @@
 </head>
 <body>
 <canvas id="view"></canvas>
-<!-- The corner readout renderers have. Bottom LEFT, which was the one
-     clear corner: #event-log already owns bottom right and #legend the
-     lower third beside the panel, so nothing had to move out of the way. -->
+<!-- The corner readout renderers have. Bottom LEFT, a clear corner: #legend
+     owns the lower third beside the panel, so nothing had to move. -->
 <div id="stats-overlay" class="hidden" title="Click to hide">
   <div><span>objects</span><b id="stat-objects">0</b></div>
   <div><span>draws</span><b id="stat-calls">0</b></div>
@@ -57,7 +56,6 @@
      node opens (spec 2026-10-11 one Cable net tab, section 5.2). -->
 <div id="formwork-labels"></div>
 <div id="formwork-pick" class="hidden"></div>
-<div id="event-log"></div>
 <div id="banner" class="hidden"><span id="banner-text"></span><span id="banner-close">&#10005;</span></div>
 <div id="cut-overlay" class="hidden"><div id="cut-spinner"></div><div id="cut-status"></div></div>
 <div id="still-cover"><div id="still-spinner"></div><div id="still-cover-text"></div></div>

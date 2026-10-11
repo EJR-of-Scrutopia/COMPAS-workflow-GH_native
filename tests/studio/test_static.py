@@ -2427,23 +2427,24 @@ def test_the_run_button_lives_in_analysis():
     assert 'id="run-button"' not in study
 
 
-def test_the_event_log_reports_studio_events():
+def test_the_studio_log_is_kept_off_the_screen():
+    """His ruling of 11 October 2026: no descriptive text on screen. The log
+    that printed what the studio did over the view (every banner a second
+    time) is gone from the page; each line is still kept for the problem
+    reports and written to the browser's console."""
+
     html = (STATIC / "index.html").read_text(encoding="utf-8")
     js = (STATIC / "studio.js").read_text(encoding="utf-8")
     css = (STATIC / "studio.css").read_text(encoding="utf-8")
-    assert 'id="event-log"' in html
-    assert "#event-log" in css and "pointer-events: none" in css.split("#event-log", 1)[1][:400]
-    # F6: the log sat at right: 16px, painting over the control panel
-    # (#legend already solves the identical collision). The clearance is
-    # DERIVED from the panel width token now, so the two cannot drift when
-    # the panel is resized: it hard-coded 276px while the panel was 260,
-    # and 316px while it was 300, and each number went stale in turn.
-    clearance = "right: calc(var(--panel-w) + var(--s4))"
-    assert clearance in css.split("#event-log", 1)[1][:400]
-    assert clearance in css.split("#legend {", 1)[1][:400]
+    assert 'id="event-log"' not in html and "#event-log" not in css
+    assert "eventLog" not in js
     body = _function_body(js, "logStudio")
-    assert "toLocaleTimeString" in body or "toTimeString" in body
-    # The banner helper mirrors into the log, and the named sites report.
+    assert "toLocaleTimeString" in body
+    assert "recentLog.push(" in body and "console.info(" in body
+    assert "getElementById" not in body
+    # the #legend keeps its clearance of the panel
+    assert "right: calc(var(--panel-w) + var(--s4))" in css.split("#legend {", 1)[1][:400]
+    # the named sites still leave their breadcrumbs
     assert "logStudio(" in _function_body(js, "showBanner")
     assert "logStudio(" in _function_body(js, "loadStudy")
     assert "logStudio(" in _function_body(js, "loadHdri")
