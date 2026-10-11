@@ -4294,7 +4294,7 @@ def test_one_output_folder_sits_above_the_still_and_the_take():
     row = html.index('id="recordings-folder-row"')
     assert row < html.index('<span class="row-heading">Still</span>') < html.index(
         '<span class="row-heading">Take</span>')
-    assert 'title="Pick where finished stills and recordings are saved"' in html
+    assert 'title="Output folder"' in html
 
 
 def test_the_polished_steel_reflects_the_scene_it_stands_in():
@@ -4763,6 +4763,54 @@ def test_the_loaded_options_are_what_went_into_the_bundle_url_and_only_for_the_w
     refused = load[load.index("} catch (error) {"):]
     assert refused.index("if (sequence !== state.loadSequence) return;") < refused.index(
         "if (state.bundle && formworkTab) formworkTab.reload();")
+
+
+def test_no_title_on_the_page_runs_past_eight_words():
+    """His ruling of 11 October 2026: "i dont think we need all this
+    descriptive text. and that goes for all of the vaulted app. if theres
+    over explanation of things instead of just showing the data with red
+    for bad, and a basic layout for information, then we need to remove
+    it." A title names its control in a few words; 138 of them were
+    sentences, the longest 53 words. Every title on the page is counted,
+    so a paragraph cannot come back as a tooltip. No title is exempt."""
+
+    import html as _html
+
+    page = (STATIC / "index.html").read_text(encoding="utf-8")
+    titles = re.findall(r'(?<![\w-])title="([^"]*)"', page)
+    assert len(titles) > 150, "the count reads the page's own titles"
+    long = [t for t in map(_html.unescape, titles) if len(t.split()) > 8]
+    assert not long, "titles over eight words: " + repr(long)
+    # The one panel.js gives every dial reading.
+    panel = (STATIC / "panel.js").read_text(encoding="utf-8")
+    assert 'value.title = "Type a value";' in panel
+    # And the written rule says the same.
+    doc = (STATIC.parents[2] / "docs" / "studio-interface-language.md").read_text(
+        encoding="utf-8")
+    assert "A title names its control in a few words." in doc
+    assert "sentence" not in doc[doc.index("## 3."):doc.index("## 4.")]
+
+
+def test_the_page_s_own_lines_carry_no_sentence():
+    """The same ruling, for what the page shows before any script writes:
+    the drawers' readout lines are empty until there is a state to read,
+    the fixture card has no closing instruction, the take's line is empty
+    at rest, the atmosphere group names its state and nothing more, and a
+    unit cell holds a unit."""
+
+    page = (STATIC / "index.html").read_text(encoding="utf-8")
+    assert '<div id="scatter-readout"></div>' in page
+    assert '<div id="lights-readout"></div>' in page
+    assert 'id="fixture-readout"' not in page
+    assert '<div id="record-status"></div>' in page
+    assert '<div id="atmosphere-hint">No atmosphere</div>' in page
+    # applyCut still writes the two counts by id, so their spans stay, out
+    # of sight: the Data window's overview reads them out.
+    assert ('<em><span id="size-units">mm</span><span id="piece-count" hidden>0</span>'
+            '<span id="course-count" hidden>0</span></em>') in page
+    assert "<span>Radius</span>" in page
+    assert '<b id="ground-radius-value">60</b><em>m</em>' in page
+    assert " pieces in " not in page and "m radius" not in page
 
 
 def test_a_disabled_panel_button_looks_disabled():

@@ -289,7 +289,7 @@ def test_the_new_scene_button_sits_beside_save_in_the_scenes_drawer():
     tag = actions[actions.index('<button id="scene-new"'):]
     tag = tag[:tag.index(">")]
     assert 'class="hidden"' in tag, "shown only in the Scenes drawer"
-    assert "No saved scene is touched" in tag and "Ctrl+Z" in tag, "the title says both"
+    assert 'title="Blank scene"' in tag, "the title names it (his ruling of 11 October 2026)"
     assert actions.index('id="scene-new"') < actions.index('id="scene-save"')
     assert page.count('id="scene-new"') == 1
     js = STUDIO_JS.read_text(encoding="utf-8")

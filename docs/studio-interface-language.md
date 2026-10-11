@@ -51,7 +51,7 @@ Corners are `--radius` on a control and `--radius-s` on a thumbnail.
 This is the rule that the sweep found most often broken, and the one that
 matters most because Param reads these numbers all day.
 
-    <label title="what it does, in a sentence"><span>Name</span>
+    <label title="a few words naming it"><span>Name</span>
       <input id="thing" type="range" min=".." max=".." step="..">
       <b id="thing-value">1.20</b><em>x</em></label>
 
@@ -121,9 +121,8 @@ honest fourth. The box sits at its own width at the left of its cell
 (`justify-self: start`) rather than stretching a track it does not
 have.
 
-A dial's `title` says what it changes in one sentence, in Param's own
-terms. "The clear gap between items, as a multiple of each one's own
-width" is right; "spacing factor" is not.
+A title names its control in a few words. The panel shows names, values
+and units; explanations are not shown (his ruling of 11 October 2026).
 
 
 ## 4. Naming
@@ -218,21 +217,21 @@ mode and always shows, in the Scene section's Sky group since
 switches to HDRI. The atmosphere picker shows in every mode, because the
 fog works in all three; its ten dials, in the Scene section's Atmosphere
 group, show only while a preset other than None is chosen, and until
-then the group says where the choice is made.
+then the group says there is none.
 
-The readout line is a full sentence in the second ink, and it says the
-state, not an instruction, once there is state to report: "18 placed,
-0.0 M triangles" rather than "Ready".
+The readout line is in the second ink and says the state as values,
+"18 placed, 0.0 M triangles", never an instruction; with no state to
+report it is empty.
 
 
 ## 8. Messages
 
-- Say what happened and what to do, in that order: "stopped at 271 -- 25
-  M triangles. Loosen the spacing or pick a lighter tree."
+- Say what happened in a few words, and what to do only when there is
+  one thing to do: "Run again: pull changed". No explanation.
 - Never blame the user's file for a limit of our reader. The morning of
   2026-09-09 was lost to "Upload one from the Skin component", said of a
   study whose skin was already on disk.
-- A guard rail with no explanation reads as a broken tool.
+- A guard rail still says what stopped it, or it reads as a broken tool.
 - No em dashes anywhere, in the interface or the source. Two hyphens.
 
 
@@ -547,7 +546,7 @@ rules the next one follows.
   about the fixture they are both showing.
 - **It is the same language inside.** An id-carrying `.dial-block`,
   four parts to every control, readings named `<slider-id>-value`, a
-  `title` on each one in Param's own terms, themed tokens only.
+  short `title` on each one, themed tokens only.
 - **It shows only what applies.** The spot's four rows are hidden for
   every other kind, and Length is hidden where stretching the body
   would not move the light (`fixtureStretches`: a fixture whose light
@@ -845,7 +844,7 @@ skies and the four dials that tune the photograph it shows (Projection,
 Scale, Height, Rotation). Brightness moved to the Scene section under a
 new Sky heading, first in the backdrop's block beside Background. The
 atmosphere's ten dials, Light rays among them, moved under Atmosphere,
-which says "No atmosphere: choose one from the Skies tile" while there
+which says "No atmosphere" while there
 is none. Wind, Wind from and Gusts moved under Wind. Folded, each heading
 reads its settings back: the sky's brightness as a percentage, the
 atmosphere by name with its rays when they are on, and the wind's
@@ -880,10 +879,9 @@ as the one face:
 WHAT STAYED, and why. The folders, because which library a tile shows is
 a setting and not a picture. The hidden selects (`render-skin`,
 `ground-preset`, `hdri-select`), because every reader of the choice goes
-through them and the tiles write them. The take's report under Take, which
-says at rest that a take records at 1080p from the icon beside Play, the
-resolution the button's name used to carry; the icon's own title says it
-too.
+through them and the tiles write them. The take's report under Take, empty
+at rest since 11 October 2026; the record icon's own title says 1080p, the
+resolution the button's name used to carry.
 
 THE ICONS CALL THE TAKE'S FUNCTIONS. They used to click the panel's
 buttons, so the buttons could not simply be deleted: `togglePlay`,
@@ -916,8 +914,8 @@ breeze.
 
 Nothing saved is touched: no request from it reaches `/api/scenes`. The
 study's working layout is written empty, as Clear writes it, so a reload
-opens on the blank start. The picture it replaced is one Ctrl+Z away, and
-the button's title says both. Measured on his layout of 98,815 props with
+opens on the blank start. The picture it replaced is one Ctrl+Z away; the
+button's title is "Blank scene". Measured on his layout of 98,815 props with
 Haze, a 40 per cent wind and the sky at 70: New scene left 0 props, no
 atmosphere, a 10 per cent wind and the sky at 100 with the three saved
 scenes unchanged, and Ctrl+Z put all 98,815 back with the Haze, the wind

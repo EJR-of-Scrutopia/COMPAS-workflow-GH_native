@@ -542,7 +542,7 @@ def test_the_graphs_tuck_to_the_side_and_remember_it():
     css = (STATIC / "studio.css").read_text(encoding="utf-8")
     panel = html[html.index('<div id="graphs-panel"'):]
     panel = panel[:panel.index('<div id="legend"')]
-    assert '<button id="graphs-collapse" title="Tuck the graphs to the side">' in panel
+    assert '<button id="graphs-collapse" title="Hide graphs">' in panel
     assert 'const LIVE_TUCKED_KEY = "vaulted-live-graphs-tucked";' in js
     assert 'liveGraphs.tucked = localStorage.getItem(LIVE_TUCKED_KEY) === "1";' in js
     tick = _body(js, "function tickLiveGraphs(force)")

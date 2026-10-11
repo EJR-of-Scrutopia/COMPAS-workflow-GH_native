@@ -75,7 +75,7 @@ export function upgradeSliders(root) {
 // them would quietly break whoever writes the reading.
 function makeValueTypable(input, value) {
   value.classList.add("typable");
-  value.title = "Click to type a value";
+  value.title = "Type a value";
   value.addEventListener("click", () => {
     if (value.querySelector("input")) return;          // already editing
     const shown = parseFloat(

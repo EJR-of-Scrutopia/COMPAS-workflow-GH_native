@@ -1432,19 +1432,19 @@ def test_a_fixture_can_be_made_invisible_and_still_picked_up():
         "the same rule Output and Warmth follow")
 
     # THE CONTROL, in his word, in the four-part shape, with a title
-    # that says what it does and what it does not.
+    # that names it: the body is hidden, not the light.
     drawer = html[html.index('<div id="lights-panel"'):]
     drawer = drawer[:drawer.index('<div id="shelf-grid"')]
     assert "<span>Invisible</span>" in drawer
     assert '<input id="lamp-invisible" type="checkbox">' in drawer
-    assert '<b id="lamp-invisible-value">no</b><em></em>' in drawer, (
+    assert '<b id="lamp-invisible-value"></b><em></em>' in drawer, (
         "a toggle has no unit, and an empty cell keeps the four-cell "
-        "grid the block is read down")
+        "grid the block is read down; at rest the tick says the state")
     row = drawer[:drawer.index("<span>Invisible</span>")]
     row = row[row.rindex("<label "):]
-    assert "its light does not change" in row, (
-        "the title says what it does NOT do as well; a control that "
-        "looked like it turned the light off would be read as one")
+    assert 'title="Hide fixture body"' in row, (
+        "the title names what it hides, the body and not the light; a "
+        "control that looked like it turned the light off would be read as one")
     sync = _js_function(js, "function syncLightControls()")
     assert 'const said = document.getElementById("lamp-invisible-value");' in sync
     assert 'said.textContent = hidden ? "yes" : "no";' in sync
@@ -1579,14 +1579,14 @@ def test_the_spot_has_an_aperture_and_the_panel_has_one_face():
         assert '<b id="%s-value">' % control in drawer, control
         assert unit in drawer, control
     assert '<input id="lamp-shadow" type="checkbox" checked>' in drawer
-    assert '<b id="lamp-shadow-value">on</b><em></em>' in drawer
+    assert '<b id="lamp-shadow-value"></b><em></em>' in drawer
     assert drawer.count('class="spot-dial hidden"') == 4, (
         "all four are hidden until a spot is in hand")
     assert 'data-unit="1"' in drawer[drawer.index('id="lamp-reach"') - 200:
                                      drawer.index('id="lamp-reach"') + 80], (
         "Reach rests at zero, where the typable reading cannot derive "
         "its own factor")
-    assert "nought means no limit" in drawer, (
+    assert 'title="Beam reach, 0 unlimited"' in drawer, (
         "and the title says what a nought reach means, because nothing "
         "about a slider at its floor says it")
     sync = _js_function(js, "function syncLightControls()")
@@ -4979,8 +4979,8 @@ def test_the_setting_and_the_weather_live_in_the_skies_drawer():
     # and the pair read as one finished control and one unfinished one.
     picker = drawer[drawer.index('<button id="weather-picker"'):]
     picker = picker[:picker.index("</button>")]
-    assert 'title="The sky itself:' in picker, (
-        "the weather picker says what it does, like its twin")
+    assert 'title="Weather"' in picker, (
+        "the weather picker carries a title, like its twin")
 
     scene = html[html.index('<details id="scene-section">'):]
     scene = scene[:scene.index("</details>")]

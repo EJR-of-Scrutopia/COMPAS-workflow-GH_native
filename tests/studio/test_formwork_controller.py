@@ -365,7 +365,7 @@ def test_the_colour_by_titles_say_what_is_coloured():
     # his answer of 11 October 2026: each rope by its own tension (found by the
     # final review: the titles still said the tendons' pull was in it)
     html = (STATIC / "index.html").read_text(encoding="utf-8")
-    assert '<label title="The across ropes\' tension, kN; the along ones grey">' in html
+    assert '<label title="Across ropes\' tension, kN">' in html
     assert '<label title="Every rope\'s tension, kN">' in html
     assert "tendons' pull" not in html and "whole force" not in html
 
