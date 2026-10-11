@@ -15,8 +15,9 @@ function pounds(n, places = 0) {
 // The cost (section 8.2), a row each: what it is, its figure, a note.
 export function costHtml(cost) {
   if (!cost) return "";
-  const row = (name, value, note = "") =>
-    `<tr><th>${escapeHtml(name)}</th><td>${value}</td><td>${escapeHtml(note)}</td></tr>`;
+  const row = (name, value, note = "", title = "") =>
+    `<tr${title ? ` title="${escapeHtml(title)}"` : ""}><th>${escapeHtml(name)}</th>`
+    + `<td>${value}</td><td>${escapeHtml(note)}</td></tr>`;
   const rows = [];
   const one = cost.spool_gbp == null ? "unpriced" : pounds(cost.spool_gbp, 2);
   rows.push(row("One spool", one, cost.described || ""));
@@ -25,7 +26,7 @@ export function costHtml(cost) {
   rows.push(row("Cabinets", String(cost.cabinets), pounds(cost.cabinets_gbp)));
   rows.push(row("Total", pounds(cost.total_gbp), "VAT excluded"));
   if (cost.unpriced > 0) {
-    rows.push(row("Unpriced", cost.unpriced + (cost.unpriced === 1 ? " part" : " parts"),
+    rows.push(row("Unpriced", cost.unpriced + (cost.unpriced === 1 ? " part" : " parts"), "",
                   (cost.unpriced_parts || []).join(", ")));
   }
   return "<table>" + rows.join("") + "</table>";

@@ -61,7 +61,9 @@ def test_the_cost_is_one_spool_the_spools_the_cabinets_and_the_total(out):
     assert "<tr><th>Spools</th><td>105 × £412.30</td><td>£43,292</td></tr>" in html
     assert "<tr><th>Cabinets</th><td>15</td><td>£5,250</td></tr>" in html
     assert "<tr><th>Total</th><td>£48,542</td><td>VAT excluded</td></tr>" in html
-    assert "<tr><th>Unpriced</th><td>2 parts</td><td>drum-72, pico</td></tr>" in html
+    # the count, the parts' names on hover: found on screen, fifteen names
+    # crowded the tab
+    assert '<tr title="drum-72, pico"><th>Unpriced</th><td>2 parts</td><td></td></tr>' in html
     assert "Unpriced" not in out["priced"]
     assert out["none"] == ""
 
