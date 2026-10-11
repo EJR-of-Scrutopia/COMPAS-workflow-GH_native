@@ -173,6 +173,9 @@ NO_FALSEWORK = ("falsework is no longer taken: the net is judged against a toler
 FORMWORK_DEFAULTS = {"prestress": None, "rope": "rope-4mm", "wires_per_motor": 1,
                      "wall": 3.2}
 FORMWORK_TUBE_MM = 60.3     # the trees' tube, the engine's trees.DIAMETER
+# The wire's angle to its eye bolt's axis, which the export does not record:
+# assumed, as the panel always has, and the conservative direction.
+MECHANISM_ANGLE_DEGREES = 10.0
 
 
 MATERIALS = sorted(staging.DENSITIES)
@@ -1293,24 +1296,7 @@ def create_app(runner=None, cra_runner=None, cablenet_runner=None,
         import machine
 
         demand = _cablenet_demand(export, options if isinstance(options, dict) else {})
-        pairs = geometry.available_exports(bundle.UPLOAD_DIR)
-        contract = geometry.load_contract(pairs[export]["contract"])
-        design_mm = [[c * 1000.0 for c in point]
-                     for point in geometry.mesh_arrays(contract)["vertices"]]
-        sidecar = bundle.mechanism_sidecar(export)
-        document = bundle._read_optional(sidecar)
-        if document is None:
-            raise HTTPException(400, "mechanism: none for this study")
-        if mechanism.cited_machine_id(document):
-            document = _with_cited_machine(document, sidecar.parent)
-        rope = parts["rope"].get(str((options or {}).get("rope") or "rope-4mm"))
-        ea = float((rope or parts["rope"]["rope-4mm"])["ea_newtons"])
-        try:
-            facts = machine.facts_from(document, design_mm, geometry.support_ids(contract), ea)
-        except machine.MachineError as error:
-            raise HTTPException(400, str(error))
-        if facts["winding_radius_mm"] is None:
-            raise HTTPException(400, "machine: no winding radius")
+        facts = _machine_facts(export, parts, (options or {}).get("rope"))
         demands, take_ups = machine.cable_net_demands(demand)
         if not demand.get("stages"):
             raise HTTPException(400, "demand: no stages; run the cable net again")
@@ -1322,6 +1308,65 @@ def create_app(runner=None, cra_runner=None, cablenet_runner=None,
         machines = facts["machines"] or [list(range(len(demands)))]
         return {"demand": demand, "facts": facts, "demands": demands,
                 "take_ups": take_ups, "machines": machines}
+
+    def _machine_facts(export: str, parts, rope_key=None) -> dict:
+        """What the export says about the machine (machine.facts_from): the
+        spool's winding radius, each wire's node, reeving and route, which wires
+        each machine carries. Read from the study's mechanism document and its
+        contract alone; a study it cannot be read from is a 404 or a 400 that
+        says why in one line."""
+
+        import machine
+
+        pairs = geometry.available_exports(bundle.UPLOAD_DIR)
+        if export not in pairs:
+            raise HTTPException(404, "There is no export named {!r}.".format(export))
+        contract = geometry.load_contract(pairs[export]["contract"])
+        design_mm = [[c * 1000.0 for c in point]
+                     for point in geometry.mesh_arrays(contract)["vertices"]]
+        sidecar = bundle.mechanism_sidecar(export)
+        document = bundle._read_optional(sidecar)
+        if document is None:
+            raise HTTPException(400, "mechanism: none for this study")
+        if mechanism.cited_machine_id(document):
+            document = _with_cited_machine(document, sidecar.parent)
+        rope = parts["rope"].get(str(rope_key or "rope-4mm"))
+        ea = float((rope or parts["rope"]["rope-4mm"])["ea_newtons"])
+        try:
+            facts = machine.facts_from(document, design_mm, geometry.support_ids(contract), ea)
+        except machine.MachineError as error:
+            raise HTTPException(400, str(error))
+        if facts["winding_radius_mm"] is None:
+            raise HTTPException(400, "machine: no winding radius")
+        return facts
+
+    # the whole mechanisms of a machine, worked out once for its radius, its
+    # reeving, its spools, the wires a motor and the catalogue on disk
+    _mechanisms_cache = {}
+
+    @app.get("/api/studies/{export}/mechanisms")
+    def study_mechanisms(export: str, wires_per_motor: int = 1):
+        """The whole spooling mechanisms the Cable net tab chooses from (spec
+        2026-10-11 one Cable net tab, section 8.1): one a motor the catalogue
+        builds on this study's machine, at these wires a motor, strongest
+        first, each with one spool's pull and the part that sets it."""
+
+        import catalogue
+        import machine
+
+        if not 1 <= wires_per_motor <= machine.SPOOLS:
+            raise HTTPException(
+                400, "wires_per_motor must be a whole number of wires from 1 to {}, the "
+                     "spools a machine carries, not {!r}".format(machine.SPOOLS, wires_per_motor))
+        parts = catalogue.load_parts()
+        facts = _machine_facts(export, parts)
+        key = (facts["winding_radius_mm"], facts["reeve_factor"], facts["spools"],
+               wires_per_motor, MECHANISM_ANGLE_DEGREES, catalogue.PARTS_PATH.stat().st_mtime_ns)
+        if key not in _mechanisms_cache:
+            _mechanisms_cache[key] = machine.presets(parts, facts, MECHANISM_ANGLE_DEGREES,
+                                                     wires_per_motor)
+        return {"mechanisms": _mechanisms_cache[key], "wires_per_motor": wires_per_motor,
+                "angle_degrees": MECHANISM_ANGLE_DEGREES}
 
     def _choice_row(parts, inputs, choices, angle, speed=None) -> dict:
         """One set of five choices judged on the study: the machine they make,
