@@ -4927,4 +4927,7 @@ def test_the_three_view_buttons_fit_the_panel():
     # side ran past the panel's edge; a flex item keeps its text's width
     # unless told it may shrink
     css = (STATIC / "studio.css").read_text(encoding="utf-8")
-    assert "#panel #formwork-views button { flex: 1; min-width: 0; margin: 0; }" in css
+    # and with no side padding, each word fits its button and sits in its
+    # middle (his ask of 11 October 2026: Compare ran off its centre)
+    assert ("#panel #formwork-views button { flex: 1; min-width: 0; margin: 0; "
+            "padding-left: 0; padding-right: 0; text-align: center; }") in css
