@@ -20,6 +20,16 @@ The shape the net takes minimises
     Pi(x) = sum over taut ropes of EA / (2 L0) * (L - L0)^2
           + sum over wires of k / 2 * max(0, u + r)^2  -  loads . x
 
+A tendon (spec 2026-10-11 across tendons) runs along a path of nodes,
+sliding through a ring at each, one tension T along its whole length; its reel
+holds the path's length L to a target as a stiff servo:
+
+    T = k_servo * max(0, L - target)      held within T / k_servo of its target
+
+and adds k_servo / 2 * max(0, L - target)^2 to Pi. On its nodes it acts as its
+segments would as ropes of tension T: it pulls its free end in, presses each
+ring toward the inside of its line, and pulls its head, which takes it.
+
 over the nodes not held. A held node sits exactly where it is put, and the
 force holding it there is its reaction. A node sliding on the ground moves in
 x and y only, the ground holding its height. Contacts (a head, a hold, the
@@ -42,6 +52,7 @@ RELAX_CAP = 200000          # relaxation steps before the rest is refused
 GEOMETRIC_FLOOR_N = 1.0e-3  # the tension a slack rope's geometric stiffness keeps
 SETTLE_ROUNDS = 50          # rounds of contact updates before the rest is refused
 HEAD_REACH_MM = 30.15       # a head catches a node over it within its tube's radius (60.3 mm)
+TENDON_SERVO_N_PER_MM = 1.0e5   # a tendon's reel: a 1 mm miss at 100 kN
 
 
 class EngineError(RuntimeError):
@@ -53,6 +64,15 @@ class Ropes(NamedTuple):
     edges: np.ndarray       # (m, 2) node indices
     rest: np.ndarray        # (m,) unstretched lengths, mm
     ea: np.ndarray          # (m,) axial stiffness, N
+    tendons: object = None  # Tendons, or None
+
+
+class Tendons(NamedTuple):
+    paths: tuple            # each tendon's nodes, from its head to its free end
+    target: np.ndarray      # (t,) the length each reel holds its path to, mm
+    segments: np.ndarray    # (s, 2) consecutive nodes of every path
+    owner: np.ndarray       # (s,) the tendon each segment is part of
+    stiffness: float        # N/mm, the reels' servo
 
 
 class Wire(NamedTuple):
@@ -72,6 +92,7 @@ class Rest(NamedTuple):
     iterations: int
     leftover: float         # the largest force left over at a free node, N
     solver: str             # "newton" or "relaxation"
+    tendon_tension: object = None   # (t,) each tendon's tension, N
 
 
 def ropes(edges, rest, ea):
@@ -88,6 +109,44 @@ def ropes(edges, rest, ea):
     if np.any(~np.isfinite(ea)) or np.any(ea <= 0.0):
         raise EngineError("every rope needs a positive EA")
     return Ropes(edges, rest, ea)
+
+
+def tendons(paths, target, stiffness=TENDON_SERVO_N_PER_MM):
+    """Tendons from plain lists, checked: every path of two nodes or more, and
+    every target positive and finite."""
+
+    paths = tuple(tuple(int(node) for node in path) for path in paths)
+    target = np.asarray(target, dtype=float).reshape(-1)
+    if len(paths) != len(target):
+        raise EngineError("{} tendons but {} targets".format(len(paths), len(target)))
+    if any(len(path) < 2 for path in paths):
+        raise EngineError("every tendon needs a path of two nodes or more")
+    if np.any(~np.isfinite(target)) or np.any(target <= 0.0):
+        raise EngineError("every tendon needs a positive target length")
+    segments = np.array([(a, b) for path in paths for a, b in zip(path, path[1:])],
+                        dtype=int).reshape(-1, 2)
+    owner = np.array([t for t, path in enumerate(paths) for _ in path[1:]], dtype=int)
+    return Tendons(paths, target, segments, owner, float(stiffness))
+
+
+def _tendon_segments(x, t):
+    d = x[t.segments[:, 1]] - x[t.segments[:, 0]]
+    length = np.linalg.norm(d, axis=1)
+    if np.any(length <= 1.0e-9):
+        raise EngineError("a tendon's path has shrunk to nothing: two of its nodes coincide")
+    return length, d / length[:, None]
+
+
+def tendon_state(x, net):
+    """Each tendon's path length and tension (zero while slack), mm and N;
+    empty for a net with none."""
+
+    t = net.tendons
+    if t is None or not len(t.paths):
+        return np.zeros(0), np.zeros(0)
+    seg, _ = _tendon_segments(x, t)
+    length = np.bincount(t.owner, seg, minlength=len(t.paths))
+    return length, t.stiffness * np.maximum(length - t.target, 0.0)
 
 
 def rope_state(x, net):
@@ -110,6 +169,13 @@ def _forces(x, net):
     force = np.zeros_like(x)
     np.add.at(force, net.edges[:, 0], tension[:, None] * unit)
     np.add.at(force, net.edges[:, 1], -tension[:, None] * unit)
+    t = net.tendons
+    if t is not None and len(t.paths):
+        # a tendon acts on its nodes as its segments would as ropes of its tension
+        _, seg_unit = _tendon_segments(x, t)
+        pull = tendon_state(x, net)[1][t.owner]
+        np.add.at(force, t.segments[:, 0], pull[:, None] * seg_unit)
+        np.add.at(force, t.segments[:, 1], -pull[:, None] * seg_unit)
     return force, length, tension
 
 
@@ -125,7 +191,12 @@ def energy(x, net, loads):
 
     length, _, _ = rope_state(x, net)
     stretch = np.maximum(length - net.rest, 0.0)
-    return 0.5 * float(np.sum(net.ea / net.rest * stretch ** 2)) - float(np.sum(loads * x))
+    held = 0.0
+    if net.tendons is not None and len(net.tendons.paths):
+        _, pull = tendon_state(x, net)
+        held = 0.5 * float(np.sum(pull ** 2)) / net.tendons.stiffness
+    return (0.5 * float(np.sum(net.ea / net.rest * stretch ** 2)) + held
+            - float(np.sum(loads * x)))
 
 
 def tangent_stiffness(x, net):
@@ -146,8 +217,45 @@ def tangent_stiffness(x, net):
                 rows.append(3 * net.edges[:, a] + p)
                 cols.append(3 * net.edges[:, b] + q)
                 vals.append(sign * block[:, p, q])
+    t = net.tendons
+    if t is not None and len(t.paths):
+        _tendon_stiffness(x, net, rows, cols, vals)
     return sp.coo_matrix((np.concatenate(vals), (np.concatenate(rows), np.concatenate(cols))),
                          shape=(3 * n, 3 * n)).tocsc()
+
+
+def _tendon_stiffness(x, net, rows, cols, vals):
+    """The tendons' share of the tangent stiffness: each taut tendon's servo,
+    k g g^T over its path's nodes (g: how its length grows as each node
+    moves), and each segment's geometric stiffness T / l across it."""
+
+    t = net.tendons
+    seg_length, seg_unit = _tendon_segments(x, t)
+    _, pull = tendon_state(x, net)
+    geometric = pull[t.owner] / seg_length
+    uu = seg_unit[:, :, None] * seg_unit[:, None, :]
+    block = geometric[:, None, None] * (np.eye(3)[None] - uu)
+    for a, b, sign in ((0, 0, 1.0), (1, 1, 1.0), (0, 1, -1.0), (1, 0, -1.0)):
+        for p in range(3):
+            for q in range(3):
+                rows.append(3 * t.segments[:, a] + p)
+                cols.append(3 * t.segments[:, b] + q)
+                vals.append(sign * block[:, p, q])
+    start = 0
+    for index, path in enumerate(t.paths):
+        count = len(path) - 1
+        units = seg_unit[start:start + count]
+        start += count
+        if pull[index] <= 0.0:
+            continue
+        g = np.zeros((len(path), 3))
+        g[:-1] -= units
+        g[1:] += units
+        dof = (3 * np.asarray(path)[:, None] + np.arange(3)[None, :]).reshape(-1)
+        flat = g.reshape(-1)
+        rows.append(np.repeat(dof, len(dof)))
+        cols.append(np.tile(dof, len(dof)))
+        vals.append(t.stiffness * np.outer(flat, flat).reshape(-1))
 
 
 def let_out(point, wire):
@@ -331,6 +439,13 @@ def relax(x, held, net, loads, cap=RELAX_CAP, wires=None, on_ground=()):
         mass = np.zeros(len(x))
         np.add.at(mass, net.edges[:, 0], stiffness)
         np.add.at(mass, net.edges[:, 1], stiffness)
+        if net.tendons is not None and len(net.tendons.paths):
+            # a tendon's servo moves every node of its path at once
+            t = net.tendons
+            seg_length, _ = _tendon_segments(x, t)
+            each = 4.0 * t.stiffness + tendon_state(x, net)[1][t.owner] / seg_length
+            np.add.at(mass, t.segments[:, 0], each)
+            np.add.at(mass, t.segments[:, 1], each)
         mass = np.maximum(mass[owner] + wire_mass, 1.0e-9)
         velocity += residual / mass
         kinetic = float(np.sum(mass * velocity ** 2))
@@ -379,7 +494,8 @@ def bring_to_rest(x, held, net, loads, wires=None, on_ground=()):
         supported[int(node)] = True
     reaction[~supported] = 0.0
     check_balance(loads, reaction)
-    return Rest(x_rest, tension, reaction, iterations, worst, solver)
+    return Rest(x_rest, tension, reaction, iterations, worst, solver,
+                tendon_state(x_rest, net)[1])
 
 
 class Contacts(NamedTuple):
