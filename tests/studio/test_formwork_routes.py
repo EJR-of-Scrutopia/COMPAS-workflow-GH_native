@@ -10,7 +10,7 @@ pytest.importorskip("fastapi")
 
 from conftest_data import tiny_contract  # noqa: E402
 from test_app import make_client, wait_for  # noqa: E402
-from test_cablenet_routes import _tiny_formwork, _tiny_mechanism  # noqa: E402
+from conftest_data import tiny_formwork, tiny_mechanism  # noqa: E402
 
 # a body that names its prestress, as scripts and these tests do; the tab
 # never sends one: it sends the mechanism, whose one spool's pull the net is
@@ -24,7 +24,7 @@ MECHANISM = {"motor": "23HS45-4204D-E1000", "ratio": 20, "pulley": "Pfaff-DSRB-9
 
 def _machine_document():
     # the Tiny study's wires on a machine whose spool winds at 33.9 mm
-    document = _tiny_mechanism()
+    document = tiny_mechanism()
     document["mechanism"]["spoolRadius"] = 0.0339
     return document
 
@@ -34,7 +34,7 @@ def _plant(tmp_path, formwork=True):
     (upload / "Tiny-mechanism.json").write_text(json.dumps(_machine_document()),
                                                  encoding="utf-8")
     if formwork:
-        (upload / "Tiny-formwork.json").write_text(json.dumps(_tiny_formwork()),
+        (upload / "Tiny-formwork.json").write_text(json.dumps(tiny_formwork()),
                                                    encoding="utf-8")
 
 

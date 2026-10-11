@@ -6,7 +6,7 @@ document, schema bench.formwork-sim/1: a JSON index with every position and
 force as base64 little-endian float32 arrays, which the browser decodes
 directly and the studio's server never parses with numpy (section 4.5).
 
-Like solve_stage.py, solve_cra.py and solve_cablenet.py, this file is a
+Like solve_stage.py and solve_cra.py, this file is a
 deliberate exception to the studio guard: it runs under the repo's main .venv,
 never in the server's process. formwork_sim.py starts it as a subprocess:
 
