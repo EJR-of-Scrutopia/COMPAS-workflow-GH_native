@@ -13,7 +13,7 @@
 // Playwright Chromium), SCREENS_OUT, STUDY (default the 5 sided form), CUT
 // (JSON, default its tile cut), GPU=1 to draw on the graphics card, RUN=1 to
 // press Run formwork analysis first, PULL=N to set Pull in to N newtons a
-// tendon and wait for its full run, HOLDS=N likewise for the rods a side:
+// tendon and wait for its full run:
 // about two minutes on the real study, and it rewrites the cut's capture
 // document under bench/studies, so copy that aside first.
 
@@ -28,12 +28,12 @@ const STUDIO_URL = process.env.STUDIO_URL || "http://127.0.0.1:8601";
 const BROWSER_EXE = process.env.BROWSER_EXE || path.join(process.env.LOCALAPPDATA || "",
   "ms-playwright", "chromium-1237", "chrome-win64", "chrome.exe");
 const OUT = process.env.SCREENS_OUT ||
-  path.join(REPO_ROOT, ".superpowers", "sdd", "2026-10-11-across-tendons", "screens");
+  path.join(REPO_ROOT, ".superpowers", "sdd", "2026-10-11-tab-fixes", "screens");
 const STUDY = process.env.STUDY || "5 sided form";
 const CUT = JSON.parse(process.env.CUT ||
   '{"material": "tile", "pattern": "bonded-courses", "source": "authored", "size": 1.0, "thickness": 0.02}');
 const RUN = process.env.RUN === "1";
-const TICKS = ["net", "trees", "heads", "wires", "anchors", "ground", "holds", "tendons"];
+const TICKS = ["net", "trees", "heads", "wires", "anchors", "ground", "tendons"];
 const COLOURS = ["wire", "along", "across", "both", "deviation", "utilisation", "off"];
 
 mkdirSync(OUT, { recursive: true });
@@ -255,30 +255,6 @@ try {
     return row ? row.innerText.replace(/\s+/g, " ").trim() : null;
   });
   note("pull " + JSON.stringify(report.pull));
-  // HOLDS=N: the rods a side moved to N, and the run from the hold waited for
-  if (process.env.HOLDS != null) {
-    const before = Date.now();
-    await page.evaluate((n) => {
-      const slider = document.getElementById("formwork-holds");
-      slider.value = String(n);
-      slider.dispatchEvent(new Event("input", { bubbles: true }));
-      slider.dispatchEvent(new Event("change", { bubbles: true }));
-    }, Number(process.env.HOLDS));
-    await waitFor(page, () => /running|capture/.test(
-      document.getElementById("formwork-run-status").textContent), 30000);
-    const done = await waitFor(page, () => !document.getElementById("formwork-run").disabled
-      && !/Run again/.test(document.getElementById("formwork-warnings").innerText)
-      && !document.getElementById("formwork-run-status").textContent, 1800000);
-    report.holdsRun = { seconds: Math.round((Date.now() - before) / 1000), done };
-    note("holds run " + JSON.stringify(report.holdsRun));
-  }
-  report.holds = await page.evaluate(() => {
-    const row = [...document.querySelectorAll("#formwork-answer tr")]
-      .find((tr) => tr.querySelector("th") && tr.querySelector("th").textContent === "Holds");
-    return row ? row.innerText.replace(/\s+/g, " ").trim() : null;
-  });
-  note("holds " + JSON.stringify(report.holds));
-
   // Which capture is which, read off the document the tab plays.
   const captures = await page.evaluate(async (study, cut) => {
     const query = new URLSearchParams();
@@ -296,8 +272,6 @@ try {
     ["03-raise", first((c) => c.phase === "raise" && c.time >= 46)],
     ["04-finish", first((c) => c.phase === "finish" && c.time >= 76)],
     ["05-hold", captures.map((c) => c.phase).lastIndexOf("hold")],
-    ...(captures.some((c) => c.phase === "holds")
-      ? [["05b-jacked", captures.findIndex((c) => c.phase === "holds")]] : []),
     ["06-tiling", tiling[Math.floor(tiling.length / 2)] ?? captures.length - 1],
     ["07-end", captures.length - 1],
   ];

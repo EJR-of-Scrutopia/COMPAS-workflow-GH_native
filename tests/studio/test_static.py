@@ -4642,8 +4642,8 @@ def test_the_cable_net_tab_is_a_run_its_answer_a_player_and_its_views():
     # (the Tendons chip and Along, Across and Both from spec 2026-10-11 across
     # tendons, section 6)
     assert re.findall(r'data-show="([a-z]+)"', section) == [
-        "net", "trees", "heads", "wires", "anchors", "ground", "holds", "tendons"]
-    assert section.count('class="chip"') == 9           # eight Show chips and Values
+        "net", "trees", "heads", "wires", "anchors", "ground", "tendons"]
+    assert section.count('class="chip"') == 8           # seven Show chips and Values
     # Colour by as one segmented bar, Wires first and on
     assert re.findall(r'name="formwork-colour" value="([a-z]+)"', section) == [
         "wire", "along", "across", "both", "deviation", "utilisation", "off"]
@@ -4654,12 +4654,10 @@ def test_the_cable_net_tab_is_a_run_its_answer_a_player_and_its_views():
     # the player in the studio's own symbols
     assert ('<button id="formwork-play" class="icon-act" type="button" title="Play">&#9654;</button>'
             in section)
-    # no Worst, no holds search: Holds a side instead, 0 to 20, none to start
+    # no Worst, no holds (they went on 11 October 2026)
     for gone in ("formwork-worst-toggle", "formwork-popup", "formwork-holds-choice",
-                 "data-label="):
+                 "data-label=", "formwork-holds", 'data-show="holds"'):
         assert gone not in html, gone
-    assert ('<input id="formwork-holds" type="range" data-unit="1" min="0" max="20" step="1" '
-            'value="0">' in section)
     for ident in ("formwork-labels", "formwork-pick"):
         assert 'id="{}"'.format(ident) in html, ident
     # the key's limit marker

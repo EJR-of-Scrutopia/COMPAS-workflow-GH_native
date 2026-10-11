@@ -46,19 +46,19 @@ def test_the_controller_loads_where_there_is_no_page(tmp_path):
     assert result.stdout.strip() == "mountFormwork"
 
 
-def test_the_run_sends_the_mechanism_the_wall_and_the_rods_and_never_a_prestress():
+def test_the_run_sends_the_mechanism_the_wall_and_the_pull_and_never_a_prestress():
     # spec section 4.2: the server cuts the net for one spool's pull; section
-    # 7: the tolerance is no run, and a run for other rods starts from the hold
+    # 7: the tolerance is no run; every run is a full run with no rods (the
+    # holds went on 11 October 2026)
     body = _inner(JS, "startRun")
-    assert body.startswith("function startRun(resume = false) {")
+    assert body.startswith("function startRun() {")
     assert "const choices = mechanism.chosen();" in body
     assert 'if (!choices) { el.runStatus.textContent = "Choose a mechanism"; return; }' in body
     assert ("const body = { ...sentOptions(options), mechanism: choices, wall: Number(el.wall.value),\n"
-            "                     holds_per_side: Number(el.holds.value), pull_in: Number(el.pull.value),\n"
-            "                     resume };") in body
+            "                     pull_in: Number(el.pull.value) };") in body
     assert "/formwork/run" in body and "prestress" not in body and "tolerance" not in body
-    # Run is always a full run: the click's event is not a resume
-    assert 'el.run.addEventListener("click", () => startRun(false));' in JS
+    assert "holds" not in body and "resume" not in body
+    assert 'el.run.addEventListener("click", () => startRun());' in JS
     assert 'el.runStatus.textContent = "starting: about two minutes";' in body
     watch = _inner(JS, "watch")
     assert "`capture ${run.stage} of ${run.of}`" in watch and "await load();" in watch
@@ -85,40 +85,34 @@ def test_the_mechanism_is_the_pop_ups_and_a_change_reruns_once_it_settles():
             "choices, byHand); },") in STUDIO
     changed = _inner(JS, "mechanismChanged")
     assert ('if (wanted && choices && outOfDate().includes("Run again: mechanism changed")) '
-            "scheduleRerun(false);") in changed
+            "scheduleRerun();") in changed
     assert "const RERUN_SETTLE_MS = 1000;" in JS
     rerun = _inner(JS, "scheduleRerun")
-    assert "}, RERUN_SETTLE_MS);" in rerun and "startRun(tab.resume);" in rerun
+    assert "}, RERUN_SETTLE_MS);" in rerun and "startRun();" in rerun
     assert "mechanism.setWires(Number(el.wires.value));" in JS
     # the pop-up says whether a change was his hand or a list read again
     assert "onChange(chosen(), true);" in PICK and "onChange(chosen(), false);" in PICK
 
 
-def test_rods_a_side_rerun_from_the_hold_once_they_settle():
-    # spec sections 6 and 7: Holds a side, 0 to 20; a change reruns from the
-    # state at the hold one second after the last change, and a full run
-    # waiting wins over one from the hold
+def test_the_holds_and_the_run_from_the_hold_are_gone_from_the_tab():
+    # his word, 11 October 2026: "i think we can remove it entirely because it
+    # doesnt work for what i am thinking"; the run from the state at the hold
+    # was for the rods, and went with them
+    for gone in ("el.holds", "setHolds", "holdsPerSide", "resume", "rods a side"):
+        assert gone not in JS, gone
     rerun = _inner(JS, "scheduleRerun")
-    assert rerun.startswith("function scheduleRerun(resume = false) {")
-    assert "tab.resume = tab.rerun == null ? resume : tab.resume && resume;" in rerun
-    assert "tab.rerun = null;" in rerun and "startRun(tab.resume);" in rerun
-    assert ('if (tab.sim && outOfDate().includes("Run again: rods a side changed")) '
-            "scheduleRerun(true);") in JS
+    assert rerun.startswith("function scheduleRerun() {")
+    assert "tab.rerun = null;" in rerun and "startRun();" in rerun
     out_of_date = _inner(JS, "outOfDate")
-    assert ("formworkWarnings(tab.sim, { mechanism: mechanism.chosen(),\n"
-            "                                       holdsPerSide: Number(el.holds.value),\n"
-            "                                       pullIn: Number(el.pull.value) })"
-            ) in out_of_date
+    assert ("formworkWarnings(tab.sim, { mechanism: mechanism.chosen(), "
+            "pullIn: Number(el.pull.value) })") in out_of_date
     watch = _inner(JS, "watch")
     assert ('if (lines.includes("Run again: mechanism changed")\n'
-            '              || lines.includes("Run again: pull changed")) scheduleRerun(false);\n'
-            '          else if (lines.includes("Run again: rods a side changed")) '
-            "scheduleRerun(true);") in watch
-    # the slider shows the run's rods when a study's run is first read, and
-    # is his from then on
+            '              || lines.includes("Run again: pull changed")) scheduleRerun();') in watch
     load = _inner(JS, "load")
     assert "const first = !tab.sim;" in load
-    assert "if (sim && first) {\n      setHolds(sim.holdsPerSide);" in load
+    html = (STATIC / "index.html").read_text(encoding="utf-8")
+    assert "formwork-holds" not in html and 'data-show="holds"' not in html
 
 
 def test_the_cost_and_the_graphs_follow_the_run_and_export_bom_writes_it():
@@ -148,9 +142,6 @@ def test_the_cost_and_the_graphs_follow_the_run_and_export_bom_writes_it():
     clear = _inner(JS, "clear")
     assert 'el.costBody.innerHTML = "";' in clear and 'el.graphs.innerHTML = "";' in clear
     assert "clearTimeout(tab.rerun);" in clear and "tab.rerun = null;" in clear
-    # and its rods a side, so the next study's Run is not given them unseen
-    # (found by the final review)
-    assert "setHolds(0);" in clear
     # the pop-up switches between its three tabs
     assert "function showTab(id) {" in PICK
     assert 'el.popup.querySelectorAll("[data-mech-tab]")' in PICK
@@ -164,7 +155,7 @@ def test_pull_in_is_sent_with_the_run_and_a_change_reruns_it_in_full():
     assert ('<input id="formwork-pull" type="range" data-unit="1" min="0" max="30000" step="100" '
             'value="0">') in html
     assert '<b id="formwork-pull-value">0</b><em>N</em>' in html
-    assert ('if (tab.sim && outOfDate().includes("Run again: pull changed")) scheduleRerun(false);'
+    assert ('if (tab.sim && outOfDate().includes("Run again: pull changed")) scheduleRerun();'
             ) in JS
     # the dial shows the run's pull when a study's run is first read, and none
     # once the study goes
@@ -183,7 +174,7 @@ def test_a_studys_run_read_first_gives_the_mechanism_its_wires_and_its_motor():
     # another browser, opened greyed as "mechanism changed" though nothing had
     # changed, and matching the slider to it ran it again
     load = _inner(JS, "load")
-    assert "if (sim && first) {\n      setHolds(sim.holdsPerSide);\n      adoptMechanism(sim);" in load
+    assert "if (sim && first) {\n      adoptMechanism(sim);" in load
     adopt = _inner(JS, "adoptMechanism")
     assert "el.wires.value = String(ran.wires_per_motor);" in adopt and "mechanism.adopt(ran);" in adopt
     assert "tab.again" not in adopt                      # not his hand: no run follows
@@ -303,12 +294,13 @@ def test_the_check_on_screen_reaches_the_drawing_and_never_his_studio():
     assert 'process.env.STUDIO_URL || "http://127.0.0.1:8601"' in script
     # its pictures go to this plan's folder, never over an older plan's record
     # (found by the final review)
-    assert '"2026-10-11-across-tendons", "screens"' in script
+    assert '"2026-10-11-tab-fixes", "screens"' in script
     assert "2026-10-10-formwork-tab" not in script and "2026-10-11-one-cable-net-tab" not in script
+    assert "2026-10-11-across-tendons" not in script
     # Along, Across and Both, the Tendons chip, and PULL=N's full run
     # (spec 2026-10-11 across tendons, section 8)
     assert 'const COLOURS = ["wire", "along", "across", "both", "deviation", "utilisation", "off"];' in script
-    assert '"holds", "tendons"];' in script
+    assert '"ground", "tendons"];' in script and "HOLDS" not in script
     assert 'document.getElementById("formwork-pull")' in script and "process.env.PULL" in script
     assert "8600" not in script.replace("never Param's 8600", "")
     for step in ("03-raise", "04-finish", "05-hold", "06-tiling", "-colour-", "-show-",

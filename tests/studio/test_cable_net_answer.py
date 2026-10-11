@@ -47,7 +47,7 @@ out.staleHtml = m.answerHtml(out.answer, { stale: true });
 out.spare = m.answerHtml(m.answer(spare, 30));
 out.plain = [m.answer(plain, 20), m.answerHtml(m.answer(plain, 20))];
 out.none = [m.answer(null, 20), m.answerHtml(null)];
-out.held = [m.answer(held, 20).holds, m.answerHtml(m.answer(held, 20)), out.answer.holds];
+out.held = [m.answer(held, 20), m.answerHtml(m.answer(held, 20))];
 const treesOver = m.readSim(%(treesOver)s);
 const judged = m.withWall(sim, 3.2);
 out.trees = { over: m.answer(treesOver, 20).trees, overHtml: m.answerHtml(m.answer(treesOver, 20)),
@@ -61,9 +61,6 @@ out.warnings = {
   noChoice: m.formworkWarnings(sim, { mechanism: null }),
   plainRun: m.formworkWarnings(plain, { mechanism: chosen }),
   older: m.formworkWarnings(m.readSim(%(older)s), { mechanism: chosen }),
-  rodsSame: m.formworkWarnings(sim, { mechanism: chosen, holdsPerSide: 0 }),
-  rods: m.formworkWarnings(sim, { mechanism: chosen, holdsPerSide: 3 }),
-  rodsAndMechanism: m.formworkWarnings(sim, { mechanism: { ...chosen, ratio: 50 }, holdsPerSide: 3 }),
 };
 const thicker = m.withWall(sim, 4.0);
 out.wall = { utilisation: thicker.captures.map((c) => Array.from(c.treeUtilisation)),
@@ -189,22 +186,11 @@ def test_the_run_is_out_of_date_when_the_mechanism_changes(out):
     assert w["older"][0] == "Run again: older run"
 
 
-def test_the_answer_says_the_rods_a_side_and_how_many_went_on(out):
-    # spec 2026-10-11 one Cable net tab, section 4.3: Holds, 3 a side, 15 rods
-    holds, html, plain = out["held"]
-    assert holds == {"perSide": 1, "rods": 1}
-    assert "<th>Holds</th><td>1 a side, 1 rod</td>" in html
-    assert plain == {"perSide": 0, "rods": 0}
-    assert "<th>Holds</th><td>none</td>" in out["html"]
-
-
-def test_the_run_is_out_of_date_when_the_rods_a_side_change(out):
-    # spec section 7: rods a side changed, a run from the hold
-    w = out["warnings"]
-    assert w["rodsSame"] == []
-    assert w["rods"] == ["Run again: rods a side changed"]
-    assert w["rodsAndMechanism"] == ["Run again: mechanism changed",
-                                     "Run again: rods a side changed"]
+def test_the_answer_has_no_holds_row(out):
+    # the holds went on 11 October 2026, even from a run made with them
+    answer, html = out["held"]
+    assert "holds" not in answer
+    assert "Holds" not in html and "Holds" not in out["html"]
 
 
 def test_a_new_wall_judges_the_trees_again_from_the_runs_own_forces(out):

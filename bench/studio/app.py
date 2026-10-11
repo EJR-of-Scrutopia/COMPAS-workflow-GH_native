@@ -152,8 +152,6 @@ RUNS_LOCK = threading.Lock()
 FORMWORK_DEFAULTS = {"prestress": None, "rope": "rope-4mm", "wires_per_motor": 1,
                      "wall": 3.2}
 FORMWORK_TUBE_MM = 60.3     # the trees' tube, the engine's trees.DIAMETER
-# The most rods a side a run takes (spec 2026-10-11 one Cable net tab, section 6).
-HOLDS_PER_SIDE_MAX = 20
 PULL_IN_MAX = 30000.0   # N a tendon, the most the Pull in dial asks for (spec 2026-10-11
                         # across tendons, section 9: every pull to 30,000 N ran on the
                         # real study)
@@ -1390,22 +1388,13 @@ def create_app(runner=None, cra_runner=None, formwork_runner=None) -> FastAPI:
         pulleys = body.get("pulleys", True)
         if not isinstance(pulleys, bool):
             raise HTTPException(400, "pulleys: true or false, not {!r}".format(pulleys))
-        # the rods a side, which the studio places (spec 2026-10-11 one Cable net
-        # tab, section 6); the search of whole lines went with that
-        if "holds" in body:
-            raise HTTPException(400, "holds is no longer taken: send holds_per_side, a whole "
-                                     "number of rods a side from 0 to {}".format(HOLDS_PER_SIDE_MAX))
-        holds_per_side = body.get("holds_per_side", 0)
-        if (isinstance(holds_per_side, bool) or not isinstance(holds_per_side, int)
-                or not 0 <= holds_per_side <= HOLDS_PER_SIDE_MAX):
-            raise HTTPException(
-                400, "holds_per_side must be a whole number of rods a side from 0 to {}, not "
-                     "{!r}".format(HOLDS_PER_SIDE_MAX, holds_per_side))
-        # a run for other rods starts from the state at the hold when it is on
-        # disk (section 7); Run is always a full run
-        resume = body.get("resume", False)
-        if not isinstance(resume, bool):
-            raise HTTPException(400, "resume: true or false, not {!r}".format(resume))
+        # the holds went on 11 October 2026 (his word: "it doesnt work for what i
+        # am thinking"), and the run from the state at the hold, which was for
+        # them, with them: every run is a full run with none
+        for gone in ("holds", "holds_per_side", "resume"):
+            if gone in body:
+                raise HTTPException(400, "{} is no longer taken: the holds went on 11 October "
+                                         "2026, and every run is a full run with none".format(gone))
         # the pull on every across tendon, newtons a tendon (spec 2026-10-11
         # across tendons, section 7); nought is none
         pull_in = body.get("pull_in", 0)
@@ -1510,8 +1499,6 @@ def create_app(runner=None, cra_runner=None, formwork_runner=None) -> FastAPI:
                 run["phase"] = "formwork"
                 run["message"] = ("laying the net out, raising it and tiling it: several "
                                   "minutes on a large study")
-                state_path = bundle.formwork_state_path(slug, material, slot.key_pattern, size,
-                                                        thickness, density)
 
                 def progress(done, total, what):
                     run["stage"], run["of"], run["message"] = done, total, what
@@ -1530,10 +1517,9 @@ def create_app(runner=None, cra_runner=None, formwork_runner=None) -> FastAPI:
                              "rope": rope_key, "prestress": prestress,
                              "prestress_from": prestress_from,
                              "wires_per_motor": wires_per_motor, "wall": wall,
-                             "pulleys": pulleys, "holds_per_side": holds_per_side,
-                             "pull_in": pull_in, **mechanism_options},
-                    runner=formwork_runner, progress=progress, holds_per_side=holds_per_side,
-                    state_path=state_path, resume=resume, annotate=annotate, pull_in=pull_in)
+                             "pulleys": pulleys, "pull_in": pull_in, **mechanism_options},
+                    runner=formwork_runner, progress=progress, annotate=annotate,
+                    pull_in=pull_in)
                 run["state"] = "done"
                 run["phase"] = "done"
                 run["message"] = ""

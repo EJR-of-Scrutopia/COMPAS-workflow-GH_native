@@ -11,8 +11,9 @@ export const SCHEMA = "bench.formwork-sim/1";
 // (the owner's answer of 10 October 2026).
 export const ACT_SECONDS = 12;
 export const TILING_BEAT = 0.5;
-// The jacking of the holds, at machine time 100 like the hold before it, takes
-// this long, so the player reaches both (found by the final review: the hold
+// The jacking of the holds in a run made before they went (11 October 2026),
+// at machine time 100 like the hold before it, takes this long, so the player
+// reaches both (found by the final review: the hold
 // could not be reached and Back stuck at the jacking).
 export const JACK_SECONDS = 2;
 
@@ -74,7 +75,6 @@ export function readSim(doc) {
     treeAxial: decodeF32(c.tree_axial) || new Float32Array(0),
     ground: Array.isArray(c.ground) ? c.ground : null,
     addedFaces: Array.isArray(c.added_faces) ? c.added_faces : null,
-    holdPush: decodeF32(c.hold_push) || new Float32Array(0),
     tendonTension: decodeF32(c.tendon_tension) || new Float32Array(0),
   }));
   // a capture with no positions cannot be drawn: the document is not read
@@ -138,12 +138,10 @@ export function readSim(doc) {
     trees: { members: trees.members || [], heads: trees.heads || [], feet: trees.feet || [],
              diameter: Number(trees.diameter) || 60.3, wall: trees.wall },
     captures,
-    // the holds (spec 2026-10-10 formwork holds): the held nodes, the rods a
-    // side asked for and each rod's side (spec 2026-10-11 one Cable net tab,
-    // section 6)
-    holds: Array.isArray(net.holds) ? net.holds : [],
-    holdsPerSide: Number(net.holds_per_side) || 0,
-    holdSides: Array.isArray(net.hold_sides) ? net.hold_sides : null,
+    // a run made with holds, which went on 11 October 2026 (his word: "it
+    // doesnt work for what i am thinking"): its rods are not shown, and it is
+    // to be run again
+    held: Array.isArray(net.holds) && net.holds.length > 0,
     // each node's side (spec 2026-10-11 one Cable net tab, section 6), and the
     // mechanism's drum and carriage judged on the run's own reels (8.1)
     sides: Array.isArray(net.sides) ? net.sides : null,
@@ -267,14 +265,6 @@ export function frameLine(sim, index) {
   const heads = sim.trees.heads.length;
   let touching = 0;
   for (let h = 0; h < heads; h++) if (pushOf(c, h) > 0) touching += 1;
-  const holds = sim.holds.length;
-  let struts = 0;
-  let ties = 0;
-  for (let h = 0; h < holds; h++) {
-    const kind = holdRod(holdForce(c, h)).kind;
-    if (kind === "strut") struts += 1;
-    else if (kind === "tie") ties += 1;
-  }
   const lines = sim.tendons ? sim.tendons.lines : [];
   let pulling = 0;
   let atStop = 0;
@@ -291,47 +281,7 @@ export function frameLine(sim, index) {
   });
   return { rope: largestOf(c.tension), wire: largestOf(c.wireTension),
            trees: largestOf(c.treeUtilisation), deviation: largestOf(c.deviation), touching, heads,
-           holds, struts, ties, pulling, tendons: lines.length, atStop };
-}
-
-// The force a hold puts on its node at a capture, newtons; nought before the
-// jacking.
-export function holdForce(capture, hold) {
-  const p = capture && capture.holdPush;
-  return p && 3 * hold + 2 < p.length ? [p[3 * hold], p[3 * hold + 1], p[3 * hold + 2]] : [0, 0, 0];
-}
-
-// A hold's rod (his ruling of 10 October 2026: a hold is a gripped rod along
-// its own force): u, a unit along the rod from its foot on the ground up to
-// its node; a strut where the hold pushes, a tie where it pulls, none while it
-// carries nothing; lean, the force's true angle from vertical in degrees.
-// Ruling: a rod leaning more than ROD_LEAN_MAX is drawn at it, so a force
-// near level does not run off the picture. A force under HOLD_FLOOR_N, the
-// engine's own rest (net_engine.LEFTOVER_N), is the engine's residue: none.
-export const ROD_LEAN_MAX = 80;
-export const HOLD_FLOOR_N = 0.01;
-
-export function holdRod(force) {
-  const [fx, fy, fz] = force;
-  const size = Math.hypot(fx, fy, fz);
-  if (!(size > HOLD_FLOOR_N)) return { kind: "none", u: [0, 0, 1], lean: 0 };
-  const sign = fz < 0 ? -1 : 1;
-  let u = [sign * fx / size, sign * fy / size, sign * fz / size];
-  const lean = Math.atan2(Math.hypot(fx, fy), Math.abs(fz)) * 180 / Math.PI;
-  if (lean > ROD_LEAN_MAX) {
-    const level = Math.hypot(u[0], u[1]);
-    const out = Math.sin(ROD_LEAN_MAX * Math.PI / 180);
-    u = [u[0] / level * out, u[1] / level * out, Math.cos(ROD_LEAN_MAX * Math.PI / 180)];
-  }
-  return { kind: fz < 0 ? "tie" : "strut", u, lean };
-}
-
-// The capture the rods are set at: the one after the jacking, or in a
-// document from before it had one, the first of the tiling; -1 with none.
-export function jackedAt(sim) {
-  const captures = (sim && sim.captures) || [];
-  const own = captures.findIndex((c) => c.phase === "holds");
-  return own >= 0 ? own : captures.findIndex((c) => c.phase === "tiling");
+           pulling, tendons: lines.length, atStop };
 }
 
 export function frameLineHtml(line) {
@@ -339,8 +289,6 @@ export function frameLineHtml(line) {
   return keyed([["Rope max", kilonewtons(line.rope)], ["Wire max", newtons(line.wire)],
     ["Trees", line.trees.toFixed(2)], ["Deviation max", millimetres(line.deviation)],
     ["Heads touching", line.touching + "/" + line.heads],
-    ...(line.holds ? [["Struts", line.struts + "/" + line.holds], ["Ties", line.ties + "/" + line.holds]]
-      : []),
     ...(line.tendons ? [["Pulling", line.pulling + "/" + line.tendons], ["At the stop", String(line.atStop)]]
       : [])]);
 }
@@ -594,12 +542,6 @@ export function formworkPickHtml(sim, index, node) {
   if (c.ground) rows.push(["Ground", c.ground.includes(node) ? "yes" : "no"]);
   const head = sim.trees.heads.findIndex(([net]) => net === node);
   if (head >= 0) rows.push(["Head push", newtons(pushOf(c, head))]);
-  const hold = sim.holds.indexOf(node);
-  if (hold >= 0) {
-    const force = holdForce(c, hold);
-    const kind = holdRod(force).kind;
-    rows.push(["Hold", (kind === "none" ? "" : kind + " ") + newtons(Math.hypot(...force))]);
-  }
   const wire = sim.rim.nodes.indexOf(node);
   if (wire >= 0) {
     rows.push(["Wire", escapeHtml(sim.rim.names[wire] || "#" + wire)],
@@ -635,8 +577,7 @@ export function formworkWarnings(sim, chosen) {
   if (mine && (!ran || MECHANISM_KEYS.some((key) => (ran[key] ?? null) !== (mine[key] ?? null)))) {
     out.push("Run again: mechanism changed");
   }
-  const rods = chosen && chosen.holdsPerSide;
-  if (rods != null && Number(rods) !== sim.holdsPerSide) out.push("Run again: rods a side changed");
+  if (sim.held) out.push("Run again: made with holds");
   // the pull a tendon (spec 2026-10-11 across tendons, section 7), and why a
   // pulled run has none (section 2)
   const pull = chosen && chosen.pullIn;
@@ -687,13 +628,11 @@ export function answer(sim, tolerance) {
   for (let i = 0; i < offsets.length; i++) sum += offsets[i];
   const meanMm = offsets.length ? sum / offsets.length : 0;
   const mean = { mm: meanMm, within: meanMm <= Number(tolerance) };
-  // the rods a side asked for and how many went on (spec section 6)
-  const holds = { perSide: sim.holdsPerSide, rods: sim.holds.length };
   // the pull a tendon, the tendons and what they put into the column heads in
   // all (spec 2026-10-11 across tendons, section 5)
   const lines = sim.tendons ? sim.tendons.lines.length : 0;
   const pull = lines ? { newtons: sim.tendons.pull, tendons: lines, total: sim.tendons.pull * lines } : null;
-  return { needed, have, gap, form, mean, trees: treesLoad(sim), holds, pull };
+  return { needed, have, gap, form, mean, trees: treesLoad(sim), pull };
 }
 
 // The tree member the run judges worst, at the capture it is worst: its
@@ -750,10 +689,6 @@ export function answerHtml(a, { stale = false } = {}) {
                   a.trees.capacity == null ? "worst member"
                     : "worst member, its tube takes " + grouped(a.trees.capacity)));
   }
-  const rods = a.holds ? a.holds.rods : 0;
-  const counted = rods + (rods === 1 ? " rod" : " rods");
-  rows.push(row("Holds", !rods ? "none"
-    : a.holds.perSide ? a.holds.perSide + " a side, " + counted : counted));
   if (a.pull) {
     rows.push(row("Pull in", grouped(a.pull.newtons) + " a tendon",
                   a.pull.tendons + (a.pull.tendons === 1 ? " tendon, " : " tendons, ")
@@ -817,8 +752,6 @@ export function recordingCaption(sim, index) {
     "Wire max " + newtons(line.wire), "Trees " + line.trees.toFixed(2),
     "Deviation max " + millimetres(line.deviation),
     "Heads touching " + line.touching + "/" + line.heads,
-    ...(line.holds ? ["Struts " + line.struts + "/" + line.holds, "Ties " + line.ties + "/" + line.holds]
-      : []),
     ...(line.tendons ? ["Pulling " + line.pulling + "/" + line.tendons, "At the stop " + line.atStop]
       : [])].join("   ");
 }

@@ -211,7 +211,7 @@ def test_the_answer_says_the_pull_a_tendon_and_in_all(out):
     pull, html, plainPull, plainHtml = out["answer"]
     assert pull == {"newtons": 300, "tendons": 2, "total": 600}
     assert "<th>Pull in</th><td>300 N a tendon</td><td>2 tendons, 600 N in all</td>" in html
-    assert html.index("Holds") < html.index("Pull in")
+    assert html.index("Trees load") < html.index("Pull in") and "Holds" not in html
     assert plainPull is None and "Pull in" not in plainHtml
 
 

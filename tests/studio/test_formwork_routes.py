@@ -166,46 +166,26 @@ def test_the_runs_drum_and_carriage_are_checked_from_its_own_reels(tmp_path, mon
     assert [document["net"]["sides"][n] for n in (0, 2, 6, 8)] == [0, 1, 2, 3]
 
 
-def test_the_run_takes_rods_a_side_and_tells_the_engine_the_sides_and_its_state(
+def test_the_run_tells_the_engine_the_sides_and_asks_for_no_rods_and_no_state(
         tmp_path, monkeypatch):
-    # spec 2026-10-11 one Cable net tab, sections 6 and 7: N rods a side, the
-    # studio placing them; the engine keeps its state at the hold beside the
-    # captures, and a rerun for other rods starts there when it is on disk
-    from pathlib import Path
-
+    # spec 2026-10-11 one Cable net tab, section 6: each node's side, which the
+    # labels take; the holds went on 11 October 2026, and the state at the
+    # hold, kept for a rerun with other rods, with them
     seen = []
 
     def fake(request, progress=None):
         seen.append(request)
-        if request.get("state_out"):
-            # as the engine writes it, its folder made
-            Path(request["state_out"]).parent.mkdir(parents=True, exist_ok=True)
-            Path(request["state_out"]).write_bytes(b"state")
         return {"schema": "bench.formwork-sim/1", "captures": []}
 
-    client, studies = make_client(tmp_path, monkeypatch, formwork_runner=fake)
+    client, _ = make_client(tmp_path, monkeypatch, formwork_runner=fake)
     _plant(tmp_path)
-    started = client.post("/api/studies/Tiny/formwork/run", json={**RUN, "resume": True})
+    started = client.post("/api/studies/Tiny/formwork/run", json=RUN)
     assert wait_for(client, started.json()["run"])["state"] == "done"
     first = seen[-1]
-    assert first["holds_per_side"] == 0 and first["options"]["holds_per_side"] == 0
     # the Tiny net's four corners are on wires, a side each
     assert first["sides"] == [0, 0, 1, 0, 0, 1, 2, 2, 3]
-    state = first["state_out"]
-    assert Path(state).parent == studies / "tiny" / "studio"
-    assert Path(state).name.startswith("formwork-state-concrete-") and state.endswith(
-        "-s900-t20.json.gz")
-    assert "state_in" not in first                                          # none on disk yet
-    started = client.post("/api/studies/Tiny/formwork/run",
-                          json={**RUN, "holds_per_side": 3, "resume": True})
-    assert wait_for(client, started.json()["run"])["state"] == "done"
-    again = seen[-1]
-    assert again["holds_per_side"] == 3 and again["options"]["holds_per_side"] == 3
-    assert again["state_in"] == state
-    # Run (no resume) is always a full run
-    started = client.post("/api/studies/Tiny/formwork/run", json={**RUN, "holds_per_side": 3})
-    assert wait_for(client, started.json()["run"])["state"] == "done"
-    assert "state_in" not in seen[-1]
+    assert first["holds_per_side"] == 0 and "holds_per_side" not in first["options"]
+    assert "state_out" not in first and "state_in" not in first
 
 
 def test_the_run_takes_pull_in_newtons_a_tendon(tmp_path, monkeypatch):
@@ -239,21 +219,19 @@ def test_the_run_takes_pull_in_newtons_a_tendon(tmp_path, monkeypatch):
             response.json()["detail"], bad
 
 
-def test_rods_a_side_are_a_whole_number_from_nought_to_twenty(tmp_path, monkeypatch):
+def test_a_run_takes_no_holds_and_no_resume(tmp_path, monkeypatch):
+    # the holds went on 11 October 2026, and the run from the state at the
+    # hold, which was for them, with them: a body asking for either is told so
     client, _ = make_client(tmp_path, monkeypatch, formwork_runner=_idle)
     _plant(tmp_path)
-    for bad in (21, -1, True, 2.5, "3"):
-        response = client.post("/api/studies/Tiny/formwork/run",
-                               json={**RUN, "holds_per_side": bad})
-        assert response.status_code == 400, bad
-        assert "holds_per_side must be a whole number of rods a side from 0 to 20" in \
-            response.json()["detail"], bad
-    response = client.post("/api/studies/Tiny/formwork/run", json={**RUN, "resume": "yes"})
-    assert response.status_code == 400 and "resume" in response.json()["detail"]
-    # the search of whole lines is gone, and a body asking for it is told so
-    response = client.post("/api/studies/Tiny/formwork/run", json={**RUN, "holds": "search"})
-    assert response.status_code == 400
-    assert "send holds_per_side" in response.json()["detail"]
+    for asked in ({"holds_per_side": 3}, {"holds_per_side": 0}, {"resume": True},
+                  {"holds": "search"}):
+        response = client.post("/api/studies/Tiny/formwork/run", json={**RUN, **asked})
+        assert response.status_code == 400, asked
+        name = next(iter(asked))
+        assert response.json()["detail"] == (
+            "{} is no longer taken: the holds went on 11 October 2026, and every run is a "
+            "full run with none".format(name)), asked
 
 
 def test_a_study_with_no_formwork_document_is_refused_before_the_cut(tmp_path, monkeypatch):

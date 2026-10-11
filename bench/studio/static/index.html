@@ -528,9 +528,6 @@
     <label title="Wires a motor"><span>Wires a motor</span>
       <input id="formwork-wires" type="range" min="1" max="7" step="1" value="1">
       <b id="formwork-wires-value">1</b><em></em></label>
-    <label title="Rods a side, placed where the net sags most; 0 for none"><span>Holds a side</span>
-      <input id="formwork-holds" type="range" data-unit="1" min="0" max="20" step="1" value="0">
-      <b id="formwork-holds-value">0</b><em></em></label>
     <label title="Pull in, N a tendon: each across line reeled in toward its principal line; 0 for none"><span>Pull in</span>
       <input id="formwork-pull" type="range" data-unit="1" min="0" max="30000" step="100" value="0">
       <b id="formwork-pull-value">0</b><em>N</em></label>
@@ -561,7 +558,6 @@
       <label class="chip" title="The wires"><input type="checkbox" data-show="wires" checked><span>Wires</span></label>
       <label class="chip" title="The anchors"><input type="checkbox" data-show="anchors" checked><span>Anchors</span></label>
       <label class="chip" title="The nodes on the ground"><input type="checkbox" data-show="ground" checked><span>Ground</span></label>
-      <label class="chip" title="The holds' rods: green a strut, blue a tie"><input type="checkbox" data-show="holds" checked><span>Holds</span></label>
       <label class="chip" title="The tendons along the across lines, each with its reel by its column head"><input type="checkbox" data-show="tendons" checked><span>Tendons</span></label>
     </div>
     <div id="formwork-views">
