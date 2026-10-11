@@ -349,6 +349,12 @@ def test_the_studio_labels_and_card_stand_down_while_the_tab_is_open():
     assert 'document.body.classList.toggle("formwork-open", on);' in _inner(JS, "setActive")
 
 
+def test_a_figure_for_every_line_is_not_cut_short():
+    # his answer of 11 October 2026: the worst of every line; the real study
+    # has 95 across lines a family and as many along, so the cap is twice that
+    assert "const LABEL_MAX = 250;" in JS
+
+
 def test_the_key_bar_runs_green_to_deep_red_when_it_judges_against_a_limit():
     # his answer of 11 October 2026: each part judged against its own limit;
     # the page's bar wears formwork_model's JUDGED_STOPS, the limit at its middle

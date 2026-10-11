@@ -63,9 +63,9 @@ out.force = "memberForce" in m;
 const limits = { have: 1200, rope: 1800, tolerance: 20 };
 out.keys = ["along", "across", "both"].map((by) => m.colourKey(by, sim, limits));
 const flat = (list) => list.map((l) => [l.kind, l.index, l.text]);
-out.labels = { along: flat(m.colourLabels(sim, 2, "along", 1)),
-               across: flat(m.colourLabels(sim, 2, "across", 1)),
-               both: flat(m.colourLabels(sim, 2, "both", 1)) };
+out.labels = { along: flat(m.colourLabels(sim, 2, "along")),
+               across: flat(m.colourLabels(sim, 2, "across")),
+               both: flat(m.colourLabels(sim, 2, "both")) };
 out.shown = ["along", "across", "both"].map((by) => m.labelsShown(by, { net: true }));
 out.weakest = m.weakestAt(sim, 2, limits).filter((w) => w.kind === "member");
 out.line = [m.frameLine(sim, 1), m.frameLine(sim, 3)];
@@ -176,11 +176,14 @@ def test_along_across_and_both_mark_the_ropes_working_load(out):
     assert both["title"] == "rope tension, kN" and both["max"] == "3.6 kN"
 
 
-def test_the_values_on_the_model_are_each_familys_worst_and_its_worst_a_side(out):
+def test_the_values_on_the_model_are_the_worst_of_each_line_of_the_family(out):
     labels = out["labels"]
-    assert labels["along"] == [["member", 0, "0.2 kN"], ["member", 3, "0.1 kN"]]
+    # the worst of every line of the family (his answer of 11 October 2026):
+    # along, its one line's worst; across, each side's line
+    assert labels["along"] == [["member", 0, "0.2 kN"]]
     assert labels["across"] == [["member", 1, "3.0 kN"], ["member", 2, "0.4 kN"]]
-    assert labels["both"] == [["member", 1, "3.0 kN"], ["member", 2, "0.4 kN"]]
+    assert labels["both"] == [["member", 1, "3.0 kN"], ["member", 2, "0.4 kN"],
+                              ["member", 0, "0.2 kN"]]
     assert out["shown"] == [True, True, True]
 
 

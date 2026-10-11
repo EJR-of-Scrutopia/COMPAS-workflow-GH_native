@@ -35,12 +35,17 @@ out.keys = ["wire", "tension", "deviation", "utilisation", "off"].map((by) => m.
 out.pastScale = m.colourKey("wire", sim, { ...limits, have: 6000 });
 out.noHave = m.colourKey("wire", sim, { ...limits, have: null });
 out.labels = {
-  deviation: m.colourLabels(sim, 2, "deviation", 2).map((l) => [l.kind, l.index, l.text]),
-  wire: m.colourLabels(sim, 2, "wire", 1).map((l) => [l.kind, l.index, l.text]),
-  tension: m.colourLabels(sim, 2, "tension", 1).map((l) => [l.kind, l.index, l.text]),
-  trees: m.colourLabels(sim, 2, "utilisation", 5).map((l) => [l.kind, l.index, l.text]),
-  off: m.colourLabels(sim, 1, "off", 5).map((l) => [l.kind, l.index, l.text]),
+  deviation: m.colourLabels(sim, 2, "deviation").map((l) => [l.kind, l.index, l.text]),
+  wire: m.colourLabels(sim, 2, "wire").map((l) => [l.kind, l.index, l.text]),
+  tension: m.colourLabels(sim, 2, "tension").map((l) => [l.kind, l.index, l.text]),
+  trees: m.colourLabels(sim, 2, "utilisation").map((l) => [l.kind, l.index, l.text]),
+  off: m.colourLabels(sim, 1, "off").map((l) => [l.kind, l.index, l.text]),
 };
+// a net whose quads do not sort has no lines: the worst five and the worst
+// of each side, as before
+const unsorted = m.readSim({ ...%(doc)s, net: { ...%(doc)s.net, families: null } });
+out.unsortedLabels = m.colourLabels(unsorted, 2, "deviation", 2).map((l) => [l.kind, l.index, l.text]);
+out.lines = [sim.lines, unsorted.lines, sim.treeGroups];
 out.shown = [m.labelsShown("wire", { wires: true }), m.labelsShown("wire", { net: true }),
              m.labelsShown("deviation", { net: true }), m.labelsShown("utilisation", { trees: true }),
              m.labelsShown("off", { heads: true }), m.labelsShown("off", { net: true })];
@@ -128,16 +133,31 @@ def test_each_key_runs_from_nought_to_twice_the_limit_with_the_limit_in_the_midd
                              "limitText": None, "fraction": None, "judged": False}
 
 
-def test_the_values_on_the_model_are_the_worst_and_the_worst_of_each_side(out):
+def test_the_lines_are_each_familys_split_at_the_column_heads(out):
+    lines, unsorted, trees = out["lines"]
+    # the square's along line runs 1, 0, 3 through node 0; its across line
+    # runs 1, 2, 3 through the head's node 2, so it is two lines, one a side
+    assert lines == {"along": [[0, 3]], "across": [[1], [2]]}
+    assert unsorted is None
+    assert trees == [[0]]
+
+
+def test_the_values_on_the_model_are_the_worst_of_every_line(out):
+    # his answer of 11 October 2026: the worst of each line in the family
+    # shown, every wire, every tree, largest first, thinned on screen only
+    # where they would overlap
     labels = out["labels"]
-    # capture S1 q1, offsets 5, 0, 12, 40 mm; sides 0, 0, 1, 1: the worst two,
-    # then side 0's worst, which is not yet among them
-    assert labels["deviation"] == [["node", 3, "40 mm"], ["node", 2, "12 mm"], ["node", 0, "5.0 mm"]]
-    # wires: w0 1500 N on side 0, w1 1000 N on side 0: the worst alone
-    assert labels["wire"] == [["wire", 0, "1,500 N"]]
-    # ropes: member 1 (1 to 2, side 0) at 3.0 kN, then side 1's worst, member 2 (2 to 3)
-    assert labels["tension"] == [["member", 1, "3.0 kN"], ["member", 2, "0.4 kN"]]
+    # capture S1 q1, offsets 5, 0, 12, 40 mm: the along line 1, 0, 3 at node
+    # 3; the across lines 1 to 2 at node 2 and 2 to 3 at node 3, once
+    assert labels["deviation"] == [["node", 3, "40 mm"], ["node", 2, "12 mm"]]
+    # every wire
+    assert labels["wire"] == [["wire", 0, "1,500 N"], ["wire", 1, "1,000 N"]]
+    # every line of both families: across 3.0 kN and 0.4 kN, along 0.2 kN
+    assert labels["tension"] == [["member", 1, "3.0 kN"], ["member", 2, "0.4 kN"],
+                                 ["member", 0, "0.2 kN"]]
     assert labels["trees"] == [["tree", 0, "0.50"]]
+    # a net with no lines keeps the worst and the worst of each side
+    assert out["unsortedLabels"] == [["node", 3, "40 mm"], ["node", 2, "12 mm"], ["node", 0, "5.0 mm"]]
     # with Colour by off, each head's push
     assert labels["off"] == [["node", 2, "800 N"]]
     assert out["shown"] == [True, False, True, True, True, False]

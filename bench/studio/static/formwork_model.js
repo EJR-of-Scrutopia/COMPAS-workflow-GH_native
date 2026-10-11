@@ -148,6 +148,13 @@ export function readSim(doc) {
     sides: Array.isArray(net.sides) ? net.sides : null,
     checks: doc.checks || null,
     families, tendons, edgeTendon, nodeTendon, tendonsReason: doc.tendons_reason || null,
+    // each family's lines and each tree's members, which the values on the
+    // model take their worst from (his answer of 11 October 2026)
+    lines: families ? {
+      along: familyLines(edges, families, "along", Number(net.nodes) || 0, trees.heads || []),
+      across: familyLines(edges, families, "across", Number(net.nodes) || 0, trees.heads || []),
+    } : null,
+    treeGroups: treeGroups(trees.members || []),
     scales: { tension: scale("tension"), wire: scale("wireTension"),
               deviation: scale("deviation"), utilisation: scale("treeUtilisation"), push,
               along, across, both },
@@ -462,15 +469,115 @@ function textFor(by, value) {
   return Number(value).toFixed(2);
 }
 
+// A family's lines, each the edges it runs along in order: through every node
+// two of the family's edges meet at, ending where one does, or more, and at a
+// column head, so each side of a principal line is a line of its own.
+function familyLines(edges, families, family, nodes, heads) {
+  const at = Array.from({ length: nodes }, () => []);
+  edges.forEach(([a, b], e) => {
+    if (families[e] === family && a < nodes && b < nodes) {
+      at[a].push(e);
+      at[b].push(e);
+    }
+  });
+  const ends = new Set(heads.map(([node]) => node));
+  const seen = new Uint8Array(edges.length);
+  const walk = (from, first) => {
+    const line = [];
+    let node = from;
+    let e = first;
+    while (e != null && !seen[e]) {
+      seen[e] = 1;
+      line.push(e);
+      node = edges[e][0] === node ? edges[e][1] : edges[e][0];
+      e = at[node].length === 2 && !ends.has(node) ? at[node].find((other) => other !== e) : null;
+    }
+    return line;
+  };
+  const lines = [];
+  for (let node = 0; node < nodes; node++) {
+    if (at[node].length !== 2 || ends.has(node)) {
+      for (const e of at[node]) if (!seen[e]) lines.push(walk(node, e));
+    }
+  }
+  // what is left runs round in a loop
+  edges.forEach(([a], e) => { if (families[e] === family && !seen[e]) lines.push(walk(a, e)); });
+  return lines;
+}
+
+// The trees, each the members joined through their nodes.
+function treeGroups(members) {
+  const root = new Map();
+  const find = (n) => {
+    while (root.has(n) && root.get(n) !== n) n = root.get(n);
+    return n;
+  };
+  for (const [p, q] of members) {
+    if (!root.has(p)) root.set(p, p);
+    if (!root.has(q)) root.set(q, q);
+    root.set(find(p), find(q));
+  }
+  const groups = new Map();
+  members.forEach(([p], k) => {
+    const r = find(p);
+    if (!groups.has(r)) groups.set(r, []);
+    groups.get(r).push(k);
+  });
+  return [...groups.values()];
+}
+
+// The parts each value on the model is the worst of, for a Colour by: a line
+// of the family shown (Along, Across; both families for Both and Ropes), the
+// nodes of every line for Offset, every wire, every tree, every head; null
+// where the run has no lines.
+function labelGroups(sim, by) {
+  const members = (line) => line.map((e) => ({ kind: "member", index: e }));
+  const lines = sim.lines;
+  if (by === "along" || by === "across") return lines ? lines[by].map(members) : null;
+  if (by === "both" || by === "tension") return lines ? [...lines.along, ...lines.across].map(members) : null;
+  if (by === "deviation") {
+    if (!lines) return null;
+    return [...lines.along, ...lines.across].map((line) => {
+      const nodes = new Set();
+      for (const e of line) for (const node of sim.edges[e]) nodes.add(node);
+      return [...nodes].map((node) => ({ kind: "node", index: node }));
+    });
+  }
+  if (by === "utilisation") return sim.treeGroups.map((group) => group.map((k) => ({ kind: "tree", index: k })));
+  if (by === "wire") return sim.rim.nodes.map((_, w) => [{ kind: "wire", index: w }]);
+  if (by === "off") return sim.trees.heads.map(([node]) => [{ kind: "node", index: node }]);
+  return null;
+}
+
 // The values a capture puts on the model (spec 2026-10-11 section 5.2): for
-// the Colour by shown, its count largest, then the largest of each side not
-// yet among them; with Colour by off, the heads' pushes. Largest first, so
-// where they crowd the largest is the one kept.
+// the Colour by shown, the worst of each of its lines, wires, trees or, with
+// Colour by off, heads (his answer of 11 October 2026); a run with no lines,
+// its count largest, then the largest of each side not yet among them.
+// Largest first, so where they crowd the largest is the one kept.
 export function colourLabels(sim, index, by, count = 5) {
   const c = sim && sim.captures[index];
   if (!c || !LABEL_PART[by]) return [];
   const values = valuesFor(sim, c, by).filter(([, value]) => value > 0);
   values.sort((a, b) => b[1] - a[1] || a[0].index - b[0].index);
+  // the worst of every line, wire, tree or head (his answer of 11 October
+  // 2026), one value a part, largest first
+  const groups = labelGroups(sim, by);
+  if (groups) {
+    const valueOf = new Map(values.map(([target, value]) => [target.kind + ":" + target.index, value]));
+    const worst = new Map();
+    for (const group of groups) {
+      let best = null;
+      for (const target of group) {
+        const value = valueOf.get(target.kind + ":" + target.index);
+        if (value != null && (!best || value > best[1] || (value === best[1] && target.index < best[0].index))) {
+          best = [target, value];
+        }
+      }
+      if (best) worst.set(best[0].kind + ":" + best[0].index, best);
+    }
+    return [...worst.values()].sort((a, b) => b[1] - a[1] || a[0].index - b[0].index)
+      .map(([target, value]) => ({ ...target, value, text: textFor(by, value) }));
+  }
   const picked = values.slice(0, count);
   const sides = new Set(picked.map(([, , side]) => side));
   for (const entry of values) {

@@ -15,7 +15,7 @@ import { spreadLabels } from "./labels.js";
 import { costHtml, graphsHtml } from "./run_popup_model.js";
 
 // As the studio's labels and card.
-const LABEL_MAX = 125;
+const LABEL_MAX = 250;
 const LABEL_GAP_X = 44;
 const LABEL_GAP_Y = 16;
 const CARD_WIDTH = 220;
