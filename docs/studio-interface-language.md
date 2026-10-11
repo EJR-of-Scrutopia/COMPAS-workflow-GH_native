@@ -417,8 +417,8 @@ column's right edge (`#graphs-collapse`) tucks it off to the left and
 brings it back, and the studio remembers which he left
 (`vaulted-live-graphs-tucked`); tucked, the cards cost nothing. Each
 card's header carries the name, the unit and the live reading in
-monospace; the notes line states every assumption in full; `CSV` hands
-over every series with those assumptions on top. The one number no
+monospace; the assumptions are not shown on the page (his ruling of 11
+October 2026), and `CSV` hands over every series with them on top. The one number no
 document states, the prestress the reels put into the net, is a dial in
 the four-part form, and the graphs say what fraction it is set to: a
 fraction of each cable's final thrust, its force once the whole shell is
@@ -752,7 +752,7 @@ add movement with wsad and 1-4 for moevement speeds". Unreal's viewport
 keys: W and S along the look, A and D across it, the orbit point moving
 with the eye so that letting go leaves the orbit where he now stands.
 1 walks at 1.5 m/s, 2 goes 5, 3 goes 15, 4 goes 45; a diagonal is no
-faster than a straight, and the log says the speed when it changes. The
+faster than a straight, and the console log records the speed. The
 keys stand down while anything with a caret has focus, while Ctrl, Alt
 or Cmd is held, and while a take or a plate owns the camera. Measured:
 held for a second at 2 the eye travelled 5.08 m, and at 4, 24.2 m in
@@ -848,7 +848,7 @@ which says "No atmosphere" while there
 is none. Wind, Wind from and Gusts moved under Wind. Folded, each heading
 reads its settings back: the sky's brightness as a percentage, the
 atmosphere by name with its rays when they are on, and the wind's
-strength and bearing, or "calm". MOVED, not copied: every id is on the
+strength and bearing, or "0%". MOVED, not copied: every id is on the
 page once.
 
 THE PANEL MET THEM HIDDEN. `upgradeSliders` skipped a label that was
