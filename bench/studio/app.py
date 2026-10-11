@@ -152,6 +152,8 @@ RUNS_LOCK = threading.Lock()
 FORMWORK_DEFAULTS = {"prestress": None, "rope": "rope-4mm", "wires_per_motor": 1,
                      "wall": 3.2}
 FORMWORK_TUBE_MM = 60.3     # the trees' tube, the engine's trees.DIAMETER
+# The most rods a side a run takes (spec 2026-10-11 one Cable net tab, section 6).
+HOLDS_PER_SIDE_MAX = 20
 # The wire's angle to its eye bolt's axis, which the export does not record:
 # assumed, as the panel always has, and the conservative direction.
 MECHANISM_ANGLE_DEGREES = 10.0
@@ -230,7 +232,7 @@ def _invalidate_studio_cache(slug: str) -> None:
     if not studio_dir.is_dir():
         return
     for pattern in ("bundle-*.json", "staging-*.json", "cablenet-*.json",
-                    "formwork-sim-*.json"):
+                    "formwork-sim-*.json", "formwork-state-*.json.gz"):
         for stale in studio_dir.glob(pattern):
             stale.unlink()
 
@@ -1385,17 +1387,22 @@ def create_app(runner=None, cra_runner=None, formwork_runner=None) -> FastAPI:
         pulleys = body.get("pulleys", True)
         if not isinstance(pulleys, bool):
             raise HTTPException(400, "pulleys: true or false, not {!r}".format(pulleys))
-        # the holds (spec 2026-10-10 formwork holds, section 4): none, or a
-        # search of evenly spaced whole lines to the tolerance
-        holds = body.get("holds", "none")
-        if holds not in ("none", "search"):
-            raise HTTPException(400, "holds: none or search, not {!r}".format(holds))
-        tolerance_mm = body.get("tolerance_mm", 20.0)
-        if (isinstance(tolerance_mm, bool) or not isinstance(tolerance_mm, (int, float))
-                or not (math.isfinite(tolerance_mm) and tolerance_mm > 0.0)):
-            raise HTTPException(400, "tolerance_mm must be more than nought millimetres, not "
-                                     "{!r}".format(tolerance_mm))
-        tolerance_mm = float(tolerance_mm)
+        # the rods a side, which the studio places (spec 2026-10-11 one Cable net
+        # tab, section 6); the search of whole lines went with that
+        if "holds" in body:
+            raise HTTPException(400, "holds is no longer taken: send holds_per_side, a whole "
+                                     "number of rods a side from 0 to {}".format(HOLDS_PER_SIDE_MAX))
+        holds_per_side = body.get("holds_per_side", 0)
+        if (isinstance(holds_per_side, bool) or not isinstance(holds_per_side, int)
+                or not 0 <= holds_per_side <= HOLDS_PER_SIDE_MAX):
+            raise HTTPException(
+                400, "holds_per_side must be a whole number of rods a side from 0 to {}, not "
+                     "{!r}".format(HOLDS_PER_SIDE_MAX, holds_per_side))
+        # a run for other rods starts from the state at the hold when it is on
+        # disk (section 7); Run is always a full run
+        resume = body.get("resume", False)
+        if not isinstance(resume, bool):
+            raise HTTPException(400, "resume: true or false, not {!r}".format(resume))
         source = body.get("source")
         if source is not None and source not in bundle.CUT_SOURCES:
             raise HTTPException(400, "source must be one of {} when given".format(
@@ -1491,6 +1498,8 @@ def create_app(runner=None, cra_runner=None, formwork_runner=None) -> FastAPI:
                 run["phase"] = "formwork"
                 run["message"] = ("laying the net out, raising it and tiling it: several "
                                   "minutes on a large study")
+                state_path = bundle.formwork_state_path(slug, material, slot.key_pattern, size,
+                                                        thickness, density)
 
                 def progress(done, total, what):
                     run["stage"], run["of"], run["message"] = done, total, what
@@ -1509,10 +1518,10 @@ def create_app(runner=None, cra_runner=None, formwork_runner=None) -> FastAPI:
                              "rope": rope_key, "prestress": prestress,
                              "prestress_from": prestress_from,
                              "wires_per_motor": wires_per_motor, "wall": wall,
-                             "pulleys": pulleys, "holds": holds, "tolerance_mm": tolerance_mm,
+                             "pulleys": pulleys, "holds_per_side": holds_per_side,
                              **mechanism_options},
-                    runner=formwork_runner, progress=progress, holds=holds,
-                    tolerance_mm=tolerance_mm, annotate=annotate)
+                    runner=formwork_runner, progress=progress, holds_per_side=holds_per_side,
+                    state_path=state_path, resume=resume, annotate=annotate)
                 run["state"] = "done"
                 run["phase"] = "done"
                 run["message"] = ""

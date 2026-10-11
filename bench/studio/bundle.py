@@ -100,6 +100,17 @@ def cablenet_path(slug: str, material: str, pattern: str, size: float,
         _density_suffix(density))
 
 
+def formwork_state_path(slug: str, material: str, pattern: str, size: float,
+                        thickness: float, density=None) -> Path:
+    """The formwork engine's state at the hold for a study and its cut's options
+    (spec 2026-10-11 one Cable net tab, section 7), beside its capture document
+    and cleared with it."""
+
+    return STUDIES_DIR / slug / "studio" / "formwork-state-{}-{}-s{}-t{}{}.json.gz".format(
+        material, pattern, round(size * 1000), round(thickness * 1000),
+        _density_suffix(density))
+
+
 def formwork_sim_path(slug: str, material: str, pattern: str, size: float,
                       thickness: float, density=None) -> Path:
     """The formwork engine's capture document for a study and its cut's options

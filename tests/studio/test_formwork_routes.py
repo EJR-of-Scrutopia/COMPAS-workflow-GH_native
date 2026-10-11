@@ -166,31 +166,63 @@ def test_the_runs_drum_and_carriage_are_checked_from_its_own_reels(tmp_path, mon
     assert [document["net"]["sides"][n] for n in (0, 2, 6, 8)] == [0, 1, 2, 3]
 
 
-def test_the_run_takes_its_holds_choice_and_tolerance(tmp_path, monkeypatch):
-    # spec 2026-10-10 formwork holds, section 4: none by default; a search on
-    # a net with no principal line fails with the reason
-    seen = {}
+def test_the_run_takes_rods_a_side_and_tells_the_engine_the_sides_and_its_state(
+        tmp_path, monkeypatch):
+    # spec 2026-10-11 one Cable net tab, sections 6 and 7: N rods a side, the
+    # studio placing them; the engine keeps its state at the hold beside the
+    # captures, and a rerun for other rods starts there when it is on disk
+    from pathlib import Path
+
+    seen = []
 
     def fake(request, progress=None):
-        seen.update(request)
-        return {"schema": "bench.formwork-sim/1", "captures": [],
-                "summary": {"holds_deviation_max_mm": None}}
+        seen.append(request)
+        if request.get("state_out"):
+            # as the engine writes it, its folder made
+            Path(request["state_out"]).parent.mkdir(parents=True, exist_ok=True)
+            Path(request["state_out"]).write_bytes(b"state")
+        return {"schema": "bench.formwork-sim/1", "captures": []}
 
-    client, _ = make_client(tmp_path, monkeypatch, formwork_runner=fake)
+    client, studies = make_client(tmp_path, monkeypatch, formwork_runner=fake)
     _plant(tmp_path)
-    started = client.post("/api/studies/Tiny/formwork/run", json=RUN)
+    started = client.post("/api/studies/Tiny/formwork/run", json={**RUN, "resume": True})
     assert wait_for(client, started.json()["run"])["state"] == "done"
-    assert "holds" not in seen or not seen["holds"]
-    assert seen["options"]["holds"] == "none" and seen["options"]["tolerance_mm"] == 20.0
+    first = seen[-1]
+    assert first["holds_per_side"] == 0 and first["options"]["holds_per_side"] == 0
+    # the Tiny net's four corners are on wires, a side each
+    assert first["sides"] == [0, 0, 1, 0, 0, 1, 2, 2, 3]
+    state = first["state_out"]
+    assert Path(state).parent == studies / "tiny" / "studio"
+    assert Path(state).name.startswith("formwork-state-concrete-") and state.endswith(
+        "-s900-t20.json.gz")
+    assert "state_in" not in first                                          # none on disk yet
     started = client.post("/api/studies/Tiny/formwork/run",
-                          json={**RUN, "holds": "search", "tolerance_mm": 15})
-    state = wait_for(client, started.json()["run"])
-    assert state["state"] == "failed" and "principal line" in state["message"]
-    for bad, word in (({"holds": "some"}, "holds"), ({"tolerance_mm": 0}, "tolerance_mm"),
-                      ({"tolerance_mm": True}, "tolerance_mm")):
-        response = client.post("/api/studies/Tiny/formwork/run", json={**RUN, **bad})
+                          json={**RUN, "holds_per_side": 3, "resume": True})
+    assert wait_for(client, started.json()["run"])["state"] == "done"
+    again = seen[-1]
+    assert again["holds_per_side"] == 3 and again["options"]["holds_per_side"] == 3
+    assert again["state_in"] == state
+    # Run (no resume) is always a full run
+    started = client.post("/api/studies/Tiny/formwork/run", json={**RUN, "holds_per_side": 3})
+    assert wait_for(client, started.json()["run"])["state"] == "done"
+    assert "state_in" not in seen[-1]
+
+
+def test_rods_a_side_are_a_whole_number_from_nought_to_twenty(tmp_path, monkeypatch):
+    client, _ = make_client(tmp_path, monkeypatch, formwork_runner=_idle)
+    _plant(tmp_path)
+    for bad in (21, -1, True, 2.5, "3"):
+        response = client.post("/api/studies/Tiny/formwork/run",
+                               json={**RUN, "holds_per_side": bad})
         assert response.status_code == 400, bad
-        assert word in response.json()["detail"], bad
+        assert "holds_per_side must be a whole number of rods a side from 0 to 20" in \
+            response.json()["detail"], bad
+    response = client.post("/api/studies/Tiny/formwork/run", json={**RUN, "resume": "yes"})
+    assert response.status_code == 400 and "resume" in response.json()["detail"]
+    # the search of whole lines is gone, and a body asking for it is told so
+    response = client.post("/api/studies/Tiny/formwork/run", json={**RUN, "holds": "search"})
+    assert response.status_code == 400
+    assert "send holds_per_side" in response.json()["detail"]
 
 
 def test_a_study_with_no_formwork_document_is_refused_before_the_cut(tmp_path, monkeypatch):
@@ -237,10 +269,13 @@ def test_an_upload_clears_the_formwork_captures(tmp_path, monkeypatch):
     path = bundle.formwork_sim_path("tiny", "tile", "bonded-courses", 1.0, 0.02, None)
     path.parent.mkdir(parents=True)
     path.write_text("{}", encoding="utf-8")
+    # and the state at the hold beside it
+    state = bundle.formwork_state_path("tiny", "tile", "bonded-courses", 1.0, 0.02, None)
+    state.write_bytes(b"state")
     response = client.put("/api/uploads/exports/Tiny/contract",
                           content=json.dumps(tiny_contract()).encode())
     assert response.status_code == 200, response.text
-    assert not path.is_file()
+    assert not path.is_file() and not state.is_file()
 
 
 def test_a_second_run_on_a_live_study_is_409(tmp_path, monkeypatch):

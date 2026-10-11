@@ -152,106 +152,23 @@ def _strip_net(rows=2, columns=4):
     return faces, heads, node
 
 
-def test_each_node_s_band_is_its_steps_across_from_the_principal_line():
-    # spec 2026-10-10 formwork holds, section 2: the quads sorted into the
-    # two families from the principal line out, a node's band its steps across
-    faces, heads, node = _strip_net()
-    bands = formwork_sim.hold_bands(faces, heads)
-    for i in range(5):
-        for j in range(-2, 3):
-            assert bands[node(i, j)] == abs(j), (i, j)
-    # the widest band is the open edge; the spacings divide it evenly
-    assert formwork_sim.hold_spacings(bands) == [2, 1]
+def test_rods_a_side_on_a_net_with_no_sides_are_refused_in_one_line(tmp_path):
+    # spec 2026-10-11 one Cable net tab, section 6: a net whose rim does not
+    # split into runs; with no rods asked for, the run goes ahead
+    arrays = dict(geometry.mesh_arrays(tiny_contract()), faces=[])
+    inputs = formwork_sim.Inputs([], [], [], [], [], [], [])
+    binding = {"keys": [], "order": [], "assignment": []}
+    told = (inputs, arrays, binding, [], 0.02, 2000.0, tmp_path / "sim.json", EA, 0.01, 300.0,
+            1, 3.2)
 
+    def idle(request, progress=None):
+        return {"schema": "bench.formwork-sim/1", "captures": []}
 
-def test_holds_at_a_spacing_are_whole_bands_and_never_a_rim_or_head_node():
-    faces, heads, node = _strip_net()
-    bands = formwork_sim.hold_bands(faces, heads)
-    rim = {node(4, j) for j in range(-2, 3)}            # the far end on its wires
-    edge = formwork_sim.holds_at(bands, 2, rim)
-    assert edge == sorted(node(i, j) for i in range(4) for j in (-2, 2))
-    every = formwork_sim.holds_at(bands, 1, rim)
-    assert every == sorted(node(i, j) for i in range(4) for j in (-2, -1, 1, 2))
-    assert not set(every) & set(heads)
-
-
-def test_a_net_that_does_not_sort_into_two_families_is_refused():
-    faces, heads, node = _strip_net()
-    # a head off the line, so one quad has two neighbouring edges running along
-    with pytest.raises(formwork_sim.FormworkError, match="parallel to a principal line"):
-        formwork_sim.hold_bands(faces, heads + [node(0, 1)])
-    # a triangle among the quads
-    with pytest.raises(formwork_sim.FormworkError, match="quad"):
-        formwork_sim.hold_bands(faces + [[node(0, 0), node(1, 0), node(1, 1)]], heads)
-    # no principal line at all
-    with pytest.raises(formwork_sim.FormworkError, match="principal line"):
-        formwork_sim.hold_bands(faces, [node(0, 0)])
-
-
-def _stand_in(worst_by_count, seen):
-    # an engine that answers each try's worst deviation by how many holds it got
-    def run(request, progress=None):
-        seen.append(list(request["holds"]))
-        if progress is not None:
-            progress(1, 1, "the holds jacked to the design")
-        return {"schema": "bench.formwork-sim/1", "captures": [],
-                "summary": {"holds_deviation_max_mm": worst_by_count[len(request["holds"])]}}
-    return run
-
-
-def test_the_search_stops_at_the_first_spacing_that_meets_the_tolerance():
-    # spec 2026-10-10 formwork holds, section 4: the open edges, then denser,
-    # one engine run each, keeping the first within the tolerance
-    faces, heads, node = _strip_net()
-    bands = formwork_sim.hold_bands(faces, heads)
-    rim = {node(4, j) for j in range(-2, 3)}
-    seen, told = [], []
-    worst = {8: 50.0, 16: 12.0}
-    document = formwork_sim.search_holds({"study": "Strip"}, bands, rim, 20.0, _stand_in(worst, seen),
-                                         lambda done, total, what: told.append(what))
-    assert [len(holds) for holds in seen] == [8, 16]
-    assert document["holds"] == {"spacing": 1, "bands": [1, 2], "count": 16, "tolerance_mm": 20.0,
-                                 "met": True, "tried": [
-                                     {"spacing": 2, "count": 8, "deviation_max_mm": 50.0},
-                                     {"spacing": 1, "count": 16, "deviation_max_mm": 12.0}]}
-    assert told == ["the open edges: the holds jacked to the design",
-                    "every line: the holds jacked to the design"]
-    # the open edges alone are enough: one try
-    seen.clear()
-    document = formwork_sim.search_holds({}, bands, rim, 60.0, _stand_in(worst, seen))
-    assert len(seen) == 1 and document["holds"]["spacing"] == 2 and document["holds"]["met"]
-
-
-def test_when_no_spacing_meets_the_tolerance_the_every_line_run_is_kept():
-    faces, heads, node = _strip_net()
-    bands = formwork_sim.hold_bands(faces, heads)
-    seen = []
-    document = formwork_sim.search_holds({}, bands, (), 5.0, _stand_in({10: 50.0, 20: 12.0}, seen))
-    assert document["holds"]["spacing"] == 1 and document["holds"]["met"] is False
-    assert [t["deviation_max_mm"] for t in document["holds"]["tried"]] == [50.0, 12.0]
-
-
-def test_a_search_run_writes_the_kept_run_its_holds_never_a_head_or_a_wire_node(tmp_path, monkeypatch):
-    # found by the final review: the study's heads and wires reached the
-    # search only on screen; here run_formwork takes them to a written document
-    import json
-    from types import SimpleNamespace
-
-    faces, heads, node = _strip_net()
-    wired = {node(4, j) for j in range(-2, 3)}
-    monkeypatch.setattr(formwork_sim, "request_from", lambda *a, **k: {"study": "Strip"})
-    inputs = SimpleNamespace(heads=[(n, k) for k, n in enumerate(heads)],
-                             rim=[{"node": n} for n in sorted(wired)])
-    seen = []
-    out = tmp_path / "sim.json"
-    formwork_sim.run_formwork(inputs, {"faces": faces}, None, None, 0.02, 1000.0, out, 1.0, 0.1,
-                              500.0, 1, 3.2, runner=_stand_in({8: 50.0, 16: 12.0}, seen),
-                              holds="search", tolerance_mm=20.0)
-    written = json.loads(out.read_text(encoding="utf-8"))
-    assert written["holds"]["spacing"] == 1 and written["holds"]["met"] is True
-    assert [t["count"] for t in written["holds"]["tried"]] == [8, 16]
-    assert [len(holds) for holds in seen] == [8, 16]
-    assert not set(seen[-1]) & (wired | set(heads))
+    with pytest.raises(formwork_sim.FormworkError, match="does not split into wired runs"):
+        formwork_sim.run_formwork(*told, runner=idle, holds_per_side=2)
+    assert not (tmp_path / "sim.json").exists()
+    formwork_sim.run_formwork(*told, runner=idle)
+    assert (tmp_path / "sim.json").is_file()
 
 
 def test_each_node_belongs_to_the_side_it_is_fewest_steps_from():
@@ -272,9 +189,3 @@ def test_each_node_belongs_to_the_side_it_is_fewest_steps_from():
     assert [formwork_sim.sides_of(faces, edges, corners, 25)[n] for n in corners] == [0, 1, 2, 3]
     # a net with no faces has no boundary to find sides by
     assert formwork_sim.sides_of([], edges, far, 25) is None
-
-
-def test_the_spacings_are_named_as_the_tab_says_them():
-    assert [formwork_sim.spacing_name(s, 10) for s in (10, 5, 2, 1)] == [
-        "the open edges", "every 5th line", "every 2nd line", "every line"]
-    assert formwork_sim.spacing_name(3, 9) == "every 3rd line"
