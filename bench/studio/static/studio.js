@@ -275,10 +275,9 @@ const state = {
   wireRadius: 0.02,
   // Task 9: filled from /api/studies at boot, so the pattern control knows
   // which patterns are actually selectable and what each material's own
-  // default and honesty note are.
+  // default is.
   patterns: [],
   patternDefaults: {},
-  patternNotes: {},
   patternChosen: false, // an explicit pattern choice survives material changes
   loadSequence: 0,      // bundle request token: only the newest response lands
   reloadTimer: null,    // the settle timer behind size and thickness commits
@@ -1735,7 +1734,7 @@ async function refreshHdriList(selectName) {
   try {
     ({ files } = await fetchJson("/api/hdri"));
   } catch (error) {
-    showBanner("Failed to load the HDRI list: " + error.message, "error");
+    showBanner("Sky list failed: " + error.message, "error");
     return null;
   }
   const select = document.getElementById("hdri-select");
@@ -1790,7 +1789,7 @@ function beginLoading(label) {
 // where 8192 of half-float is 256 MB and is then thrown away by the blur.
 async function loadHdriBackdrop(name) {
   const wanted = name;
-  const done = beginLoading("Preparing sky " + name + " at full quality");
+  const done = beginLoading("Loading sky " + name);
   try {
     // Full resolution is for machines with the memory to hold it: a 16k
     // backdrop uploads as half a GIGABYTE of texture, and an iPad asked
@@ -1893,7 +1892,7 @@ async function loadHdri(name) {
     // the banner, named, so it cannot be missed off-screen or overwritten
     // by the next progress message.
     status.textContent = "";
-    showBanner("Could not load HDRI " + name + ": " + error.message, "error");
+    showBanner("Sky " + name + " failed: " + error.message, "error");
     regenerateEnvironment(); // keep the environment matching state.environmentMode even on failure
   } finally {
     done();
@@ -4161,8 +4160,8 @@ function buildPropTiles() {
     tile.title = (entry.label || entry.key)
       + (entry.sizeMetres ? "  " + entry.sizeMetres.map(
         (n) => n.toFixed(n < 1 ? 2 : 1)).join(" x ") + " m" : "")
-      + (entry.variants > 1 ? "  --  " + entry.variants + " variants, one at random each time" : "")
-      + (entry.credit ? " -- " + entry.credit : "");
+      + (entry.variants > 1 ? "  " + entry.variants + " variants" : "")
+      + (entry.credit ? "  " + entry.credit : "");
     tile.addEventListener("click", async () => {
       select.value = entry.key;
       paintTileSelection(holder, entry.key);
@@ -5799,7 +5798,7 @@ function columnGeometryFrom(document_) {
     vertices = document_.equilibrium.vertices.map((v) => [v.x, v.y, v.z]);
     faces = document_.formGraph.faces.map((f) => f.vertices);
   } else {
-    throw new Error("unrecognised column JSON: need vertices+faces or a contract export");
+    throw new Error("column file unreadable");
   }
   const geometry = new THREE.BufferGeometry();
   geometry.setAttribute("position", new THREE.BufferAttribute(new Float32Array(vertices.flat()), 3));
@@ -5835,7 +5834,7 @@ async function loadColumns(names) {
     try {
       addColumnSolid(group, await fetchJson("/api/columns/" + encodeURIComponent(name)));
     } catch (error) {
-      showBanner("Column file " + name + " failed to load: " + error.message, "error");
+      showBanner("Column file " + name + ": " + error.message, "error");
     }
   }
   return group;
@@ -5873,7 +5872,7 @@ async function reloadColumns(names) {
     try {
       addColumnSolid(state.objects.columns, ownSolid);
     } catch (error) {
-      showBanner("The formwork's columns failed to draw: " + error.message, "error");
+      showBanner("Columns failed: " + error.message, "error");
     }
     scene.add(state.objects.columns);
   } else if (names.length) {
@@ -6156,7 +6155,7 @@ async function applyScene(record) {
   if (study) control("study-select").value = study;
   const loaded = await loadStudy(study);
   if (loaded === false) {
-    showBanner("The scene's study would not load: " + (state.lastRefusal || ""), "error");
+    showBanner("Study failed: " + (state.lastRefusal || ""), "error");
     return false;
   }
 
@@ -6319,9 +6318,7 @@ async function applyScene(record) {
     // everything else still restored (Param's live case: a scene saved
     // under evening_meadow after that file moved out of the sky folder).
     if (state.hdriName !== hdri.name) {
-      showBanner('This scene\'s sky "' + hdri.name + '" is not in the sky '
-        + "folder any more; the rest of the scene is restored under the "
-        + "current sky.", "error");
+      showBanner('Sky "' + hdri.name + '" missing', "error");
     }
   }
   applyEnvironment();
@@ -6540,9 +6537,8 @@ function renderSceneList() {
   if (!state.scenes.length) {
     const empty = document.createElement("div");
     empty.className = "scene-empty";
-    // Named after the button that actually exists (it says Save, not
-    // "Save scene"), in the same lowercase register as the other empties.
-    empty.textContent = "no saved scenes yet -- frame a view and press Save";
+    // the state, not how to change it (his ruling of 11 October 2026)
+    empty.textContent = "none";
     list.appendChild(empty);
     return;
   }
@@ -6550,9 +6546,7 @@ function renderSceneList() {
   for (const row of state.scenes) {
     const tile = document.createElement("button");
     tile.className = "scene-tile";
-    tile.title = row.unreadable
-      ? "This scene file is damaged and cannot be restored"
-      : "Restore " + row.name;
+    tile.title = row.unreadable ? "Damaged" : "Restore";
     if (row.thumbnail) {
       const image = document.createElement("img");
       // VERSIONED BY WHEN IT WAS SAVED. Param, 2026-09-14: "when i update a
@@ -6578,7 +6572,7 @@ function renderSceneList() {
       study.textContent = "damaged";
       study.classList.add("scene-elsewhere");
     } else if (row.study && row.study !== current) {
-      study.textContent = "loads " + row.study;
+      study.textContent = row.study;
       study.classList.add("scene-elsewhere");
     } else {
       study.textContent = row.study || "";
@@ -6586,13 +6580,13 @@ function renderSceneList() {
     tile.appendChild(study);
     tile.addEventListener("click", async () => {
       if (row.unreadable) {
-        showBanner("That scene file is damaged; delete it and save a new one", "error");
+        showBanner("Scene damaged", "error");
         return;
       }
       try {
         await applyScene(await fetchJson("/api/scenes/" + encodeURIComponent(row.id)));
       } catch (error) {
-        showBanner("Could not restore that scene: " + error.message, "error");
+        showBanner("Restore failed: " + error.message, "error");
       }
     });
     const remove = document.createElement("button");
@@ -6600,7 +6594,7 @@ function renderSceneList() {
     // The same glyph the banner close uses: a letter x sits on the text
     // baseline, low and left in an 18px square, where this one centres.
     remove.textContent = "✕";
-    remove.title = "Delete this scene";
+    remove.title = "Delete";
     remove.addEventListener("click", async (event) => {
       event.stopPropagation();
       if (!window.confirm("Delete the scene \"" + row.name + "\"?")) return;
@@ -6619,12 +6613,12 @@ function renderSceneList() {
     const update = document.createElement("button");
     update.className = "scene-update";
     update.textContent = "\u27f3";        // the reload glyph, needing no legend
-    update.title = "Update this scene with the view on screen now";
+    update.title = "Update";
     update.addEventListener("click", async (event) => {
       // The tile beneath restores the scene; this must not do both.
       event.stopPropagation();
       if (!state.bundle) {
-        showBanner("Load a study before updating a scene", "error");
+        showBanner("No study loaded", "error");
         return;
       }
       const response = await fetch(
@@ -6642,8 +6636,7 @@ function renderSceneList() {
         // browser long before it reaches the server. "Method Not Allowed"
         // is the least useful thing that could be said about that.
         showBanner(response.status === 405
-          ? "Scene not updated: this studio server was started before the "
-            + "update route existed. Restart it and this will work."
+          ? "Scene not updated: restart the server"
           : "Scene not updated: " + (body.detail || response.status), "error");
         return;
       }
@@ -6666,7 +6659,7 @@ function renderSceneList() {
 
 document.getElementById("scene-save").addEventListener("click", async () => {
   if (!state.bundle) {
-    showBanner("Load a study before saving a scene", "error");
+    showBanner("No study loaded", "error");
     return;
   }
   const study = document.getElementById("study-select").value;
@@ -6720,7 +6713,7 @@ let startingNewScene = false;
 
 async function startNewScene() {
   if (!state.bundle) {
-    showBanner("Load a study before starting a new scene", "error");
+    showBanner("No study loaded", "error");
     return false;
   }
   // A second press while the first is still rebuilding would take the
@@ -7126,9 +7119,8 @@ const GROUP_SUMMARIES = {
     return String(hours).padStart(2, "0") + ":" + String(minutes).padStart(2, "0")
   ;
   },
-  "Props": () => state.props.length
-    ? state.props.length + " placed" : "none placed",
-  "Scenes": () => state.scenes.length ? state.scenes.length + " saved" : "none saved",
+  "Props": () => String(state.props.length),
+  "Scenes": () => String(state.scenes.length),
   "Sky": () => Math.round(state.skyBrightness * 100) + "%",
   "Atmosphere": () => {
     const select = document.getElementById("atmosphere-preset");
@@ -7137,7 +7129,7 @@ const GROUP_SUMMARIES = {
     return (label ? label.textContent : "") + rays;
   },
   "Wind": () => state.wind.strength
-    ? state.wind.strength + "% from " + Math.round(state.wind.from) + "\u00b0" : "calm",
+    ? state.wind.strength + "%, " + Math.round(state.wind.from) + "\u00b0" : "0%",
   "Image": () => state.brightness.toFixed(2) + " / "
     + (state.contrast >= 0 ? "+" : "") + state.contrast.toFixed(2),
 };
@@ -7415,7 +7407,7 @@ function weighedAsLabel() {
   }
   const select = document.getElementById("material-select");
   const option = select && select.options[select.selectedIndex];
-  return option ? option.textContent : "the structural material";
+  return option ? option.textContent : "material";
 }
 
 function updateWeightNote() {
@@ -7428,14 +7420,9 @@ function updateWeightNote() {
   // Param: "just showing how much density and weight is added and what
   // material. Nothing too detailed." So: the name first, because that is
   // what he changed to get here, then the density it brings and the load
-  // that follows. One line, and the tooltip carries the rest.
-  note.textContent = weighedAsLabel() + ": " + Math.round(density)
-    + " kg/m3 x " + Math.round(thickness * 1000) + " mm = "
-    + kNPerM2.toFixed(2) + " kN/m2 (" + Math.round(kgPerM2) + " kg/m2)";
-  note.title = Math.abs(density - structuralDensity()) > 1
-    ? "The skin's own density, and the weight the analysis is run at."
-    : "The structural material's density, and the weight the analysis "
-      + "is run at.";
+  // that follows; no sum and no tooltip (his ruling of 11 October 2026).
+  note.textContent = weighedAsLabel() + ": " + Math.round(density) + " kg/m3, "
+    + kNPerM2.toFixed(2) + " kN/m2";
 }
 
 // The size of one repeat, in metres, for whatever the vault is wearing.
@@ -7936,10 +7923,7 @@ function paintStillControls() {
 // and reported nothing, which reads exactly like "it never saves".
 function paintStillSize() {
   const frame = stillFrame();
-  const tiles = Math.ceil(frame.width / STILL_TILE)
-    * Math.ceil(frame.height / STILL_TILE);
-  paintStillReadout(frame.width + " by " + frame.height + " pixels, "
-    + tiles + (tiles === 1 ? " tile" : " tiles"));
+  paintStillReadout(frame.width + " x " + frame.height);
 }
 
 // READING THE COMPOSER'S TARGET DOES NOT WORK HERE, and the reason is
@@ -7959,13 +7943,12 @@ function paintStillSize() {
 
 async function renderStill() {
   if (state.stillRendering || state.recording) return;
-  if (!state.bundle) { paintStillReadout("load a study first"); return; }
+  if (!state.bundle) { paintStillReadout("no study"); return; }
   // Asked again at the moment it matters: a plate from a stale server goes
   // where the old code sends it.
   if (await checkServerCode()) {
-    paintStillReadout("restart the studio first: this server predates the still fixes");
-    showBanner("Restart studio first (foot of the panel): this server is older than its "
-      + "code, and would put the still where the old code does.", "error");
+    paintStillReadout("restart the server");
+    showBanner("Restart the studio", "error");
     return;
   }
   const frame = stillFrame();
@@ -7989,7 +7972,7 @@ async function renderStill() {
   const wasPixelRatio = renderer.getPixelRatio();
   const wasWidth = canvas.width, wasHeight = canvas.height;
   document.body.classList.add("stilling");
-  paintStillReadout("framing the plate");
+  paintStillReadout("");
   state.recording = true;          // resize() must keep its hands off
   const restoreHelpers = hideHelpersForPicture();
   // The plate is framed now and will not change: its reflections are
@@ -8027,9 +8010,9 @@ async function renderStill() {
         const index = row * across + column;
         const response = await fetch("/api/still/" + target + "?tile=" + index
           + "&x=" + x + "&y=" + y, { method: "POST", body: blob });
-        if (!response.ok) throw new Error("tile " + index + " was refused");
+        if (!response.ok) throw new Error("tile " + index + " refused");
         sent += 1;
-        paintStillReadout("tile " + sent + " of " + (across * down));
+        paintStillReadout(sent + " / " + (across * down));
       }
     }
     const stitched = await fetch("/api/still/" + target + "/stitch?width="
@@ -8037,11 +8020,10 @@ async function renderStill() {
     if (!stitched.ok) throw new Error(await stitched.text());
     const done = await stitched.json();
     const seconds = ((performance.now() - began) / 1000).toFixed(1);
-    paintStillReadout(frame.width + " by " + frame.height + " written in "
-      + seconds + " s: " + done.still);
+    paintStillReadout(frame.width + " x " + frame.height + "  " + seconds + " s  " + done.still);
     logStudio("still: " + done.still);
   } catch (error) {
-    paintStillReadout("the plate failed: " + (error.message || error));
+    paintStillReadout("failed: " + (error.message || error));
     logStudio("still failed: " + (error.message || error));
   } finally {
     // Every one of these restores something the loop above took, and the
@@ -8536,10 +8518,7 @@ function paintStampButton() {
   const del = document.getElementById("layer-delete-chosen");
   del.disabled = !going;
   del.textContent = going > 1 ? "Delete " + going.toLocaleString() : "Delete";
-  del.title = going
-    ? "Delete the " + (going > 1 ? going.toLocaleString() + " selected props" : "selected prop")
-      + "; Ctrl+Z brings them back"
-    : "Nothing selected to delete: pick a tile here, or a prop in the viewport";
+  del.title = going ? "Delete " + going.toLocaleString() : "Nothing selected";
 }
 
 function renderShelfLayers(grid) {
@@ -8553,7 +8532,7 @@ function renderShelfLayers(grid) {
   if (!members.length) {
     const empty = document.createElement("div");
     empty.className = "tile-family";
-    empty.textContent = "nothing on this layer yet -- placed props land here";
+    empty.textContent = "none";
     grid.appendChild(empty);
   }
   // WHAT IS ON THE LAYER, AS HE PLACED IT. Param, 2026-09-13, over a
@@ -8599,8 +8578,7 @@ function renderShelfLayers(grid) {
     tile.title = plantingName(planting) + ": "
       + common.slice(0, 5).map(([type, n]) =>
         propDisplayName({ type }) + " " + n.toLocaleString()).join(", ")
-      + (common.length > 5 ? " and " + (common.length - 5) + " more kinds" : "")
-      + " -- click to select all of it, Delete removes it";
+      + (common.length > 5 ? " and " + (common.length - 5) + " more kinds" : "");
     tile.classList.toggle("active", entry.chosen === planting.members);
     layerItems.push({ tile, first, records: () => plantingRecords(planting),
       chosenIn: (acting) => plantingRecords(planting).every((r) => acting.has(r)) });
@@ -8615,16 +8593,14 @@ function renderShelfLayers(grid) {
     const tile = previewTile("prop#" + record.id, propTag(record),
       (canvasEl) => paintPropThumb(canvasEl, record.type));
     tile.title = propTag(record)
-      + "  (" + record.x.toFixed(1) + ", " + record.y.toFixed(1) + ")"
-      + " -- click to select: drag it in the viewport, Delete removes";
+      + "  (" + record.x.toFixed(1) + ", " + record.y.toFixed(1) + ")";
     tile.classList.toggle("active", gatheredProps.has(record));
     layerItems.push({ tile, first: record, records: () => [record],
       chosenIn: (acting) => acting.has(record) });
     grid.appendChild(tile);
   }
   if (byHand.length > shown.length) {
-    heading("and " + (byHand.length - shown.length).toLocaleString()
-      + " more placed by hand -- pick them in the viewport");
+    heading("+" + (byHand.length - shown.length).toLocaleString() + " more");
   }
   layerItems.forEach((item, index) => wireLayerTile(item, index));
   renderLayerTabs();
@@ -8749,8 +8725,7 @@ function renderLayerTabs() {
       + (layer.id === state.activeLayer ? " active" : "")
       + (layer.visible === false ? " off" : "");
     tab.textContent = layer.name;
-    tab.title = "Open this layer: newly placed props land on it. "
-      + "Double-click to rename.";
+    tab.title = "Double-click to rename";
     tab.addEventListener("click", () => {
       state.activeLayer = layer.id;
       gatheredProps.clear();
@@ -8778,7 +8753,7 @@ function renderLayerTabs() {
   const eye = document.createElement("button");
   eye.className = "layer-eye";
   eye.textContent = active && active.visible === false ? "Hidden" : "Shown";
-  eye.title = "Show or hide everything on the open layer";
+  eye.title = "Show or hide layer";
   eye.addEventListener("click", () => {
     if (!active) return;
     active.visible = active.visible === false;
@@ -8789,7 +8764,7 @@ function renderLayerTabs() {
   const del = document.createElement("button");
   del.className = "layer-delete";
   del.textContent = "✕";
-  del.title = "Delete the open layer and every prop on it";
+  del.title = "Delete layer";
   del.addEventListener("click", () => deleteLayer(state.activeLayer));
   strip.append(eye, del);
 }
@@ -9047,7 +9022,7 @@ function applyGraphsTucked(on) {
   const handle = document.getElementById("graphs-collapse");
   if (handle) {
     handle.textContent = liveGraphs.tucked ? "›" : "‹";
-    handle.title = liveGraphs.tucked ? "Bring the graphs back" : "Tuck the graphs to the side";
+    handle.title = liveGraphs.tucked ? "Show graphs" : "Hide graphs";
   }
 }
 
@@ -9064,35 +9039,6 @@ function liveCursorAt(series) {
   const duration = series.t[n - 1] || 1;
   const t = Math.max(0, Math.min(duration, state.timeline.t));
   return { k: Math.round((n - 1) * t / duration), t };
-}
-
-// What the header says the vault is weighed as. A skin that sets the
-// density is named: "concrete, 200 mm at 8940 kg/m3" was a copper skin's
-// density on a concrete cut, and read as a contradiction.
-function liveSkinWord(bundle, density) {
-  const structural = STRUCTURAL_DENSITIES[bundle.material];
-  const fromSkin = bundle.provenance.density_from_skin
-    || (structural && Math.abs(density - structural) > 1);
-  if (!fromSkin) return "";
-  const skin = state.appearance.skin;
-  const entry = isLibraryKey(skin) ? libraryEntry(skin) : null;
-  if (!entry) return "a library skin";
-  // The bundle was weighed with the skin worn when it was cut, and a
-  // swap within one structural class since (granite for limestone, both
-  // stone) re-cuts nothing. So when the skin worn now would weigh the
-  // vault differently, it is not the one this density came from: say a
-  // library skin and name none, rather than credit the wrong one.
-  if (Math.abs(skinDensity() - density) > 1) return "a library skin";
-  let word = entry.family || entry.name;
-  for (const [pattern] of NAME_DENSITIES) {
-    if (pattern.test(entry.name)) { word = pattern.source; break; }
-  }
-  // A family word that is the cut's own class says nothing ("timber cut
-  // in a timber skin", "stone cut in a stone skin"): name the skin itself.
-  if (FAMILY_TO_STRUCTURAL[word] === bundle.material) {
-    word = (entry.label || entry.name).toLowerCase();
-  }
-  return (/^[aeiou]/i.test(word) ? "an " : "a ") + word + " skin";
 }
 
 // Wanted is the user's own switch, remembered; shown is whether the
@@ -9134,14 +9080,20 @@ async function buildLiveGraphs() {
       card.remove();
       liveGraphs.cards.delete(id);
     }
+    // the study, its material, thickness and density, no sentence (his
+    // ruling of 11 October 2026), and the one word that says the density is
+    // the skin's: "concrete 8940 kg/m3" read as concrete's own (found by the
+    // final review of the sweep)
     const study = document.getElementById("graphs-study");
-    const skinWord = liveSkinWord(bundle, density);
-    if (study) study.textContent = bundle.export + ", " + bundle.material
-      + (skinWord ? " cut in " + skinWord : "") + ", "
-      + Math.round(bundle.provenance.thickness * 1000) + " mm, weighed at "
-      + Math.round(density) + " kg/m3";
-    // Every card, and the notes line under them, is in place BEFORE any
-    // plot is drawn: the cards share the column's height, and a card
+    if (study) {
+      const structural = STRUCTURAL_DENSITIES[bundle.material];
+      const fromSkin = bundle.provenance.density_from_skin
+        || (structural && Math.abs(density - structural) > 1);
+      study.textContent = [bundle.export, bundle.material,
+        Math.round(bundle.provenance.thickness * 1000) + " mm",
+        Math.round(density) + " kg/m3" + (fromSkin ? " skin" : "")].join("  ");
+    }
+    // Every card is in place BEFORE any plot is drawn: the cards share the column's height, and a card
     // appended after an earlier one was drawn left that one clipped to
     // its new row with no x axis.
     for (const spec of specs) {
@@ -9162,8 +9114,6 @@ async function buildLiveGraphs() {
     // In the specs' order, so a card that arrives later (a study with
     // columns after one without) stands where it belongs, not last.
     for (const spec of specs) holder.appendChild(liveGraphs.cards.get(spec.id));
-    const notes = document.getElementById("graphs-notes");
-    if (notes) notes.textContent = series.notes.join(" ");
     // The first frame is already cut at the take's clock, so no frame of
     // whole curves flashes before the first tick trims them.
     const cursor = liveCursorAt(series);
@@ -9811,8 +9761,8 @@ function scatterSolve(region, salt, strokeKeepOut) {
       rotation: rules.turn ? random() * Math.PI * 2 : 0 });
     triangles += propTriangles(type);
   }
-  const stopped = placed.length >= SCATTER_MAX_ITEMS ? "the six thousand item cap"
-    : triangles >= SCATTER_BUDGET_TRIANGLES ? "the triangle budget"
+  const stopped = placed.length >= SCATTER_MAX_ITEMS ? "item cap"
+    : triangles >= SCATTER_BUDGET_TRIANGLES ? "triangle budget"
       : null;
   return { items: placed, triangles, refused, stopped, keepOut };
 }
@@ -9839,10 +9789,7 @@ async function runScatter(region, options) {
     settings.stroke ? settings.stroke.keepOut : null);
   if (settings.stroke) settings.stroke.keepOut = solved.keepOut;
   if (!solved.items.length) {
-    document.getElementById("scatter-readout").textContent =
-      settings.stroke
-        ? "no more will fit there: loosen the spacing or widen the brush"
-        : "nothing fitted: loosen the spacing, or draw a bigger area";
+    document.getElementById("scatter-readout").textContent = "No room";
     return;
   }
   // Every placement lands on the open layer (placementLayer), and a scatter
@@ -9919,24 +9866,28 @@ function paintScatter(solved) {
   if (!readout) return;
   const rules = state.scatter;
   document.getElementById("scatter-undo-last").disabled = !state.scatterRuns.length;
+  // The state, never how to use the tool (his ruling of 11 October
+  // 2026): the mix, the layer it lands on, what was placed, and a stop at
+  // a cap in deep red.
   if (!rules.species.length) {
-    readout.textContent = "pick one or more species to scatter";
+    readout.textContent = "";
     return;
   }
   if (!solved) {
-    const names = rules.species.map((s) => {
-      const entry = propEntry(s.type);
-      return (entry ? entry.label || entry.key : s.type) + " x" + s.weight;
-    });
-    readout.textContent = names.join(", ")
-      + "  --  brush it on, or drag an area, onto " + placingOntoName();
+    // the species and their weights are the chips above: the layer alone
+    // (his ruling of 11 October 2026: nothing said twice)
+    readout.textContent = "Layer: " + placingOntoName();
     return;
   }
-  readout.textContent = solved.items.length + " placed onto "
-    + (solved.home ? solved.home.name : placingOntoName()) + ", "
-    + (solved.triangles / 1e6).toFixed(1) + " M triangles"
-    + (solved.stopped ? "  --  stopped at " + solved.stopped
-      + ", loosen the spacing or pick something lighter" : "");
+  readout.textContent = solved.items.length + " placed  \u00b7  Layer: "
+    + (solved.home ? solved.home.name : placingOntoName()) + "  \u00b7  "
+    + (solved.triangles / 1e6).toFixed(1) + " M triangles";
+  if (solved.stopped) {
+    const stop = document.createElement("span");
+    stop.className = "over";
+    stop.textContent = "Stopped: " + solved.stopped;
+    readout.append("  \u00b7  ", stop);
+  }
 }
 
 // The species grid. Only what is worth scattering: the manifest's own
@@ -10011,10 +9962,10 @@ function renderShelfScatter() {
     // across. So the real dimensions go on the tile.
     const size = entry.sizeMetres;
     tile.title = (entry.label || entry.key)
-      + (size ? "  " + size[1].toFixed(2) + " m tall, "
+      + (size ? ", " + size[1].toFixed(2) + " m tall, "
         + Math.max(size[0], size[2]).toFixed(2) + " m across" : "")
-      + (entry.variants > 1 ? "  --  " + entry.variants + " variants" : "")
-      + "  --  " + (entry.triangles || 0).toLocaleString() + " triangles";
+      + (entry.variants > 1 ? ", " + entry.variants + " variants" : "")
+      + ", " + (entry.triangles || 0).toLocaleString() + " triangles";
     tile.classList.toggle("active",
       state.scatter.species.some((s) => s.type === entry.key));
     // SHIFT takes the run from the last one clicked to this one, the way
@@ -10061,7 +10012,7 @@ function renderShelfScatter() {
     const clear = document.createElement("button");
     clear.id = "scatter-deselect";
     clear.textContent = "Deselect all";
-    clear.title = "Take every species out of the mix";
+    clear.title = "Clear the mix";
     clear.addEventListener("click", () => {
       state.scatter.species = [];
       renderShelfScatter();
@@ -10079,14 +10030,14 @@ function renderShelfScatter() {
     weight.min = "1";
     weight.max = "9";
     weight.value = String(species.weight);
-    weight.title = "How often this one appears, against the others";
+    weight.title = "Weight in the mix";
     weight.addEventListener("input", () => {
       species.weight = Math.max(1, Math.min(9, +weight.value || 1));
       paintScatter();
     });
     const drop = document.createElement("button");
     drop.textContent = "✕";
-    drop.title = "Take this one out of the mix";
+    drop.title = "Remove from the mix";
     drop.addEventListener("click", () => {
       state.scatter.species = state.scatter.species
         .filter((s) => s !== species);
@@ -10261,6 +10212,9 @@ function armScatterBrush() {
   if (state.scatterArmed === "brush") { disarmScatterArea(); return; }
   if (!state.scatter.species.length) {
     logStudio("scatter: pick a species first");
+    // The log is off the screen, so the line says it: a short warning
+    // that says what to do.
+    document.getElementById("scatter-readout").textContent = "Pick a species";
     return;
   }
   disarmScatterArea();
@@ -10272,9 +10226,8 @@ function armScatterBrush() {
   // they were, and the first stroke is what shows a hidden one.
   state.scatterBrushLayer = resolvePlacementLayer().layer.id;
   document.getElementById("scatter-brush").classList.add("active");
-  document.getElementById("scatter-readout").textContent =
-    "press and drag to paint onto " + placingOntoName()
-    + "; middle-drag orbits, right-drag pans; Escape to stop";
+  const readout = document.getElementById("scatter-readout");
+  readout.textContent = "Layer: " + placingOntoName();
   // The drawer gets out of the way: a brush needs the floor, and the
   // floor was under the tiles (Param: "the tiles are a bit in the way").
   // Escape or the button brings it back.
@@ -10393,6 +10346,7 @@ function armScatterArea() {
   disarmScatterArea();
   if (!state.scatter.species.length) {
     logStudio("scatter: pick a species first");
+    document.getElementById("scatter-readout").textContent = "Pick a species";
     return;
   }
   state.scatterArmed = "area";
@@ -10403,10 +10357,8 @@ function armScatterArea() {
   scatterDrag = null;
   areaPress = null;
   document.getElementById("scatter-area").classList.add("active");
-  document.getElementById("scatter-readout").textContent =
-    "drag a rectangle to fill it onto " + placingOntoName()
-    + ", click to fill it again, drag another to move on; "
-    + "middle-drag orbits, right-drag pans; Escape to stop";
+  const readout = document.getElementById("scatter-readout");
+  readout.textContent = "Layer: " + placingOntoName();
   closeShelf();
   logStudio("scatter: drag a rectangle on the floor to fill it, click to fill it "
     + "again, drag another to move on; middle-drag orbits, right-drag pans; Escape to stop");
@@ -10761,11 +10713,9 @@ function renderShelfMaterials(cats, grid) {
       tileUrl(row.entry, row.skin ? undefined : GROUND_BASE));
     tile.title = row.entry.label
       + (row.entry.tileMetres
-        ? "  " + Math.round(row.entry.tileMetres[0] * 1000) + " x "
+        ? ", " + Math.round(row.entry.tileMetres[0] * 1000) + " x "
           + Math.round(row.entry.tileMetres[1] * 1000) + " mm"
-        : "")
-      + (row.skin && row.ground ? "  (skin + ground)"
-        : row.skin ? "  (skin)" : "  (ground)");
+        : "");
     tile.addEventListener("click", () => {
       shelfMaterialKey = row.entry.key;
       paintTileSelection(grid, row.entry.key);
@@ -11083,18 +11033,6 @@ function paintAtmosphereTile(key, canvasEl) {
   context.putImageData(image, 0, 0);
 }
 
-// A tile's title carries its numbers, in the dials' own units.
-function atmosphereTileTitle(key) {
-  const preset = ATMOSPHERE_PRESETS[key];
-  if (!preset || key === "none") {
-    return "None: no atmosphere. Sky mode keeps the weather's own haze";
-  }
-  return preset.label + ": " + preset.density + " /km thinning every " + preset.height
-    + " m, ground mist " + preset.mist + " /km over " + preset.mistHeight + " m, from "
-    + preset.start + " m, hiding at most " + preset.maxOpacity + "%, sun glow "
-    + preset.sunGlow + "%";
-}
-
 function buildAtmosphereTiles() {
   const holder = document.getElementById("atmosphere-tiles");
   const select = document.getElementById("atmosphere-preset");
@@ -11103,7 +11041,6 @@ function buildAtmosphereTiles() {
   for (const option of select.options) {
     const tile = previewTile(option.value, option.textContent,
       (canvasEl) => paintAtmosphereTile(option.value, canvasEl), 2);
-    tile.title = atmosphereTileTitle(option.value);
     tile.addEventListener("click", () => {
       if (select.value === option.value) return;
       select.value = option.value;
@@ -11181,9 +11118,7 @@ function applyCut(preserve) {
     && state.bundle.tessellation.cut_refusal;
   if (refusal && refusal !== lastCutRefusal) {
     lastCutRefusal = refusal;
-    showBanner("No skin on this study: " + refusal
-      + " The net, the formwork and the machine are drawn; there are no "
-      + "voussoirs to draw.", "error");
+    showBanner("No skin: " + refusal, "error");
     logStudio("no cut: " + refusal);
   }
   // The cut always follows the LOADED bundle's own size, never the
@@ -11210,19 +11145,10 @@ function applyCut(preserve) {
   }
   // bundle.py is explicit that document["size"] is the REQUESTED size and
   // that an authored cut ignores it (its own target_size is None). The
-  // number above is therefore what the control asked for, not what the cut
-  // used, and calling it a "target" when nothing targeted it is the same
-  // claim the Data panel already refuses to make. The units span, which
-  // the slider's live input handler never touches, carries the correction
-  // so a mid-drag label stays true rather than reverting to "mm target".
-  // The correction is two words, not a sentence. The long form ran to 466
-  // pixels inside a 300 pixel panel, printed straight through the words
-  // "Piece size" and then off the right edge -- found in the first
-  // screenshot of the studio ever taken here, 2026-09-04. The HUD carries
-  // the explanation in full, which is where a sentence belongs.
-  document.getElementById("size-units").textContent =
-    state.bundle.tessellation.source === "imported"
-      ? " mm requested" : " mm target";
+  // units span is the unit and nothing more (his ruling of 11 October
+  // 2026): the HUD and the Data panel's size rows say "authored" for such
+  // a cut, so no qualifier here has to.
+  document.getElementById("size-units").textContent = " mm";
   // Same defence for the pattern (Task 9, the half of C1 Task 8 left open):
   // an authored cut's own pattern name (tess["pattern"] in staging.py, not
   // the requested one) is only adopted when it is one the server actually
@@ -11282,10 +11208,6 @@ const LAYERS = [
   ["thrust", "Support thrust"],
 ];
 
-const THRUST_NOTE = "The push each springing gives the ground, the reaction "
-  + "reversed: green stands near vertical, amber leans, red past 35 degrees is "
-  + "a push the abutment or a tie must hold.";
-
 // The lenses that PAINT the same surface: two heatmaps recolouring the
 // shell and the force-coloured wires. Layered together they read as mud
 // (Param: "they overlap eachother, they can only be viewed individually"),
@@ -11297,17 +11219,16 @@ const EXCLUSIVE_LAYERS = ["stress", "deflection", "forces"];
 const LAYER_SLIDERS = {
   forces: { key: "forcesScale", label: "Size",
             min: 0, max: 3, step: 0.1,
-            title: "How much a wire thickens with its force; 0 keeps "
-              + "them uniform and lets the colour do the talking" },
+            title: "Wire thickness by force" },
   loads: { key: "loadsScale", label: "Scale",
            min: 0.2, max: 4, step: 0.1,
-           title: "Arrow length multiplier" },
+           title: "Arrow length" },
   reactions: { key: "reactionsScale", label: "Scale",
                min: 0.2, max: 4, step: 0.1,
-               title: "Arrow length multiplier" },
+               title: "Arrow length" },
   thrust: { key: "thrustScale", label: "Scale",
             min: 0.2, max: 4, step: 0.1,
-            title: "Arrow length multiplier" },
+            title: "Arrow length" },
 };
 
 function finalStage() {
@@ -11354,22 +11275,6 @@ function craVerdict() {
   return staging.stages[staging.stages.length - 1].cra || null;
 }
 
-// Keyed by material, not by the numeric mu value: stone's friction is 0.6,
-// the same number staging.py gives concrete, so a value-keyed lookup would
-// attribute it to EN 1992-1-1 clause 6.2.5, a smooth precast concrete
-// joint, when it was deliberately sourced as the middle of the 0.5 to 0.7
-// span the dry stone rigid block literature uses. See staging.py's own
-// FRICTION comment, which this mirrors.
-const FRICTION_PROVENANCE = {
-  "concrete": "mu 0.60: EN 1992-1-1 clause 6.2.5, smooth precast concrete joint",
-  "concrete-c50": "mu 0.60: EN 1992-1-1 clause 6.2.5, smooth precast concrete joint",
-  "concrete-sprayed": "mu 0.60: EN 1992-1-1 clause 6.2.5, smooth precast concrete joint",
-  "timber": "mu 0.40: literature value for dry timber on timber contact (Eurocode 5 gives none)",
-  "brick": "mu 0.60: EN 1992-1-1 clause 6.2.5, the same value for a mortared brick bed joint",
-  "tile": "mu 0.60: EN 1992-1-1 clause 6.2.5, the same value for a mortared tile bed joint",
-  "stone": "mu 0.60: middle of the 0.5 to 0.7 span the dry stone rigid block literature uses, quoted no more precisely than the source supports",
-};
-
 function layerAvailability(name) {
   const stage = finalStage();
   const v = state.bundle && state.bundle.verification;
@@ -11378,7 +11283,7 @@ function layerAvailability(name) {
     // exactly what the reactions layer needs.
     return state.bundle && Object.keys(state.bundle.reactions).length
       ? { on: true }
-      : { on: false, why: "this contract shipped no reaction vectors" };
+      : { on: false, why: "No reactions" };
   }
   if (name === "stress" || name === "deflection") {
     if (stage) return { on: true };
@@ -11393,25 +11298,25 @@ function layerAvailability(name) {
     if (staged) {
       // Two reasons a finished run still has no per-node field to colour
       // with, and only two: either the material has no ananke_fea preset
-      // (stagingUnavailable, updateHud's "not available for this
-      // material") or the solver ran and did not converge (updateHud's
-      // "no equilibrium found"). Neither is "no staging exists".
+      // (stagingUnavailable, updateHud's "no solver") or the solver ran
+      // and did not converge (updateHud's "no equilibrium"). Neither is a
+      // run that never happened.
       if (stagingUnavailable()) {
         return v
-          ? { on: true, why: "peaks only: struck-now fields are not available for this material" }
-          : { on: false, why: "not available for this material, and no verification data" };
+          ? { on: true, why: "Peaks only: no solver" }
+          : { on: false, why: "No solver, unverified" };
       }
       return v
-        ? { on: true, why: "peaks only: no equilibrium found on the last staged run" }
-        : { on: false, why: "no equilibrium found on the last staged run, and no verification data" };
+        ? { on: true, why: "Peaks only: no equilibrium" }
+        : { on: false, why: "No equilibrium, unverified" };
     }
-    if (v) return { on: true, why: "peaks only until a staged run exists" };
-    return { on: false, why: "no staging and no verification data" };
+    if (v) return { on: true, why: "Peaks only: not staged" };
+    return { on: false, why: "Not staged, unverified" };
   }
   if (name === "reactions") {
     return state.bundle && Object.keys(state.bundle.reactions).length
       ? { on: true }
-      : { on: false, why: "this contract shipped no reaction vectors" };
+      : { on: false, why: "No reactions" };
   }
   if (name === "forces") {
     const bundle = state.bundle;
@@ -11419,12 +11324,12 @@ function layerAvailability(name) {
     const edgeCount = bundle ? bundle.analysis_mesh.edges.length : 0;
     return forceCount && forceCount === edgeCount
       ? { on: true }
-      : { on: false, why: "this contract shipped no member forces" };
+      : { on: false, why: "No member forces" };
   }
   return { on: true };
 }
 
-function buildLensButtons(holder, table, notes, alwaysShown) {
+function buildLensButtons(holder, table) {
   holder.innerHTML = "";
   for (const [name, label] of table) {
     const availability = layerAvailability(name);
@@ -11433,17 +11338,9 @@ function buildLensButtons(holder, table, notes, alwaysShown) {
     button.className = "layer-btn" + (state.layers[name] ? " active" : "");
     button.textContent = label;
     button.disabled = !availability.on;
-    button.title = availability.why || (state.layers[name] ? "On; press to put it down" : "Raise this lens");
+    button.title = availability.why || (state.layers[name] ? "Hide this lens" : "Show this lens");
     button.addEventListener("click", () => setLayer(name, !state.layers[name]));
     holder.appendChild(button);
-    // A lens explains itself where the question is asked, not in a tooltip:
-    // the thrust note always.
-    if (notes[name] && (alwaysShown || state.layers[name])) {
-      const note = document.createElement("div");
-      note.className = "layer-note";
-      note.textContent = notes[name];
-      holder.appendChild(note);
-    }
     if (name === "deflection") {
       const exaggerationRow = document.getElementById("exaggeration-row");
       holder.appendChild(exaggerationRow);
@@ -11484,7 +11381,7 @@ function buildLayerToggles() {
   const exaggerationRow = document.getElementById("exaggeration-row");
   document.getElementById("analysis-section").appendChild(exaggerationRow);
   exaggerationRow.classList.add("hidden");
-  buildLensButtons(holder, LAYERS, { thrust: THRUST_NOTE }, true);
+  buildLensButtons(holder, LAYERS);
 }
 
 function setLayer(name, on) {
@@ -11635,7 +11532,7 @@ function paintForceLegend(magnitude) {
   legend.classList.remove("bands", "ramp");
   legend.classList.remove("deflection");
   document.getElementById("legend-title").textContent =
-    "member force, kN (extremes clamped)";
+    "member force, kN";
   document.getElementById("legend-min").textContent = (-magnitude / 1e3).toFixed(1);
   document.getElementById("legend-zero").textContent = "0";
   document.getElementById("legend-max").textContent = (magnitude / 1e3).toFixed(1);
@@ -12065,38 +11962,38 @@ function updateHud() {
   // loading bundle) and the HUD must never claim a thickness the shell
   // isn't built at.
   const provenanceThickness = state.bundle.provenance.thickness;
-  // Same correction the size control carries and the Data panel already
-  // makes in as many words: bundle.size is the size that was REQUESTED,
-  // and an authored cut ignores it. The HUD is what a user reads during
-  // playback, so it is the last place that may quote a target the cut on
-  // screen never had.
-  const sizeCaption = state.bundle.tessellation.source === "imported"
-    ? "authored cut, the size control is not used"
-    : Math.round(state.bundle.size * 1000) + " mm target";
-  const lines = [state.bundle.export + "  (" + state.bundle.material + ", " +
-    sizeCaption + ", " +
-    state.bundle.pieces.length + " pieces in " +
-    state.bundle.tessellation.courses + " courses)"];
-  const thicknessMm = Math.round(provenanceThickness * 1000);
-  let thicknessLine = "shell thickness " + thicknessMm + " mm";
+  // bundle.size is the size that was REQUESTED, and an authored cut ignores
+  // it. The HUD is what a user reads during playback, so it is the last
+  // place that may quote a size the cut on screen never had.
+  // A name and a value a row, red for bad (his ruling of 11 October 2026).
+  const rows = [
+    ["study", state.bundle.export],
+    ["material", state.bundle.material],
+    ["size", state.bundle.tessellation.source === "imported"
+      ? "authored" : Math.round(state.bundle.size * 1000) + " mm"],
+    ["pieces", String(state.bundle.pieces.length)],
+    ["courses", String(state.bundle.tessellation.courses)],
+    ["thickness", Math.round(provenanceThickness * 1000) + " mm"],
+  ];
+  // A verification run made at another thickness: the figures below are
+  // not this shell's, which is bad.
   if (v && v.thickness && Math.abs(v.thickness - provenanceThickness) > 1e-9) {
-    const verifiedMm = Math.round(v.thickness * 1000);
-    thicknessLine += " (verified run used " + verifiedMm + " mm)";
+    rows.push(["verified at", Math.round(v.thickness * 1000) + " mm", true]);
   }
-  lines.push(thicknessLine);
+  // The analysis used a uniform thickness, so a taper is a picture only: a
+  // choice he set, not a fault (found by the final review of the sweep).
   if (state.taper > 0) {
-    lines.push("crown taper " + Math.round(state.taper * 100) +
-      "% (drawing only: the analysis used a uniform thickness)");
+    rows.push(["taper", Math.round(state.taper * 100) + "%, drawing only"]);
   }
   if (v && v.stress) {
-    lines.push("peak compression " + (v.stress.peak_compression / 1e6).toFixed(2) + " MPa, utilisation " + (100 * v.stress.utilisation).toFixed(1) + "%");
-    let deflectionLine = "peak deflection " + (v.displacement.peak_magnitude * 1000).toFixed(2) + " mm";
-    if (v.deflection && v.deflection.span_over_deflection) {
-      deflectionLine += " (1 / " + Math.round(v.deflection.span_over_deflection) + ")";
-    }
-    lines.push(deflectionLine);
+    rows.push(["compression", (v.stress.peak_compression / 1e6).toFixed(2) + " MPa"]);
+    rows.push(["utilisation", (100 * v.stress.utilisation).toFixed(1) + "%",
+      v.stress.utilisation > 1]);
+    rows.push(["deflection", (v.displacement.peak_magnitude * 1000).toFixed(2) + " mm"
+      + (v.deflection && v.deflection.span_over_deflection
+        ? ", L/" + Math.round(v.deflection.span_over_deflection) : "")]);
   } else {
-    lines.push("no verification run embedded yet");
+    rows.push(["verification", "none"]);
   }
   const staging = state.bundle.staging;
   if (staging && staging.stages && staging.stages.length) {
@@ -12105,54 +12002,42 @@ function updateHud() {
     const build = Math.max(0, state.timeline.t - openingSeconds());
     const index = currentStageIndex(build);
     const stage = staging.stages[index === null ? staging.stages.length - 1 : index];
-    lines.push("stage " + stage.stage + " of " + staging.stages.length);
-    lines.push("formwork carries " + (stage.formwork_carries_newtons / 1000).toFixed(1) + " kN");
+    rows.push(["stage", stage.stage + " of " + staging.stages.length]);
+    rows.push(["formwork", (stage.formwork_carries_newtons / 1000).toFixed(1) + " kN"]);
     const struck = stage.struck_now;
-    // Three readings, not two: a real convergence failure ("no equilibrium
-    // found") must never be the label for a material nobody ever tried to
-    // solve. staging.py's FEA_MATERIALS materials (concrete, timber, ...)
-    // are the only ones that reach a real runner call at all; brick, tile
-    // and stone come back with struck.status "unavailable" instead, and
-    // that has to read as "not available for this material", not failure.
-    let struckLine;
+    // Three readings, not two: a real convergence failure ("no
+    // equilibrium", in red) must never be the label for a material nobody
+    // ever tried to solve. staging.py's FEA_MATERIALS materials (concrete,
+    // timber, ...) are the only ones that reach a real runner call at all;
+    // brick, tile and stone come back with struck.status "unavailable"
+    // instead, and that has to read as "no solver", not failure.
     if (struck && struck.converged) {
-      struckLine = "struck now: stands (peak tension " + (struck.peak_tension / 1e6).toFixed(2) +
-        " MPa, peak compression " + (struck.peak_compression / 1e6).toFixed(2) + " MPa)";
+      rows.push(["struck", "stands"]);
+      rows.push(["struck tension", (struck.peak_tension / 1e6).toFixed(2) + " MPa"]);
+      rows.push(["struck compression", (struck.peak_compression / 1e6).toFixed(2) + " MPa"]);
     } else if (struck && struck.status === "unavailable") {
-      struckLine = "struck now: not available for this material -- " + struck.message;
+      rows.push(["struck", "no solver"]);
     } else {
-      struckLine = "struck now: no equilibrium found -- " + (struck && struck.message ? struck.message : "no solve result");
+      rows.push(["struck", "no equilibrium", true]);
     }
-    lines.push(struckLine);
   }
-  hud.textContent = lines.join("\n");
+  hud.replaceChildren(nameValueTable(rows));
 }
 
-// The event log is UI chrome, not scene state: the purity contract below
-// covers the scene functions (applyTimeline, applySceneAtTime and their
-// kin), which must stay pure in t so a recording is deterministic. Reading
-// the wall clock here is unrelated to that; logStudio only timestamps a
-// line for the reader, it never drives anything drawn in the scene.
-const eventLog = { lines: [], timer: null };
-
+// The studio's log is not scene state: the purity contract below covers the
+// scene functions (applyTimeline, applySceneAtTime and their kin), which must
+// stay pure in t so a recording is deterministic. Reading the wall clock here
+// is unrelated to that; logStudio only timestamps a line, it never drives
+// anything drawn in the scene. The lines are kept off the screen (his ruling
+// of 11 October 2026: no descriptive text over the view): each goes to the
+// browser's console and travels with any problem report.
 function logStudio(message) {
   const stamp = new Date().toLocaleTimeString("en-GB", { hour12: false });
-  // The same line travels with any problem report: what the user did just
-  // before is usually the half of the story the error message leaves out.
+  // what the user did just before is usually the half of the story the error
+  // message leaves out
   recentLog.push(stamp + "  " + message);
   while (recentLog.length > 40) recentLog.shift();
-  eventLog.lines.push(stamp + "  " + message);
-  while (eventLog.lines.length > 7) eventLog.lines.shift();
-  const element = document.getElementById("event-log");
-  element.textContent = "";
-  for (const line of eventLog.lines) {
-    const row = document.createElement("div");
-    row.textContent = line;
-    element.appendChild(row);
-  }
-  element.classList.remove("faded");
-  if (eventLog.timer) clearTimeout(eventLog.timer);
-  eventLog.timer = setTimeout(() => element.classList.add("faded"), 8000);
+  console.info(stamp + "  " + message);
 }
 
 const bannerState = { timer: null, remaining: 0, since: 0, level: "info" };
@@ -12209,6 +12094,31 @@ function capPointCount() {
     (total, piece) => total + piece.mid.length, 0);
 }
 
+// A name and its value a row, and a value that is bad in deep red (his
+// ruling of 11 October 2026: "just showing the data with red for bad, and
+// a basic layout for information"). Each row is [name, value, bad].
+function nameValueTable(rows) {
+  const table = document.createElement("table");
+  table.className = "name-value";
+  for (const [name, value, bad] of rows) {
+    const row = document.createElement("tr");
+    const nameCell = document.createElement("td");
+    nameCell.textContent = name;
+    const valueCell = document.createElement("td");
+    if (bad) {
+      const mark = document.createElement("span");
+      mark.className = "over";
+      mark.textContent = value;
+      valueCell.appendChild(mark);
+    } else {
+      valueCell.textContent = value;
+    }
+    row.append(nameCell, valueCell);
+    table.appendChild(row);
+  }
+  return table;
+}
+
 function renderDataPanel(v) {
   const content = document.getElementById("data-content");
   content.innerHTML = "";
@@ -12225,201 +12135,133 @@ function renderDataPanel(v) {
     const cutHeading = document.createElement("h3");
     cutHeading.textContent = "Cut";
     content.appendChild(cutHeading);
+    const rows = [
+      ["pattern", tess.pattern],
+      ["source", tess.source === "imported" ? "imported" : "generated"],
+      // An authored cut has no target size of its own: it ignores the
+      // size control entirely.
+      ["size", tess.source === "imported"
+        ? "authored" : Math.round(tess.target_size * 1000) + " mm"],
+      ["pieces", String(tess.cells)],
+      // An authored cut whose cells carry no course lands every one of
+      // them in course 0 (tessellation.from_document), so the vault
+      // collapses to one course and the drops, taperAt and the stage
+      // mapping all follow that collapse: an inferred count is bad.
+      ["courses", tess.courses + (tess.courses_inferred ? ", inferred" : ""),
+        !!tess.courses_inferred],
+    ];
 
-    const patternLine = document.createElement("p");
-    patternLine.textContent = tess.pattern + " ("
-      + (tess.source === "imported" ? "imported from Grasshopper" : "generated") + ")";
-    content.appendChild(patternLine);
-
-    const sizeLine = document.createElement("p");
-    sizeLine.textContent = tess.source === "imported"
-      ? "no target size of its own: an authored cut ignores the size control entirely"
-      : "target size " + tess.target_size + " m";
-    content.appendChild(sizeLine);
-
-    const countLine = document.createElement("p");
-    countLine.textContent = tess.cells + " pieces, " + tess.courses + " courses";
-    content.appendChild(countLine);
-
-    // An authored cut whose cells carry no course lands every one of them
-    // in course 0 (tessellation.from_document), so the vault collapses to
-    // a single course and the drop sequence, taperAt and the stage mapping
-    // all follow that collapse. The flag saying so shipped in the bundle
-    // and was never rendered anywhere a user could see it.
-    if (tess.courses_inferred) {
-      const inferredLine = document.createElement("p");
-      inferredLine.textContent = "no cell in this authored cut carried a "
-        + "course, so every one was placed in course 0: the courses above "
-        + "are inferred, not authored, and the drop sequence, the crown "
-        + "taper and the stage mapping all read this vault as one course.";
-      content.appendChild(inferredLine);
-    }
-
-    // The spec asks for boundary sub-edges per piece, before and after, in
-    // BENCH.md and in the Data panel where the user can see them. The
-    // bundle has carried both since pieces.py started reporting them; the
-    // panel is the only place a user meets a specific loaded cut, and the
-    // rim outlier is exactly the caveat it exists for.
+    // Boundary sub-edges per piece, which the spec asks to see in the
+    // panel: the bundle has carried both spreads since pieces.py started
+    // reporting them, and older caches carry neither.
     const fpp = tess.facets_per_piece;
     if (fpp) {
-      const facetLine = document.createElement("p");
-      facetLine.textContent = "facets per piece: min " + fpp.min + " / median "
-        + fpp.median + " / max " + fpp.max
+      rows.push(["facets per piece", "min " + fpp.min + ", median " + fpp.median
+        + ", max " + fpp.max
         + (fpp.max_course === undefined || fpp.max_course === null
-          ? "" : " (the max belongs to course " + fpp.max_course + ")")
-        + ". This is the number the retired ring and wedge binning's 30 to "
-        + "86 boundary edges per cell compares against: a four sided "
-        + "voussoir has four.";
-      content.appendChild(facetLine);
+          ? "" : " (course " + fpp.max_course + ")")]);
     }
     const bpp = tess.boundary_points_per_piece;
     if (bpp) {
-      const boundaryLine = document.createElement("p");
-      boundaryLine.textContent = "boundary points per piece: min " + bpp.min
-        + " / median " + bpp.median + " / max " + bpp.max
-        + ". These count every subdivided boundary point rather than the "
-        + "joints themselves, so read facets per piece for the headline.";
-      content.appendChild(boundaryLine);
+      rows.push(["boundary points per piece", "min " + bpp.min
+        + ", median " + bpp.median + ", max " + bpp.max]);
     }
-
-    const chordLine = document.createElement("p");
-    chordLine.textContent = "cap chord deviation " + tess.chord_mm.toFixed(3)
-      + " mm against a 5.0 mm target, " + tess.rounds + " subdivision round(s), "
-      + "limited by " + tess.limit;
-    content.appendChild(chordLine);
+    rows.push(["chord deviation", tess.chord_mm.toFixed(3) + " / 5.0 mm",
+      tess.chord_mm > 5.0]);
+    rows.push(["subdivision rounds", String(tess.rounds)]);
+    rows.push(["limited by", String(tess.limit)]);
 
     // The single worst-corner number badly misrepresents the cut, so the
     // whole distribution is shown, not only tess.corner_residual (which
-    // stays the worst corner alone, equal to stats.max below): the median
-    // is what describes a typical joint, and the max describes only its
-    // own worst corner, which the studio names by course rather than
-    // leaving the reader to assume it is typical.
+    // stays the worst corner alone, equal to stats.max below).
     // Guarded, not assumed. corner_residual_stats landed late in the
     // cutting wave and REQUIRED_BUNDLE_KEYS did not name it until this
     // fix, so every machine that ran this branch mid-wave has a cached
     // bundle without it. Dereferencing stats.count on one of those threw
     // out of the Data button's click handler AFTER content.innerHTML = ""
     // and BEFORE the panel was unhidden, so the button read as doing
-    // nothing at all. A missing sub-field degrades to a line saying so.
+    // nothing at all. A missing sub-field degrades to a row saying so.
     const stats = tess.corner_residual_stats;
     if (!stats) {
-      const residualMissing = document.createElement("p");
-      residualMissing.textContent = "corner normal residual: not measured in "
-        + "this bundle, which was cached before the distribution was "
-        + "reported. Delete the cached bundle, or change any control, to "
-        + "re-cut.";
-      content.appendChild(residualMissing);
+      rows.push(["corner residual", "not measured"]);
     } else {
-      const residualWhat = document.createElement("p");
-      residualWhat.textContent = "corner normal residual, over " + stats.count
-        + " corners: the sine of the angle between a corner's one stored "
-        + "normal and the plane of the facet that does not own it, since a "
-        + "corner belongs to two joints and one normal cannot lie in both";
-      content.appendChild(residualWhat);
-      const residualDistribution = document.createElement("p");
       // In degrees as well as the bare sine, the way docs/BENCH.md quotes
-      // it: a sine of 0.33 is not a number a reader converts in their head,
-      // and the whole point of the distribution is that it can be read.
-      residualDistribution.textContent = "median " + stats.median.toFixed(4)
-        + " (" + residualDegrees(stats.median).toFixed(2) + " degrees)"
-        + ", mean " + stats.mean.toFixed(4)
-        + " (" + residualDegrees(stats.mean).toFixed(2) + " degrees)"
-        + ", p99 " + stats.p99.toFixed(4)
-        + " (" + residualDegrees(stats.p99).toFixed(2) + " degrees)"
-        + ", max " + stats.max.toFixed(4)
-        + " (" + residualDegrees(stats.max).toFixed(2) + " degrees, its own "
-        + "worst corner, in course(s) " + stats.worst_corner_courses.join(", ")
-        + "). The median describes the cut; the max describes only its worst "
-        + "corner, which clusters with the rest of the tail in the rim course, "
-        + "where the cut follows the mesh's own irregular boundary rather "
-        + "than a straight chord.";
-      content.appendChild(residualDistribution);
-      const residualCounts = document.createElement("p");
-      residualCounts.textContent = "corners over threshold: " + stats.over.map(
-        function (entry) {
-          return entry.count + " of " + stats.count + " over " + entry.threshold
-            + " (" + residualDegrees(entry.threshold).toFixed(1) + " degrees)";
-        }
-      ).join(", ");
-      content.appendChild(residualCounts);
+      // it: a sine of 0.33 is not a number a reader converts in their head.
+      const reading = (sine) => sine.toFixed(4) + ", "
+        + residualDegrees(sine).toFixed(2) + "\u00b0";
+      rows.push(["corners", String(stats.count)]);
+      rows.push(["residual median", reading(stats.median)]);
+      rows.push(["residual mean", reading(stats.mean)]);
+      rows.push(["residual p99", reading(stats.p99)]);
+      rows.push(["residual max", reading(stats.max)]);
+      rows.push(["worst corner, course", stats.worst_corner_courses.join(", ")]);
+      // No limit is set for these, so none reads red.
+      for (const entry of stats.over) {
+        rows.push(["over " + entry.threshold + " ("
+          + residualDegrees(entry.threshold).toFixed(1) + "\u00b0)",
+          entry.count + " of " + stats.count]);
+      }
     }
 
     // With denominators and, for the clamp, with the magnitude. The same
     // 137 clamped points are either rounding noise or ten times the 5 mm
     // chord target depending on how far they moved, which is why the
-    // report carries clamped_max_m and clamped_median_m at all.
+    // report carries clamped_max_m and clamped_median_m at all; past that
+    // target a clamp is bad.
     const capPoints = capPointCount();
-    const clampedLine = document.createElement("p");
-    let clampedText = tess.clamped_points + " of " + capPoints
-      + " cap point(s) clamped to the nearest render mesh face";
+    rows.push(["cap points clamped", tess.clamped_points + " of " + capPoints]);
     if (typeof tess.clamped_max_m === "number"
         && typeof tess.clamped_median_m === "number") {
-      clampedText += ", reaching " + (tess.clamped_max_m * 1000).toFixed(1)
-        + " mm at the worst and " + (tess.clamped_median_m * 1000).toFixed(1)
-        + " mm at the median";
+      // no limit of their own to be red against (found by the final review
+      // of the sweep: 5 mm was the chord target, borrowed)
+      rows.push(["clamped worst", (tess.clamped_max_m * 1000).toFixed(1) + " mm"]);
+      rows.push(["clamped median", (tess.clamped_median_m * 1000).toFixed(1) + " mm"]);
     } else {
-      clampedText += " (by how far: not measured in this cached bundle)";
+      rows.push(["clamped by", "not measured"]);
     }
-    clampedText += "; " + tess.missing_planes
-      + " boundary facet(s) with no joint plane to project onto";
-    clampedLine.textContent = clampedText;
-    content.appendChild(clampedLine);
+    rows.push(["facets with no joint plane", String(tess.missing_planes),
+      tess.missing_planes > 0]);
 
+    // Every one of these is a hole, a seam or a sliver in the cut, so any
+    // count above nought is bad.
     const coverage = tess.report;
     const analysisFaces = state.bundle.analysis_mesh.faces.length;
-    const coverageLine = document.createElement("p");
-    coverageLine.textContent = "coverage: " + coverage.orphan_faces.length
-      + " of " + analysisFaces + " analysis face(s) orphaned, "
-      + coverage.double_faces.length + " doubled; of " + tess.cells
-      + " cell(s), " + coverage.open_facets.length + " open facet(s), "
-      + coverage.slivers.length + " sliver(s), "
-      + coverage.coverage_holes.length + " coverage hole(s), "
-      + coverage.broken_boundary.length + " broken boundary entrie(s)";
-    content.appendChild(coverageLine);
+    rows.push(["orphaned faces", coverage.orphan_faces.length + " of " + analysisFaces,
+      coverage.orphan_faces.length > 0]);
+    for (const [name, list] of [
+      ["doubled faces", coverage.double_faces],
+      ["open facets", coverage.open_facets],
+      ["slivers", coverage.slivers],
+      ["coverage holes", coverage.coverage_holes],
+      ["broken boundary", coverage.broken_boundary],
+    ]) {
+      rows.push([name, String(list.length), list.length > 0]);
+    }
 
     // A folded cell is named and nowhere excluded: it is still cut, still
     // capped and still drawn, with one lobe of its cap inside out. It
     // enters none of the counts above, so naming it here is the only way
     // anyone learns which piece on screen is the bad one.
     const folded = coverage.folded;
-    const foldedLine = document.createElement("p");
-    foldedLine.textContent = !folded
-      ? "folded cells: not measured in this cached bundle"
-      : folded.length
-        ? "folded: " + folded.length + " cell(s) whose welded outline "
-          + "crosses itself -- " + folded.join(", ") + ". Each is still cut, "
-          + "still capped and still drawn, with one lobe of its cap inside "
-          + "out, and enters none of the coverage counts above."
-        : "folded: no cell's welded outline crosses itself";
-    content.appendChild(foldedLine);
+    rows.push(["folded cells", !folded ? "not measured"
+      : folded.length ? folded.length + ": " + folded.join(", ") : "0",
+      !!(folded && folded.length)]);
 
     if (tess.backward_turn_degrees !== null && tess.backward_turn_degrees !== undefined) {
-      const wobbleLine = document.createElement("p");
-      wobbleLine.textContent = tess.backward_steps + " of the plan's own rim step(s) "
-        + "turn backward, " + tess.backward_turn_degrees.toFixed(3)
-        + " degrees of backward turn total";
-      content.appendChild(wobbleLine);
+      rows.push(["backward rim steps", tess.backward_steps + ", "
+        + tess.backward_turn_degrees.toFixed(3) + "\u00b0"]);
     }
 
+    // An imported cut quotes its own provenance verbatim, a key a row, and
+    // the measured z offset in place of a target size.
     if (tess.source === "imported") {
-      const provenanceLine = document.createElement("p");
-      provenanceLine.textContent = "provenance: " + JSON.stringify(tess.provenance || {});
-      content.appendChild(provenanceLine);
-      const zLine = document.createElement("p");
-      zLine.textContent = tess.z_offset_max === null || tess.z_offset_max === undefined
-        ? "measured z offset against the thrust surface: unmeasured"
-        : "measured z offset against the thrust surface: "
-          + (tess.z_offset_max * 1000).toFixed(1) + " mm";
-      content.appendChild(zLine);
+      for (const [key, value] of Object.entries(tess.provenance || {})) {
+        rows.push([key, typeof value === "string" ? value : JSON.stringify(value)]);
+      }
+      rows.push(["z offset", tess.z_offset_max === null || tess.z_offset_max === undefined
+        ? "unmeasured" : (tess.z_offset_max * 1000).toFixed(1) + " mm"]);
     }
-
-    const interpolationLine = document.createElement("p");
-    interpolationLine.textContent = "a piece's own points are not render mesh "
-      + "vertices, so every field value shown on a casting is sampled by "
-      + "interpolation through the barycentric weights the cut recorded for "
-      + "it, not read off a single mesh vertex directly: a heatmap value at "
-      + "a point is an interpolated reading, not a lookup.";
-    content.appendChild(interpolationLine);
+    content.appendChild(nameValueTable(rows));
   }
 
   // The CRA verdict no longer pops up: it is gone from the badge and the
@@ -12435,64 +12277,37 @@ function renderDataPanel(v) {
     const craHeading = document.createElement("h3");
     craHeading.textContent = "CRA rigid-block verdict";
     content.appendChild(craHeading);
-    const line = document.createElement("p");
-    line.textContent = verdict.stands === true
-      ? "stands as rigid blocks under friction, self-weight only"
-      : verdict.stands === false
-        ? "does not stand as rigid blocks (" + verdict.status + ")"
-        : "not run: " + (verdict.message || verdict.status);
-    content.appendChild(line);
-    const mu = document.createElement("p");
-    mu.textContent = FRICTION_PROVENANCE[state.bundle.material]
-      || ("mu " + verdict.mu);
-    content.appendChild(mu);
-    const counts = document.createElement("p");
-    counts.textContent = verdict.blocks + " blocks, "
-      + verdict.interfaces + " contact interfaces";
-    content.appendChild(counts);
-    const faceted = document.createElement("p");
-    faceted.textContent = "the verdict is computed on a faceted model, not "
-      + "on the castings drawn here. The analysis model replaces each cell "
-      + "with a single voussoir whose faces are planar, one per neighbour, "
-      + "so its surface cuts the chord wherever the vault curves: it sits "
-      + "inside the drawn surface, carries less volume than the cell it "
-      + "stands for, and both errors grow as the segmentation coarsens. "
-      + "Position is the larger of the two, and on this vault it has been "
-      + "measured in metres against a shell half thickness of 0.1 m, so "
-      + "the solver weighs blocks that do not sit where the vault is "
-      + "shown. Neither error is quoted as a figure against what is on "
-      + "screen, and the reason is that the drawing has since moved: a "
-      + "casting here is projected onto its own flat joint planes, shrunk "
-      + "by the joint gap and thinned by the crown taper, all in the same "
-      + "dimension. The measurements in docs/BENCH.md were taken against "
-      + "the mesh-following block model this viewer no longer draws, and "
-      + "are a distance between two analysis models rather than a "
-      + "distance to these pieces";
-    content.appendChild(faceted);
+    const rows = [
+      // Not standing is bad; a run not made is no result, not a fault
+      // (found by the final review of the sweep).
+      ["verdict", verdict.stands === true
+        ? "stands"
+        : verdict.stands === false
+          ? "does not stand (" + verdict.status + ")"
+          : "not run: " + (verdict.message || verdict.status),
+        verdict.stands === false],
+      ["mu", typeof verdict.mu === "number" ? verdict.mu.toFixed(2) : String(verdict.mu)],
+      ["blocks", String(verdict.blocks)],
+      ["interfaces", String(verdict.interfaces)],
+    ];
     const skipped = state.bundle.staging && state.bundle.staging.cra_skipped;
     if (skipped && skipped.length) {
-      const missing = document.createElement("p");
-      missing.textContent = skipped.length + " piece(s) could not be modelled "
-        + "as a voussoir and are absent from the rigid-block model, so this "
-        + "verdict describes less than the whole vault: "
-        // entry.ring/entry.wedge are voussoirs.py's own field names,
-        // unchanged there by Task 7's ruling: ring is the course index and
-        // wedge is the piece's position within it, not a ring/wedge polar
-        // bin. The sentence a user reads says so honestly without asking
-        // voussoirs.py to rename anything.
-        + skipped.map(function (entry) {
-            return "course " + entry.ring + " piece " + entry.wedge
-              + " (" + entry.reason + ")";
-          }).join("; ");
-      content.appendChild(missing);
+      // A verdict on less than the whole vault. entry.ring/entry.wedge are
+      // voussoirs.py's own field names, unchanged there by Task 7's
+      // ruling: ring is the course index and wedge is the piece's position
+      // within it, not a ring/wedge polar bin, so the row names them as a
+      // course and a piece without asking voussoirs.py to rename anything.
+      rows.push(["skipped", skipped.length + ": " + skipped.map(function (entry) {
+        return "course " + entry.ring + " piece " + entry.wedge
+          + " (" + entry.reason + ")";
+      }).join("; "), true]);
     }
+    content.appendChild(nameValueTable(rows));
   }
 
   // Verification content: early-out if no verification file.
   if (!v) {
-    const p = document.createElement("p");
-    p.textContent = "no verification run embedded yet";
-    content.appendChild(p);
+    content.appendChild(nameValueTable([["verification", "none"]]));
     return;
   }
 
@@ -12500,31 +12315,28 @@ function renderDataPanel(v) {
   heading.textContent = (v.export || "") + " -- " + (v.material || "");
   content.appendChild(heading);
 
-  if (v.material_assumptions) {
-    const assumptions = document.createElement("p");
-    assumptions.textContent = v.material_assumptions;
-    content.appendChild(assumptions);
-  }
-
+  const rows = [];
   const cross = v.cross_check;
   if (cross) {
-    const reactions = document.createElement("p");
-    reactions.textContent = "reactions agree: " + (cross.reactions_agree ? "yes" : "no");
-    content.appendChild(reactions);
-    const strict = document.createElement("p");
-    strict.textContent = "strict per-member agreement: " + (cross.strict_agrees ? "yes" : "no");
-    content.appendChild(strict);
-    if (cross.member_note) {
-      const note = document.createElement("p");
-      note.textContent = cross.member_note;
-      content.appendChild(note);
-    }
+    rows.push(["reactions agree", cross.reactions_agree ? "yes" : "no", !cross.reactions_agree]);
+    rows.push(["per-member agree", cross.strict_agrees ? "yes" : "no", !cross.strict_agrees]);
   }
+  if (v.displacement) {
+    rows.push(["deflection", (v.displacement.peak_magnitude * 1000).toFixed(2) + " mm"
+      + (v.deflection && v.deflection.span_over_deflection
+        ? ", L/" + Math.round(v.deflection.span_over_deflection) : "")]);
+  }
+  if (v.stress) {
+    rows.push(["compression", (v.stress.peak_compression / 1e6).toFixed(2) + " MPa"]);
+    rows.push(["utilisation", (100 * v.stress.utilisation).toFixed(1) + "%",
+      v.stress.utilisation > 1]);
+  }
+  if (rows.length) content.appendChild(nameValueTable(rows));
 
   if (v.tension_sweep && v.tension_sweep.length) {
-    const label = document.createElement("p");
-    label.textContent = "tension sweep";
-    content.appendChild(label);
+    const sweepHeading = document.createElement("h3");
+    sweepHeading.textContent = "Tension sweep";
+    content.appendChild(sweepHeading);
     const table = document.createElement("table");
     const head = document.createElement("tr");
     for (const text of ["factor", "peak tension (MPa)", "utilisation %", "state"]) {
@@ -12539,36 +12351,27 @@ function renderDataPanel(v) {
         row.factor,
         (row.peak_tension / 1e6).toFixed(2),
         (100 * row.utilisation).toFixed(1),
-        row.tension_present ? "TENSION" : "compression",
       ];
       for (const value of cells) {
         const td = document.createElement("td");
         td.textContent = value;
         tr.appendChild(td);
       }
+      // Tension in an unreinforced shell is the bad reading.
+      const stateCell = document.createElement("td");
+      if (row.tension_present) {
+        const mark = document.createElement("span");
+        mark.className = "over";
+        mark.textContent = "tension";
+        stateCell.appendChild(mark);
+      } else {
+        stateCell.textContent = "compression";
+      }
+      tr.appendChild(stateCell);
       table.appendChild(tr);
     }
     content.appendChild(table);
   }
-
-  const headline = document.createElement("ul");
-  if (v.displacement) {
-    const li = document.createElement("li");
-    li.textContent = "peak deflection " + (v.displacement.peak_magnitude * 1000).toFixed(2) + " mm";
-    if (v.deflection && v.deflection.span_over_deflection) {
-      li.textContent += " (1 / " + Math.round(v.deflection.span_over_deflection) + ")";
-    }
-    headline.appendChild(li);
-  }
-  if (v.stress) {
-    const compression = document.createElement("li");
-    compression.textContent = "peak compression " + (v.stress.peak_compression / 1e6).toFixed(2) + " MPa";
-    headline.appendChild(compression);
-    const utilisation = document.createElement("li");
-    utilisation.textContent = "utilisation " + (100 * v.stress.utilisation).toFixed(1) + "%";
-    headline.appendChild(utilisation);
-  }
-  if (headline.children.length) content.appendChild(headline);
 }
 
 // ---------- data plumbing ----------
@@ -12595,11 +12398,10 @@ async function fetchJson(url) {
 }
 
 // ---------- pattern control (Task 9) ----------
-// generators.PLANNED and generators.MATERIAL_NOTES are the honesty
-// mechanism: a pattern named in the spec but not built yet is listed and
-// disabled rather than silently absent, and a material whose intended
-// pattern is not built yet says so in pattern-note instead of quietly
-// drawing bonded courses under the missing pattern's name.
+// generators.PLANNED is the honesty mechanism: a pattern named in the spec
+// but not built yet is listed and disabled rather than silently absent.
+// The server's notes on a material whose pattern is not built yet are not
+// shown (his ruling of 11 October 2026: no descriptive text).
 function patternLabel(pattern) {
   // The monolithic cut IS the sprayed option now, and the control says so
   // in the builder's own words (Param: "add the sprayed option there").
@@ -12623,24 +12425,23 @@ function populatePatternSelect(payload) {
   for (const pattern of Object.keys(payload.patterns_planned)) {
     const option = document.createElement("option");
     option.value = pattern;
-    option.textContent = patternLabel(pattern) + " (arrives " + payload.patterns_planned[pattern] + ")";
+    option.textContent = patternLabel(pattern);
     option.disabled = true;
     select.appendChild(option);
   }
 }
 
-// Changing the material writes the material's honesty note always, but
-// only applies the material's default pattern while the user has never
-// explicitly chosen one: an explicit choice (state.patternChosen) rides
-// through every material change, which is what makes comparing timber
-// and sprayed concrete under the same monolithic bands possible at all.
+// Changing the material only applies the material's default pattern
+// while the user has never explicitly chosen one: an explicit choice
+// (state.patternChosen) rides through every material change, which is
+// what makes comparing timber and sprayed concrete under the same
+// monolithic bands possible at all.
 function updatePatternForMaterial(material) {
   if (!state.patternChosen) {
     const pattern = state.patternDefaults[material] || state.pattern;
     state.pattern = pattern;
     document.getElementById("pattern-select").value = pattern;
   }
-  document.getElementById("pattern-note").textContent = state.patternNotes[material] || "";
 }
 
 // A commit whose requested parameters equal what the loaded bundle
@@ -12697,6 +12498,8 @@ function populateStudySelect(studies, selection) {
   for (const study of studies) {
     const option = document.createElement("option");
     option.value = study.export;
+    // a verified study marked in the list, a word of data (found by the
+    // final review of the sweep)
     option.textContent = study.export + (study.has_verification ? " (verified)" : "");
     select.appendChild(option);
     names.push(study.export);
@@ -12839,7 +12642,7 @@ async function loadStudy(exportName) {
     overlay.classList.add("hidden");
     status.textContent = "";
     state.lastRefusal = error.detail || error.message;
-    showBanner("Failed to load study: " + error.message, "error");
+    showBanner("Load failed: " + error.message, "error");
     // A failed SWITCH leaves the previous study's scene on screen, and
     // the source row would otherwise sit there labelled with that
     // study's Skin against a study that never loaded.
@@ -12862,7 +12665,6 @@ async function boot(preferredExport) {
     state.studies = payload.studies;
     state.patterns = payload.patterns;
     state.patternDefaults = payload.pattern_defaults;
-    state.patternNotes = payload.pattern_notes;
     populatePatternSelect(payload);
     updatePatternForMaterial(document.getElementById("material-select").value);
     const names = populateStudySelect(payload.studies, null);
@@ -12969,11 +12771,10 @@ document.getElementById("folder-choose").addEventListener("click", async () => {
   }
   const folder = await response.json();
   logStudio("reading vaults from " + folder.path);
-  // A zero with a reason: picking the studio's own cut cache (its name
-  // says "studies") silenced the import with a bare count once. The
-  // server recognises the near-miss and says what a vault export IS.
-  status.textContent = folder.studies + " vaults in this folder"
-    + (folder.hint ? " -- " + folder.hint : "");
+  // The count alone. The server's hint on a near-miss folder (the
+  // studio's own cut cache, say) explains, and his ruling of 11 October
+  // 2026 keeps the data.
+  status.textContent = folder.studies + " vaults";
   // The vault on screen came from the old folder and may not exist in the
   // new one, so the scene is emptied rather than left standing under a
   // list it no longer belongs to.
@@ -13081,9 +12882,7 @@ function paintLive(fresh) {
   if (fresh) liveFlash = Date.now() + 1200;
   const flaring = state.live && Date.now() < liveFlash;
   button.className = state.live ? (flaring ? "on fresh" : "on") : "off";
-  button.title = state.live
-    ? "Live: this study reloads as Grasshopper pushes it. Click to stop following."
-    : "Live is off: Grasshopper pushes are ignored. Click to follow again.";
+  button.title = state.live ? "Live: follow Grasshopper" : "Live: off";
 }
 document.getElementById("live-toggle").addEventListener("click", () => {
   state.live = !state.live;
@@ -13318,14 +13117,12 @@ async function checkServerCode() {
   const status = document.getElementById("restart-status");
   button.classList.toggle("attention", stale);
   if (stale) {
-    status.textContent = "the server is running older code than is on disk: restart it";
+    status.textContent = "Restart needed";
     if (!serverStaleSaid) {
       serverStaleSaid = true;
-      showBanner("The studio server is older than its own code, so recent fixes "
-        + "(stills to the output folder among them) are not running yet. Press "
-        + "Restart studio at the foot of the panel.", "error");
+      showBanner("Server out of date: press Restart studio", "error");
     }
-  } else if (status.textContent.startsWith("the server is running older code")) {
+  } else if (status.textContent === "Restart needed") {
     status.textContent = "";
   }
   return stale;
@@ -13353,8 +13150,7 @@ document.getElementById("restart-studio").addEventListener("click", async () => 
     // waiting forty seconds for it to is the wrong thing to do next.
     if (asked.status === 404) {
       button.disabled = false;
-      status.textContent = "this server is older than the button; "
-        + "close its window and start it again";
+      status.textContent = "Server too old: restart it by hand";
       return;
     }
   } catch (error) {
@@ -13387,7 +13183,7 @@ document.getElementById("restart-studio").addEventListener("click", async () => 
     status.textContent = "the old server is still answering...";
   }
   button.disabled = false;
-  status.textContent = "it did not come back; start it from the shortcut";
+  status.textContent = "Did not restart: use the shortcut";
 });
 
 // Stopping, from anywhere. The desktop can end the server from a shortcut;
@@ -13397,8 +13193,7 @@ document.getElementById("restart-studio").addEventListener("click", async () => 
 // proxy a dead server still gets the page a reply, a 502 from the proxy
 // itself, so "not ok" has to count as quiet alongside "no connection".
 document.getElementById("stop-studio").addEventListener("click", async () => {
-  if (!window.confirm("Stop the studio server? Every open page loses it "
-      + "until the server is started again.")) return;
+  if (!window.confirm("Stop the studio server?")) return;
   const button = document.getElementById("stop-studio");
   const status = document.getElementById("restart-status");
   button.disabled = true;
@@ -13407,8 +13202,7 @@ document.getElementById("stop-studio").addEventListener("click", async () => {
     const asked = await fetch("/api/stop", { method: "POST" });
     if (asked.status === 404) {
       button.disabled = false;
-      status.textContent = "this server is older than the button; "
-        + "stop it from the desktop";
+      status.textContent = "Server too old: stop it from the desktop";
       return;
     }
   } catch (error) {
@@ -13434,7 +13228,7 @@ document.getElementById("stop-studio").addEventListener("click", async () => {
     }
   }
   button.disabled = false;
-  status.textContent = "it would not stop; end it from the desktop";
+  status.textContent = "Did not stop: end it from the desktop";
 });
 
 // Starting again, from the page that stopped it. The studio is gone, but
@@ -13448,7 +13242,7 @@ document.getElementById("start-studio").addEventListener("click", async () => {
   const button = document.getElementById("start-studio");
   const status = document.getElementById("restart-status");
   button.disabled = true;
-  status.textContent = "asking the desktop to start the studio...";
+  status.textContent = "starting...";
   fetch("/start", { cache: "no-store" }).catch(() => {});
   fetch("http://127.0.0.1:8611/start", { mode: "no-cors", cache: "no-store" })
     .catch(() => {});
@@ -13469,7 +13263,7 @@ document.getElementById("start-studio").addEventListener("click", async () => {
     }
   }
   button.disabled = false;
-  status.textContent = "the desktop did not answer; use the Vaulted shortcut";
+  status.textContent = "No answer: use the Vaulted shortcut";
 });
 
 // The banner folds away on its own handle (Param: "a little tile arrow
@@ -13796,13 +13590,15 @@ function syncLightControls() {
   const heading = document.getElementById("lights-readout");
   const lamps = state.props.filter(isLamp);
   const one = isLamp(state.selectedProp) ? state.selectedProp : null;
+  // What the dials act on and the layer a new fixture lands on, never
+  // how to use the drawer (his ruling of 11 October 2026).
   if (heading) {
     heading.textContent = (one
-      ? "tuning the selected fixture"
+      ? "Selected fixture  \u00b7  "
       : lamps.length
-        ? "tuning all " + lamps.length + " fixtures"
-        : "click a fixture to place it, then a placed one to tune it")
-      + "; new fixtures go onto " + placingOntoName();
+        ? "All " + lamps.length + " fixtures  \u00b7  "
+        : "")
+      + "Layer: " + placingOntoName();
   }
   // The sliders show the selected lamp's own numbers, or the defaults a
   // newly placed lamp will wear.
@@ -13827,15 +13623,12 @@ function syncLightControls() {
     const reading = document.getElementById("lamp-tint-value");
     if (reading) reading.textContent = tint;
   }
-  // Invisible: a toggle rather than a dial, but it keeps the same
-  // reading cell so the block can still be read straight down.
+  // Invisible: a toggle rather than a dial. Its reading cell stays empty
+  // so the block can still be read straight down; the tick is the state
+  // (his ruling of 11 October 2026).
   const hidden = one ? !!one.invisible : !!state.lampInvisible;
   const box = document.getElementById("lamp-invisible");
-  if (box) {
-    box.checked = hidden;
-    const said = document.getElementById("lamp-invisible-value");
-    if (said) said.textContent = hidden ? "yes" : "no";
-  }
+  if (box) box.checked = hidden;
   // THE SPOT'S OWN FOUR, offered only when a spot is what the dials
   // are pointed at: a sphere has no aperture, and a control that does
   // nothing in the current mode is hidden rather than shown dead.
@@ -13855,11 +13648,7 @@ function syncLightControls() {
     write("lamp-reach", reach, reach.toFixed(reach ? 1 : 0));
     const cast = beam.shadow !== false;
     const box = document.getElementById("lamp-shadow");
-    if (box) {
-      box.checked = cast;
-      const said = document.getElementById("lamp-shadow-value");
-      if (said) said.textContent = cast ? "on" : "off";
-    }
+    if (box) box.checked = cast;
   }
 }
 
@@ -14009,11 +13798,7 @@ function syncFixturePanel() {
   if (lengthRow) lengthRow.classList.toggle("hidden", !fixtureStretches(record));
   const hidden = !!record.invisible;
   const body = document.getElementById("fixture-invisible");
-  if (body) {
-    body.checked = hidden;
-    const said = document.getElementById("fixture-invisible-value");
-    if (said) said.textContent = hidden ? "yes" : "no";
-  }
+  if (body) body.checked = hidden;
   // The spot's four, and only for a spot.
   const beamed = isSpot(record);
   for (const row of document.querySelectorAll("#fixture-dials .fixture-spot")) {
@@ -14030,11 +13815,7 @@ function syncFixturePanel() {
     write("fixture-reach", reach, reach.toFixed(reach ? 1 : 0));
     const cast = record.shadow !== false;
     const box = document.getElementById("fixture-shadow");
-    if (box) {
-      box.checked = cast;
-      const said = document.getElementById("fixture-shadow-value");
-      if (said) said.textContent = cast ? "on" : "off";
-    }
+    if (box) box.checked = cast;
   }
 }
 
@@ -15285,21 +15066,22 @@ function analysisThemeTokens() {
 
 function renderAnalysisTab() {
   const holder = document.getElementById("data-analysis");
+  // The empty and failed states are a word or two (his ruling of 11
+  // October 2026: no explanatory text, just the data).
   if (!state.bundle) {
-    holder.innerHTML = "<p>Load a study first.</p>";
+    holder.innerHTML = "<h3>No study</h3>";
     return null;
   }
-  // A narrative fault must never take the Data button down with it: the
-  // Overview sheet still has the raw numbers, so the failure is shown in
-  // place and reported, and the panel opens regardless.
+  // A fault in the tables must never take the Data button down with it:
+  // the Overview sheet still has the raw numbers, so the failure is shown
+  // in place and reported, and the panel opens regardless.
   try {
     const input = computeAnalysisInput(state.bundle, finalStage());
     holder.innerHTML = buildAnalysisHtml(input);
     return input;
   } catch (error) {
     reportProblem("the analysis narrative failed: " + error.message, error);
-    holder.textContent = "The narrative could not be built ("
-      + error.message + "); the Overview tab still has the raw numbers.";
+    holder.textContent = "Not built: " + error.message;
     return null;
   }
 }
@@ -15324,15 +15106,14 @@ function ensurePlotly() {
 async function renderDataGraphs() {
   const holder = document.getElementById("data-graphs");
   if (!state.bundle) {
-    holder.innerHTML = "<p>Load a study first.</p>";
+    holder.innerHTML = "<p>No study</p>";
     return;
   }
   const input = computeAnalysisInput(state.bundle, finalStage());
   const specs = buildGraphSpecs(input, analysisThemeTokens());
   if (!specs.length) {
-    holder.innerHTML = "<p>Graphs read the staged analysis and the member "
-      + "forces, and this bundle has neither yet. Run the staged analysis "
-      + "and come back.</p>";
+    // Nothing staged and no member forces: nothing to draw.
+    holder.innerHTML = "<p>No staged run</p>";
     return;
   }
   const done = beginLoading("Preparing graphs");
@@ -15438,19 +15219,21 @@ function leaveFormworkTab() {
 function paintFormworkLegend(key) {
   if (!key) {
     document.getElementById("legend").classList.add("hidden");
-    document.getElementById("legend").classList.remove("ramp");
+    document.getElementById("legend").classList.remove("ramp", "judged");
     return;
   }
   paintRampLegend(key);
 }
 
-// The one Cable net tab's key (spec 2026-10-11 section 5.1): the full ramp
-// from nought to the run's largest, the limit marked at its place on the bar
-// and named; a limit past the run's largest is named with no mark.
+// The one Cable net tab's key (spec 2026-10-11 section 5.1): judged against
+// its limit, green to deep red from nought to twice the limit, the limit
+// marked at the middle and named (his answer of 11 October 2026); with no
+// limit named, the full ramp from nought to the run's largest.
 function paintRampLegend(key) {
   const legend = document.getElementById("legend");
   legend.classList.remove("hidden", "bands", "deflection");
   legend.classList.add("ramp");
+  legend.classList.toggle("judged", !!key.judged);
   document.getElementById("legend-title").textContent = key.title;
   document.getElementById("legend-min").textContent = key.min;
   document.getElementById("legend-zero").textContent = "";
@@ -15538,20 +15321,9 @@ document.getElementById("run-button").addEventListener("click", startRun);
 // stays honest about what's on screen.
 function applyRunParamsToControls({ material, pattern, size, thickness }) {
   document.getElementById("material-select").value = material;
-  // Assigning .value fires no change event, and the change handler is the
-  // only other writer of pattern-note. So: load in limestone with the note
-  // showing, switch material mid-run, let the run finish, and the material
-  // is restored here with the note left at whatever the mid-run switch put
-  // there -- empty for every material but tile and stone. The studio then
-  // draws bonded courses under a limestone label with the caveat that the
-  // Armadillo dual is not built gone from the screen, which is the exact
-  // failure the note exists to prevent.
-  //
-  // The note only, never the pattern: updatePatternForMaterial also forces
-  // the material's default pattern, and calling it here would overwrite
-  // the pattern this run actually solved with.
-  document.getElementById("pattern-note").textContent =
-    state.patternNotes[material] || "";
+  // Never updatePatternForMaterial here: it forces the material's default
+  // pattern, which would overwrite the pattern this run actually solved
+  // with.
   document.getElementById("pattern-select").value = pattern;
   document.getElementById("size-slider").value = size;
   document.getElementById("size-slider-value").textContent = Math.round(size * 1000);
@@ -15569,9 +15341,12 @@ function watchRun(runId, exportName, status, params) {
       // "of" is 0 until the cut finishes, because the number of stages is
       // the number of courses the cut produces and nothing knows it before
       // then. "stage 0 of 0" reads as a run that has nothing to do; say
-      // what it is actually doing instead.
-      const progress = run.of ? "stage " + run.stage + " of " + run.of : "cutting";
-      status.textContent = run.state + " (" + progress + ") " + run.message;
+      // what it is actually doing instead. The server's running message
+      // narrates ("fea + cra per stage") and is not shown (his ruling of 11
+      // October 2026); a failure's message is the error, and is.
+      const progress = run.of ? "stage " + run.stage + " / " + run.of : "cutting";
+      status.textContent = run.state === "failed" ? "failed: " + run.message
+        : run.state === "running" ? progress : run.state;
       if (run.state === "done") {
         clearInterval(poll);
         applyRunParamsToControls(params);
@@ -15584,7 +15359,7 @@ function watchRun(runId, exportName, status, params) {
       }
     } catch (error) {
       clearInterval(poll);
-      status.textContent = "lost contact with the server: " + error.message;
+      status.textContent = "Server lost: " + error.message;
     }
   }, 1000);
 }
@@ -15620,8 +15395,7 @@ async function startRun() {
       // reload the study when it ends and log an analysis that never ran.
       const live = await fetchJson("/api/runs/" + encodeURIComponent(body.run));
       if (live.kind !== "staged") {
-        status.textContent = "a formwork run is live on this study; " +
-          "run the analysis when it finishes";
+        status.textContent = "Cable net run live: wait";
         return;
       }
       status.textContent = "watching the live run";
@@ -15633,7 +15407,7 @@ async function startRun() {
     // pattern it does not offer, each naming what to use instead. Without
     // this check the refusal body has no "run" key, watchRun polls
     // /api/runs/undefined, that 404s, and the one thing the user is told
-    // is "lost contact with the server" -- a connection failure that never
+    // is "Server lost" -- a connection failure that never
     // happened, in place of a sentence saying exactly what to change.
     if (!response.ok) {
       status.textContent = "run refused: " + (body && body.detail
@@ -15643,7 +15417,7 @@ async function startRun() {
     logStudio("analysis started: " + exportName);
     watchRun(body.run, exportName, status, params);
   } catch (error) {
-    status.textContent = "run failed to start: " + error.message;
+    status.textContent = "Run failed: " + error.message;
   }
 }
 
@@ -17004,9 +16778,8 @@ async function buildMachine() {
     // instances: the writer emits them whenever a result is wired, and
     // a document that carries its own is never second-guessed.
     if (!model.anchors.length) model.anchors = derived.anchors;
-    showBanner("This mechanism carries no placements, so the machines are "
-      + "derived from the vault's own supports: " + derived.instances.length
-      + " machines pulling " + derived.wires.length + " cables", "info");
+    showBanner("Derived from the supports: " + derived.instances.length
+      + " machines, " + derived.wires.length + " cables", "info");
   }
   const instances = model.instances.length ? model.instances
     : [{ side: 0, mechanism: 0, matrix: null, mirrored: false, wireIds: [] }];
@@ -17033,10 +16806,9 @@ async function buildMachine() {
   if (!model.instances.length || !model.wires.length) {
     // showBanner logs the text itself, so the two lines above carry the
     // detail and this one carries only what he needs at a glance.
-    showBanner("This mechanism export is missing its "
+    showBanner("Mechanism export missing "
       + [model.instances.length ? null : "machine placements",
-         model.wires.length ? null : "wires"].filter(Boolean).join(" and ")
-      + ", so the machine is drawn once and does not run", "error");
+         model.wires.length ? null : "wires"].filter(Boolean).join(" and "), "error");
   }
 
   // The drums' axes, and the radius each actually winds at, taken from the
@@ -17900,7 +17672,7 @@ async function recordAnimation() {
   // (the owner's choice of 10 October 2026).
   const formwork = !!(formworkTab && formworkTab.active());
   const status = document.getElementById(formwork ? "formwork-record-status" : "record-status");
-  if (!state.timeline || !state.bundle) { status.textContent = "load a study first"; return; }
+  if (!state.timeline || !state.bundle) { status.textContent = "No study"; return; }
   // F1: capture the peak from the same source the day-cycle button reads,
   // not the slider -- applyDayCycle's own writes below clamp that slider
   // for display, and reading it back here would let a mid-recording clamp
@@ -18049,8 +17821,7 @@ async function recordAnimation() {
       // and handing him a video of it anyway would be a surprise. The
       // frames already uploaded stay where they are and the next take to
       // the same name writes over them.
-      status.textContent = "stopped at frame " + stopped + " of " + total
-        + "; nothing stitched";
+      status.textContent = "stopped at frame " + stopped + " / " + total;
       return;
     }
     status.textContent = "stitching...";
@@ -18219,9 +17990,7 @@ function paintPlayButtons(text) {
   const shelf = document.getElementById("shelf-play");
   if (shelf) {
     shelf.textContent = text === "Pause" ? "❚❚" : "▶";
-    shelf.title = text === "Pause"
-      ? "Pause the animation (Space; press twice for the start)"
-      : "Play the animation (Space; press twice for the start)";
+    shelf.title = text === "Pause" ? "Pause (Space)" : "Play (Space)";
   }
 }
 
@@ -18470,8 +18239,7 @@ if (fullTile) {
   });
   document.addEventListener("fullscreenchange", () => {
     fullTile.classList.toggle("active", !!document.fullscreenElement);
-    fullTile.title = document.fullscreenElement
-      ? "Leave full screen" : "Fill the display with the view";
+    fullTile.title = document.fullscreenElement ? "Exit full screen" : "Full screen";
   });
 }
 // Ctrl+Z as well as the tile (his ask), because that is the gesture

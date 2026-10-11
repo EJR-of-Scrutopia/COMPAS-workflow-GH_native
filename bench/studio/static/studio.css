@@ -165,25 +165,18 @@ body { overflow: hidden;
 #hud { margin-top: var(--s2); font-size: var(--t-2); line-height: 1.5;
        white-space: pre-wrap; color: var(--ink-2); }
 #hud:empty { display: none; }
+/* A name and a value a row (his ruling of 11 October 2026). */
+#hud table { border-collapse: collapse; }
+#hud td { padding: 0 var(--s2) 0 0; vertical-align: top; white-space: normal; }
+#hud td:last-child { color: var(--ink); }
 #data-button.active { background: var(--accent-bg); color: var(--ink); }
-/* F6: clear of the panel plus a margin, derived from the width token so a
-   resized panel cannot overlap it again -- the log used to paint its text
-   underneath the panel itself. */
-#event-log { position: fixed; right: calc(var(--panel-w) + var(--s4));
-  /* Above the shelf strip, not behind it: the newest lines used to land
-     under the bottom tiles (Param's screenshot, the iPad). */
-  bottom: 64px; font-size: 12px;
-  font-family: ui-monospace, monospace; color: #fff; text-align: right;
-  pointer-events: none; opacity: 1; transition: opacity 1.2s; z-index: 15;
-  text-shadow: 0 1px 2px rgba(0,0,0,0.8); }
-#event-log.faded { opacity: 0; }
 #banner-close { margin-left: 12px; cursor: pointer; pointer-events: auto; }
 /* White ink stated, not inherited: the ground is the danger red in both
    themes, and the light theme's inherited ink is near-black on it. */
 #banner { position: fixed; left: 50%; top: 12px; transform: translateX(-50%);
           padding: 8px 14px; background: var(--danger); color: #fff;
           border-radius: var(--radius); font-size: var(--t-2); z-index: 10; }
-#run-status, #cut-status, #record-status, #still-readout, #import-status, #pattern-note, #appearance-note, #hdri-status, #weight-note { color: var(--ink-2); min-height: 1.2em; }
+#run-status, #cut-status, #record-status, #still-readout, #import-status, #appearance-note, #hdri-status, #weight-note { color: var(--ink-2); min-height: 1.2em; }
 /* The panel token, so the data sheet follows the theme: it kept a fixed
    near-black ground under themed text, which light mode made unreadable. */
 /* A contained, translucent sheet at the top left (Param: "slightly
@@ -212,23 +205,21 @@ body { overflow: hidden;
 .data-tab { font-size: 12px; line-height: 1.55; }
 .data-tab.hidden { display: none; }
 #data-analysis h3 { font-size: var(--t); margin: var(--s3) 0 var(--s1); }
-#data-analysis p { margin: 0 0 var(--s2); color: var(--ink-2); }
-#data-analysis b { color: var(--ink); }
-#data-analysis ul { margin: 0 0 var(--s2); padding-left: var(--s4);
-  color: var(--ink-2); }
-#data-analysis li { margin-bottom: var(--s1); }
-.pill { display: inline-block; padding: 0 8px; border-radius: 9px;
-  font-size: var(--t-meta); line-height: 1.6; vertical-align: 1px; }
-.pill.good { background: #1e3a26; color: #7fd695; }
-.pill.warn { background: #3a331e; color: #d6bd7f; }
-.pill.bad { background: #3a1e1e; color: #d68f7f; }
-:root[data-theme="light"] .pill.good { background: #d9efdf; color: #1d6b34; }
-:root[data-theme="light"] .pill.warn { background: #f2e8cd; color: #7a5f18; }
-:root[data-theme="light"] .pill.bad { background: #f2d5cd; color: #8f2f1c; }
-.data-note { margin-top: var(--s3); padding: var(--s2) var(--s3);
-  border-left: 3px solid var(--line-lit); background: var(--raised);
-  border-radius: var(--radius); color: var(--ink-2);
-  font-size: var(--t-2); }
+/* The Analysis tab is tables of name, value and limit, no sentences (his
+   ruling of 11 October 2026: "just showing the data with red for bad, and
+   a basic layout for information"). */
+#data-analysis table { width: 100%; table-layout: fixed; border-collapse: collapse;
+  margin: 0 0 var(--s2); }
+#data-analysis th, #data-analysis td { text-align: left; padding: 2px 6px 2px 0;
+  border-bottom: 1px solid var(--line); }
+/* one width for every group's columns, so the values stand in one line */
+#data-analysis th { width: 42%; font-weight: normal; color: var(--ink-2); }
+#data-analysis td { color: var(--ink); white-space: nowrap; }
+#data-analysis td:last-child { width: 22%; color: var(--ink-2); }
+/* a figure past its limit: deep red, as the Cable net answer shows a
+   shortfall */
+#data-analysis .over { color: #e2453a; font-weight: 600; }
+:root[data-theme="light"] #data-analysis .over { color: #a3231a; }
 #data-graphs > div { margin-bottom: var(--s3); }
 #data-content { font-size: 12px; line-height: 1.5; }
 #data-content h3 { font-size: var(--t); margin: var(--s1) 0 var(--s2); }
@@ -237,6 +228,7 @@ body { overflow: hidden;
 #data-content table { width: 100%; border-collapse: collapse; margin: 0 0 var(--s2); }
 #data-content th, #data-content td { text-align: left; padding: 2px 6px 2px 0;
               border-bottom: 1px solid var(--line); }
+#data-content table.name-value td:first-child { color: var(--ink-2); width: 45%; }
 /* Specificity, and the bug it caused. "#panel button" is one id plus one
    element and beats a bare class, so every new component that set its own
    width lost to it silently: tiles and chips stretched to the full panel
@@ -274,9 +266,6 @@ body { overflow: hidden;
   flex: 1; width: auto; }
 #layer-toggles .layer-slider.hidden.hidden {
   display: none; }
-#layer-toggles .layer-note {
-  margin: 0 0 var(--s1) var(--s3);
-  color: var(--ink-3); font-size: var(--t-meta); line-height: 1.4; }
 #overlays-tuck { display: flex; gap: var(--s2); align-items: center;
   margin-top: var(--s3); color: var(--ink-3); font-size: var(--t-2); }
 /* Bottom right, clear of the panel (derived from its width token), rather
@@ -323,6 +312,10 @@ body.panel-collapsed #legend { right: var(--s4); }
    from nought to the run's largest, its limit marked at its place and named. */
 #legend.ramp #legend-bar { position: relative;
   background: linear-gradient(to right, #3a6fc4, #3fa6a0, #e8c547, #cc2211); }
+/* judged against its limit (his answer of 11 October 2026): formwork_model's
+   JUDGED_STOPS, nought to twice the limit, the limit at the middle */
+#legend.ramp.judged #legend-bar {
+  background: linear-gradient(to right, #3f9e57 0%, #c99a2e 25%, #c24936 50%, #7a1610 100%); }
 #legend-limit { position: absolute; top: -3px; bottom: -3px; width: 2px; margin-left: -1px;
   background: var(--ink); }
 #legend-limit.hidden, #legend:not(.ramp) #legend-limit,
@@ -811,7 +804,7 @@ input[type="range"]:hover::-moz-range-thumb { background: var(--ink); }
 
 /* Metadata is 11px wherever it appears, and nothing else is. */
 #run-status, #cut-status, #record-status, #import-status,
-#pattern-note, #appearance-note, #prop-credit, #scene-count, #weight-note,
+#appearance-note, #prop-credit, #scene-count, #weight-note,
 #panel .folder-line span, .tile span, .scene-tile .scene-study {
   font-size: var(--t-meta); }
 
@@ -1364,7 +1357,6 @@ body.panel-collapsed #tab-rail { opacity: 0; pointer-events: none; }
 body.panel-collapsed #panel-collapse { right: 0; }
 /* The log ties its right edge to the panel's width; a collapsed panel
    frees that band. */
-body.panel-collapsed #event-log { right: var(--s4); }
 
 /* The take's controls sit beside the drawer tabs but are not tabs: a
    beat of space says so, and they are square icon tiles -- play,
@@ -1408,8 +1400,8 @@ body.panel-collapsed #event-log { right: var(--s4); }
 
 
 /* ---------- the corner readout ----------
-   Bottom left: #event-log holds bottom right and #legend the lower third
-   beside the panel, so this is the corner nothing had to vacate.
+   Bottom left: #legend holds the lower third beside the panel, so this is
+   a corner nothing had to vacate.
    Monospace and tabular figures, because a number that shifts its own
    column every frame is unreadable at a glance. */
 #stats-overlay { position: fixed; left: 12px; bottom: 64px; z-index: 15;
@@ -1455,7 +1447,7 @@ body.recording #stats-overlay { display: none; }
   border-radius: 0 var(--radius) var(--radius) 0;
   font: inherit; font-size: 15px; line-height: 1; cursor: pointer; }
 #graphs-collapse:hover { color: var(--ink); border-color: var(--line-lit); }
-#graphs-head, #graphs-notes, #graphs-dials, .live-card { background: var(--scrim);
+#graphs-head, #graphs-dials, .live-card { background: var(--scrim);
   -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px);
   border: 1px solid var(--line); border-radius: var(--radius); }
 #graphs-head { display: flex; align-items: center; gap: 8px; padding: 5px 10px;
@@ -1487,8 +1479,6 @@ body.recording #stats-overlay { display: none; }
 .live-card .live-label, .live-card .live-aside { color: var(--ink-3); font-size: 10px;
   font-family: ui-monospace, monospace; font-variant-numeric: tabular-nums; }
 .live-card .live-plot { flex: 1; min-height: 0; }
-#graphs-notes { padding: 4px 10px; font-size: 10px; line-height: 1.35;
-  color: var(--ink-3); max-height: 5.5em; overflow: auto; }
 /* A narrow window gets narrower cards rather than none. */
 @media (max-width: 900px) { #graphs-panel { width: 280px; } }
 
@@ -1587,8 +1577,6 @@ body.recording #scale-bar { display: none; }
 body.stilling #fixture-panel { display: none; }
 #fixture-name { padding: 8px 10px 0; color: var(--ink);
   font-size: 12px; }
-#fixture-readout { padding: 6px 10px 10px; font-size: 11px;
-  color: var(--ink-3); }
 /* ONE DIAL A ROW. The eight-column default puts two dials side by
    side, which a 256 px card has no room for: photographed on the
    first run, Warmth showed a sliver of track and no reading at all
@@ -1670,7 +1658,18 @@ body.stilling
 #panel .mechanism-line button { width: auto; margin: 0; }
 #panel #formwork-mechanism-name { color: var(--ink-2); font-size: var(--t-2); }
 #panel #formwork-answer table.stale { opacity: 0.45; }
-/* a figure and its mark stay on one line */
+/* a figure short of what it should be: deep red (his ask of 11 October 2026,
+   in place of a cross) */
+#panel #formwork-answer .over, #mechanism-popup .over { color: #e2453a; font-weight: 600; }
+:root[data-theme="light"] #panel #formwork-answer .over,
+:root[data-theme="light"] #mechanism-popup .over { color: #a3231a; }
+/* The Overview tab and the HUD under the Data button show a bad value the
+   same way (his ruling of 11 October 2026). The HUD keeps the one red in
+   both themes: no light rule names it (test_the_overlays_are_not_themed). */
+#data-content .over, #hud .over, #scatter-readout .over { color: #e2453a; font-weight: 600; }
+:root[data-theme="light"] #data-content .over,
+:root[data-theme="light"] #scatter-readout .over { color: #a3231a; }
+/* a figure stays on one line */
 #panel #formwork-answer td:nth-child(2) { white-space: nowrap; }
 #panel #formwork-answer tr[data-capture] { cursor: pointer; }
 #panel #formwork-record-status { color: var(--ink-2); font-size: var(--t-2); min-height: 1.2em; }

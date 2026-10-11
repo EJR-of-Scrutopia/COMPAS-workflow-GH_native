@@ -11,8 +11,9 @@ export const SCHEMA = "bench.formwork-sim/1";
 // (the owner's answer of 10 October 2026).
 export const ACT_SECONDS = 12;
 export const TILING_BEAT = 0.5;
-// The jacking of the holds, at machine time 100 like the hold before it, takes
-// this long, so the player reaches both (found by the final review: the hold
+// The jacking of the holds in a run made before they went (11 October 2026),
+// at machine time 100 like the hold before it, takes this long, so the player
+// reaches both (found by the final review: the hold
 // could not be reached and Back stuck at the jacking).
 export const JACK_SECONDS = 2;
 
@@ -74,7 +75,6 @@ export function readSim(doc) {
     treeAxial: decodeF32(c.tree_axial) || new Float32Array(0),
     ground: Array.isArray(c.ground) ? c.ground : null,
     addedFaces: Array.isArray(c.added_faces) ? c.added_faces : null,
-    holdPush: decodeF32(c.hold_push) || new Float32Array(0),
     tendonTension: decodeF32(c.tendon_tension) || new Float32Array(0),
   }));
   // a capture with no positions cannot be drawn: the document is not read
@@ -114,18 +114,19 @@ export function readSim(doc) {
       }
     });
   }
-  // each family's largest over the run: along, its ropes alone; across, each
-  // rope with its tendon; both, every member so
+  // each family's largest rope over the run, the tendons left out (his
+  // answer of 11 October 2026: each rope by its own tension): along, across,
+  // and both, every rope
   let along = 0;
   let across = 0;
   let both = 0;
   for (const c of captures) {
     for (let e = 0; c.tension && e < edges.length; e++) {
-      const whole = memberForce({ edgeTendon }, c, e);
-      if (whole > both) both = whole;
+      const t = c.tension[e];
+      if (t > both) both = t;
       const family = families && families[e];
-      if (family === "along" && c.tension[e] > along) along = c.tension[e];
-      if (family === "across" && whole > across) across = whole;
+      if (family === "along" && t > along) along = t;
+      if (family === "across" && t > across) across = t;
     }
   }
   return {
@@ -138,17 +139,22 @@ export function readSim(doc) {
     trees: { members: trees.members || [], heads: trees.heads || [], feet: trees.feet || [],
              diameter: Number(trees.diameter) || 60.3, wall: trees.wall },
     captures,
-    // the holds (spec 2026-10-10 formwork holds): the held nodes, the rods a
-    // side asked for and each rod's side (spec 2026-10-11 one Cable net tab,
-    // section 6)
-    holds: Array.isArray(net.holds) ? net.holds : [],
-    holdsPerSide: Number(net.holds_per_side) || 0,
-    holdSides: Array.isArray(net.hold_sides) ? net.hold_sides : null,
+    // a run made with holds, which went on 11 October 2026 (his word: "it
+    // doesnt work for what i am thinking"): its rods are not shown, and it is
+    // to be run again
+    held: Array.isArray(net.holds) && net.holds.length > 0,
     // each node's side (spec 2026-10-11 one Cable net tab, section 6), and the
     // mechanism's drum and carriage judged on the run's own reels (8.1)
     sides: Array.isArray(net.sides) ? net.sides : null,
     checks: doc.checks || null,
     families, tendons, edgeTendon, nodeTendon, tendonsReason: doc.tendons_reason || null,
+    // each family's lines and each tree's members, which the values on the
+    // model take their worst from (his answer of 11 October 2026)
+    lines: families ? {
+      along: familyLines(edges, families, "along", Number(net.nodes) || 0, trees.heads || []),
+      across: familyLines(edges, families, "across", Number(net.nodes) || 0, trees.heads || []),
+    } : null,
+    treeGroups: treeGroups(trees.members || []),
     scales: { tension: scale("tension"), wire: scale("wireTension"),
               deviation: scale("deviation"), utilisation: scale("treeUtilisation"), push,
               along, across, both },
@@ -159,20 +165,27 @@ export function readSim(doc) {
   };
 }
 
-// A member's whole force at a capture, N: its rope's tension and, on an across
-// line, the pull of the tendon beside it (spec 2026-10-11 across tendons,
-// section 6).
-export function memberForce(sim, c, e) {
-  const t = sim.edgeTendon ? sim.edgeTendon[e] : -1;
-  return c.tension[e] + (t >= 0 ? c.tendonTension[t] || 0 : 0);
-}
-
 // The capture's label: its machine time and phase during the raise, its row
 // and quarter while tiling.
 export function captureLabel(capture) {
   if (!capture) return "";
   if (capture.phase === "tiling") return capture.row + " q" + capture.quarter;
   return "t " + Number(Number(capture.time).toFixed(1)) + " " + capture.phase;
+}
+
+// The first capture of the scene after the one capture index is in, or the
+// last capture from the last scene (his ask of 11 October 2026: the player
+// steps on a scene, not a capture). A scene is a phase (the raise, the
+// finish, the hold, the jacking), and in the tiling each row of tiles.
+export function nextScene(captures, index) {
+  const list = captures || [];
+  if (!list.length) return 0;
+  const scene = (c) => (c.phase === "tiling" ? "tiling " + c.row : c.phase);
+  const here = scene(list[Math.min(Math.max(index, 0), list.length - 1)]);
+  for (let i = Math.max(index, 0) + 1; i < list.length; i++) {
+    if (scene(list[i]) !== here) return i;
+  }
+  return list.length - 1;
 }
 
 // When the player reaches each capture, in seconds at 1x: the raise, finish
@@ -252,14 +265,6 @@ export function frameLine(sim, index) {
   const heads = sim.trees.heads.length;
   let touching = 0;
   for (let h = 0; h < heads; h++) if (pushOf(c, h) > 0) touching += 1;
-  const holds = sim.holds.length;
-  let struts = 0;
-  let ties = 0;
-  for (let h = 0; h < holds; h++) {
-    const kind = holdRod(holdForce(c, h)).kind;
-    if (kind === "strut") struts += 1;
-    else if (kind === "tie") ties += 1;
-  }
   const lines = sim.tendons ? sim.tendons.lines : [];
   let pulling = 0;
   let atStop = 0;
@@ -276,47 +281,7 @@ export function frameLine(sim, index) {
   });
   return { rope: largestOf(c.tension), wire: largestOf(c.wireTension),
            trees: largestOf(c.treeUtilisation), deviation: largestOf(c.deviation), touching, heads,
-           holds, struts, ties, pulling, tendons: lines.length, atStop };
-}
-
-// The force a hold puts on its node at a capture, newtons; nought before the
-// jacking.
-export function holdForce(capture, hold) {
-  const p = capture && capture.holdPush;
-  return p && 3 * hold + 2 < p.length ? [p[3 * hold], p[3 * hold + 1], p[3 * hold + 2]] : [0, 0, 0];
-}
-
-// A hold's rod (his ruling of 10 October 2026: a hold is a gripped rod along
-// its own force): u, a unit along the rod from its foot on the ground up to
-// its node; a strut where the hold pushes, a tie where it pulls, none while it
-// carries nothing; lean, the force's true angle from vertical in degrees.
-// Ruling: a rod leaning more than ROD_LEAN_MAX is drawn at it, so a force
-// near level does not run off the picture. A force under HOLD_FLOOR_N, the
-// engine's own rest (net_engine.LEFTOVER_N), is the engine's residue: none.
-export const ROD_LEAN_MAX = 80;
-export const HOLD_FLOOR_N = 0.01;
-
-export function holdRod(force) {
-  const [fx, fy, fz] = force;
-  const size = Math.hypot(fx, fy, fz);
-  if (!(size > HOLD_FLOOR_N)) return { kind: "none", u: [0, 0, 1], lean: 0 };
-  const sign = fz < 0 ? -1 : 1;
-  let u = [sign * fx / size, sign * fy / size, sign * fz / size];
-  const lean = Math.atan2(Math.hypot(fx, fy), Math.abs(fz)) * 180 / Math.PI;
-  if (lean > ROD_LEAN_MAX) {
-    const level = Math.hypot(u[0], u[1]);
-    const out = Math.sin(ROD_LEAN_MAX * Math.PI / 180);
-    u = [u[0] / level * out, u[1] / level * out, Math.cos(ROD_LEAN_MAX * Math.PI / 180)];
-  }
-  return { kind: fz < 0 ? "tie" : "strut", u, lean };
-}
-
-// The capture the rods are set at: the one after the jacking, or in a
-// document from before it had one, the first of the tiling; -1 with none.
-export function jackedAt(sim) {
-  const captures = (sim && sim.captures) || [];
-  const own = captures.findIndex((c) => c.phase === "holds");
-  return own >= 0 ? own : captures.findIndex((c) => c.phase === "tiling");
+           pulling, tendons: lines.length, atStop };
 }
 
 export function frameLineHtml(line) {
@@ -324,8 +289,6 @@ export function frameLineHtml(line) {
   return keyed([["Rope max", kilonewtons(line.rope)], ["Wire max", newtons(line.wire)],
     ["Trees", line.trees.toFixed(2)], ["Deviation max", millimetres(line.deviation)],
     ["Heads touching", line.touching + "/" + line.heads],
-    ...(line.holds ? [["Struts", line.struts + "/" + line.holds], ["Ties", line.ties + "/" + line.holds]]
-      : []),
     ...(line.tendons ? [["Pulling", line.pulling + "/" + line.tendons], ["At the stop", String(line.atStop)]]
       : [])]);
 }
@@ -372,12 +335,45 @@ export function deviationBand(mm, tolerance) {
 const SCALE = { wire: "wire", tension: "tension", deviation: "deviation", utilisation: "utilisation",
                 along: "along", across: "across", both: "both" };
 
+// Each part judged against its own limit (his answer of 11 October 2026: red
+// to green by whether it does what it should, not a range from nought to the
+// run's largest): green at nothing, amber at half its limit, red at it, deep
+// red at twice it and past. Each stop: [share of the limit, colour].
+export const JUDGED_STOPS = [[0, "#3f9e57"], [0.5, "#c99a2e"], [1, "#c24936"], [2, "#7a1610"]];
+const JUDGED_TOP = 2;
+
+export function judged(share) {
+  const s = Math.min(Math.max(Number(share) || 0, 0), JUDGED_TOP);
+  let i = 1;
+  while (i < JUDGED_STOPS.length - 1 && s > JUDGED_STOPS[i][0]) i++;
+  const [s0, c0] = JUDGED_STOPS[i - 1];
+  const [s1, c1] = JUDGED_STOPS[i];
+  const t = (s - s0) / (s1 - s0);
+  const a = hexRgb(c0);
+  const b = hexRgb(c1);
+  return a.map((v, k) => v + (b[k] - v) * t);
+}
+
+// The limit a Colour by judges against: a wire, one spool's pull; a rope, its
+// working load; a node, the tolerance; a tree member, its capacity, 1. Null
+// where the run names none (a run cut for a prestress has no spool).
+function limitOf(by, sim, tolerance) {
+  const o = (sim && sim.options) || {};
+  const rope = o.rope_working_newtons;
+  const limit = { wire: o.have_newtons, tension: rope, along: rope, across: rope, both: rope,
+                  deviation: tolerance, utilisation: 1 }[by];
+  const v = Number(limit);
+  return limit != null && Number.isFinite(v) && v > 0 ? v : null;
+}
+
 // The colour a value is drawn in under a Colour by choice, [r, g, b] from 0 to
-// 1, on the full ramp over the run (spec 2026-10-11 section 5.1); null where
-// the choice colours nothing (Off). Whether a part is over its limit is
-// Weakest's to show, not the colour's.
-export function colourOf(by, value, sim) {
+// 1: judged against its limit, or with none named on the full ramp over the
+// run (spec 2026-10-11 section 5.1); null where the choice colours nothing
+// (Off). tolerance: the tab's, for the offsets.
+export function colourOf(by, value, sim, tolerance = null) {
   if (!sim || value == null || !SCALE[by]) return null;
+  const limit = limitOf(by, sim, tolerance);
+  if (limit != null) return judged(value / limit);
   const top = sim.scales[SCALE[by]];
   return ramp(top > 0 ? value / top : 0);
 }
@@ -393,40 +389,45 @@ function kilo(n) {
 export const OTHER_FAMILY = hexRgb("#7d828a");
 
 // The colour a net member is drawn in under a Colour by choice: its rope's
-// tension under the old Ropes, its family's force under Along and Across (the
-// other family grey), its whole force under Both; null where the choice does
-// not colour members.
+// own tension, the tendon beside it left out (his answer of 11 October 2026),
+// under the old Ropes and Both, and under Along and Across for its family
+// (the other family grey); null where the choice does not colour members.
 export function memberColour(by, sim, c, e) {
-  if (by === "tension") return colourOf("tension", c.tension[e], sim);
-  if (by === "both") return colourOf("both", memberForce(sim, c, e), sim);
+  if (by === "tension" || by === "both") return colourOf(by, c.tension[e], sim);
   if (by === "along" || by === "across") {
     if (!sim.families || sim.families[e] !== by) return OTHER_FAMILY;
-    return colourOf(by, by === "along" ? c.tension[e] : memberForce(sim, c, e), sim);
+    return colourOf(by, c.tension[e], sim);
   }
   return null;
 }
 
-// The key a Colour by choice draws: a real scale from nought to the run's
-// largest, and the limit named, with its place on the bar (fraction) when it
-// is on it; null for Off. limits: { have, rope, tolerance } (a bare number is
-// the tolerance, as the tab's older calls give it).
+// The key a Colour by choice draws: judged against its limit, from nought to
+// twice the limit, the limit named and marked at the middle (judged); or with
+// no limit named, the ramp from nought to the run's largest; null for Off.
+// limits: { have, rope, tolerance } (a bare number is the tolerance, as the
+// tab's older calls give it).
 export function colourKey(by, sim, limits) {
   if (!sim || !SCALE[by]) return null;
   const given = typeof limits === "number" ? { tolerance: limits } : (limits || {});
   const top = sim.scales[SCALE[by]];
+  const working = (v) => "working load " + kilo(v);
   const keyed = {
-    wire: ["wire tension, N", grouped(top), given.have, (v) => "one spool " + grouped(v)],
-    tension: ["rope tension, kN", kilo(top), given.rope, (v) => "working load " + kilo(v)],
-    along: ["along, rope tension, kN", kilo(top), given.rope, (v) => "working load " + kilo(v)],
-    across: ["across, rope and tendon, kN", kilo(top), null, null],
-    both: ["rope and tendon, kN", kilo(top), given.rope, (v) => "working load " + kilo(v)],
-    deviation: ["offset, mm", millimetres(top), given.tolerance, (v) => "tolerance " + Number(v) + " mm"],
-    utilisation: ["tree utilisation", top.toFixed(2), 1.0, (v) => "capacity " + Number(v).toFixed(1)],
+    wire: ["wire tension, N", grouped, given.have, (v) => "one spool " + grouped(v)],
+    tension: ["rope tension, kN", kilo, given.rope, working],
+    along: ["along, rope tension, kN", kilo, given.rope, working],
+    across: ["across, rope tension, kN", kilo, given.rope, working],
+    both: ["rope tension, kN", kilo, given.rope, working],
+    deviation: ["offset, mm", millimetres, given.tolerance, (v) => "tolerance " + Number(v) + " mm"],
+    utilisation: ["trees, utilisation", (v) => Number(v).toFixed(2), 1.0,
+                  (v) => "capacity " + Number(v).toFixed(1)],
   }[by];
-  const [title, max, limit, named] = keyed;
-  const known = limit != null && Number.isFinite(Number(limit));
-  const fraction = known && top > 0 && Number(limit) <= top ? Number(limit) / top : null;
-  return { title, min: "0", max, limitText: known ? named(limit) : null, fraction };
+  const [title, format, limit, named] = keyed;
+  const v = Number(limit);
+  if (limit != null && Number.isFinite(v) && v > 0) {
+    return { title, min: "0", max: format(JUDGED_TOP * v), limitText: named(v), fraction: 1 / JUDGED_TOP,
+             judged: true };
+  }
+  return { title, min: "0", max: format(top), limitText: null, fraction: null, judged: false };
 }
 
 // The parts a Colour by puts its values on, and which Show tick they need.
@@ -449,8 +450,7 @@ function valuesFor(sim, c, by) {
   } else if (by === "along" || by === "across" || by === "both") {
     sim.edges.forEach(([u], e) => {
       if (by !== "both" && (!sim.families || sim.families[e] !== by)) return;
-      out.push([{ kind: "member", index: e }, by === "along" ? c.tension[e] : memberForce(sim, c, e),
-                side(u)]);
+      out.push([{ kind: "member", index: e }, c.tension[e], side(u)]);
     });
   } else if (by === "deviation") {
     for (let i = 0; i < sim.nodes; i++) out.push([{ kind: "node", index: i }, c.deviation[i], side(i)]);
@@ -469,15 +469,121 @@ function textFor(by, value) {
   return Number(value).toFixed(2);
 }
 
+// A family's lines, each the edges it runs along in order: through every node
+// two of the family's edges meet at, ending where one does, or more, and at a
+// column head, so each side of a principal line is a line of its own.
+function familyLines(edges, families, family, nodes, heads) {
+  const at = Array.from({ length: nodes }, () => []);
+  // an edge naming a node the net does not have is in no line (found by the
+  // final review of 11 October 2026: it threw, and the run could not be read)
+  const fits = ([a, b]) => a >= 0 && b >= 0 && a < nodes && b < nodes;
+  edges.forEach(([a, b], e) => {
+    if (families[e] === family && fits(edges[e])) {
+      at[a].push(e);
+      at[b].push(e);
+    }
+  });
+  const ends = new Set(heads.map(([node]) => node));
+  const seen = new Uint8Array(edges.length);
+  const walk = (from, first) => {
+    const line = [];
+    let node = from;
+    let e = first;
+    while (e != null && !seen[e]) {
+      seen[e] = 1;
+      line.push(e);
+      node = edges[e][0] === node ? edges[e][1] : edges[e][0];
+      const next = at[node];
+      e = next && next.length === 2 && !ends.has(node) ? next.find((other) => other !== e) : null;
+    }
+    return line;
+  };
+  const lines = [];
+  for (let node = 0; node < nodes; node++) {
+    if (at[node].length !== 2 || ends.has(node)) {
+      for (const e of at[node]) if (!seen[e]) lines.push(walk(node, e));
+    }
+  }
+  // what is left runs round in a loop
+  edges.forEach((edge, e) => {
+    if (families[e] === family && !seen[e] && fits(edge)) lines.push(walk(edge[0], e));
+  });
+  return lines;
+}
+
+// The trees, each the members joined through their nodes.
+function treeGroups(members) {
+  const root = new Map();
+  const find = (n) => {
+    while (root.has(n) && root.get(n) !== n) n = root.get(n);
+    return n;
+  };
+  for (const [p, q] of members) {
+    if (!root.has(p)) root.set(p, p);
+    if (!root.has(q)) root.set(q, q);
+    root.set(find(p), find(q));
+  }
+  const groups = new Map();
+  members.forEach(([p], k) => {
+    const r = find(p);
+    if (!groups.has(r)) groups.set(r, []);
+    groups.get(r).push(k);
+  });
+  return [...groups.values()];
+}
+
+// The parts each value on the model is the worst of, for a Colour by: a line
+// of the family shown (Along, Across; both families for Both and Ropes), the
+// nodes of every line for Offset, every wire, every tree, every head; null
+// where the run has no lines.
+function labelGroups(sim, by) {
+  const members = (line) => line.map((e) => ({ kind: "member", index: e }));
+  const lines = sim.lines;
+  if (by === "along" || by === "across") return lines ? lines[by].map(members) : null;
+  if (by === "both" || by === "tension") return lines ? [...lines.along, ...lines.across].map(members) : null;
+  if (by === "deviation") {
+    if (!lines) return null;
+    return [...lines.along, ...lines.across].map((line) => {
+      const nodes = new Set();
+      for (const e of line) for (const node of sim.edges[e]) nodes.add(node);
+      return [...nodes].map((node) => ({ kind: "node", index: node }));
+    });
+  }
+  if (by === "utilisation") return sim.treeGroups.map((group) => group.map((k) => ({ kind: "tree", index: k })));
+  if (by === "wire") return sim.rim.nodes.map((_, w) => [{ kind: "wire", index: w }]);
+  if (by === "off") return sim.trees.heads.map(([node]) => [{ kind: "node", index: node }]);
+  return null;
+}
+
 // The values a capture puts on the model (spec 2026-10-11 section 5.2): for
-// the Colour by shown, its count largest, then the largest of each side not
-// yet among them; with Colour by off, the heads' pushes. Largest first, so
-// where they crowd the largest is the one kept.
+// the Colour by shown, the worst of each of its lines, wires, trees or, with
+// Colour by off, heads (his answer of 11 October 2026); a run with no lines,
+// its count largest, then the largest of each side not yet among them.
+// Largest first, so where they crowd the largest is the one kept.
 export function colourLabels(sim, index, by, count = 5) {
   const c = sim && sim.captures[index];
   if (!c || !LABEL_PART[by]) return [];
   const values = valuesFor(sim, c, by).filter(([, value]) => value > 0);
   values.sort((a, b) => b[1] - a[1] || a[0].index - b[0].index);
+  // the worst of every line, wire, tree or head (his answer of 11 October
+  // 2026), one value a part, largest first
+  const groups = labelGroups(sim, by);
+  if (groups) {
+    const valueOf = new Map(values.map(([target, value]) => [target.kind + ":" + target.index, value]));
+    const worst = new Map();
+    for (const group of groups) {
+      let best = null;
+      for (const target of group) {
+        const value = valueOf.get(target.kind + ":" + target.index);
+        if (value != null && (!best || value > best[1] || (value === best[1] && target.index < best[0].index))) {
+          best = [target, value];
+        }
+      }
+      if (best) worst.set(best[0].kind + ":" + best[0].index, best);
+    }
+    return [...worst.values()].sort((a, b) => b[1] - a[1] || a[0].index - b[0].index)
+      .map(([target, value]) => ({ ...target, value, text: textFor(by, value) }));
+  }
   const picked = values.slice(0, count);
   const sides = new Set(picked.map(([, , side]) => side));
   for (const entry of values) {
@@ -509,7 +615,7 @@ export function modelLabels(sim, index, { by = null, weakest = [], compare = fal
   if (by != null) colourLabels(sim, index, by).forEach(add);
   for (const item of weakest || []) {
     add({ kind: item.kind, index: item.index, value: item.value,
-          text: item.over ? item.text : textFor(KIND_BY[item.kind], item.limit - item.value) + " spare" });
+          text: item.text });
   }
   if (compare) colourLabels(sim, index, "deviation").forEach(add);
   return out;
@@ -579,12 +685,6 @@ export function formworkPickHtml(sim, index, node) {
   if (c.ground) rows.push(["Ground", c.ground.includes(node) ? "yes" : "no"]);
   const head = sim.trees.heads.findIndex(([net]) => net === node);
   if (head >= 0) rows.push(["Head push", newtons(pushOf(c, head))]);
-  const hold = sim.holds.indexOf(node);
-  if (hold >= 0) {
-    const force = holdForce(c, hold);
-    const kind = holdRod(force).kind;
-    rows.push(["Hold", (kind === "none" ? "" : kind + " ") + newtons(Math.hypot(...force))]);
-  }
   const wire = sim.rim.nodes.indexOf(node);
   if (wire >= 0) {
     rows.push(["Wire", escapeHtml(sim.rim.names[wire] || "#" + wire)],
@@ -620,8 +720,7 @@ export function formworkWarnings(sim, chosen) {
   if (mine && (!ran || MECHANISM_KEYS.some((key) => (ran[key] ?? null) !== (mine[key] ?? null)))) {
     out.push("Run again: mechanism changed");
   }
-  const rods = chosen && chosen.holdsPerSide;
-  if (rods != null && Number(rods) !== sim.holdsPerSide) out.push("Run again: rods a side changed");
+  if (sim.held) out.push("Run again: made with holds");
   // the pull a tendon (spec 2026-10-11 across tendons, section 7), and why a
   // pulled run has none (section 2)
   const pull = chosen && chosen.pullIn;
@@ -640,8 +739,10 @@ export function grouped(n) {
 // The answer, from the run alone (spec 2026-10-11 one Cable net tab, section
 // 4.3): the largest wire tension anywhere in the run, its wire and capture;
 // one spool's pull of the run's mechanism; how much is missing or to spare;
-// and the form, the worst offset at the run's last capture, against the
-// tolerance. have and gap are null for a run cut for a named prestress.
+// the form, the worst offset and the mean at the run's last capture, against
+// the tolerance; and the trees' load, the member the run judges worst, its
+// force and what its tube takes (his ask of 11 October 2026). have and gap
+// are null for a run cut for a named prestress.
 export function answer(sim, tolerance) {
   if (!sim) return null;
   let needed = null;
@@ -665,48 +766,67 @@ export function answer(sim, tolerance) {
   const last = sim.captures[sim.captures.length - 1];
   const worst = largestOf(last.deviation);
   const form = { mm: worst, tolerance: Number(tolerance), within: worst <= Number(tolerance) };
-  // the rods a side asked for and how many went on (spec section 6)
-  const holds = { perSide: sim.holdsPerSide, rods: sim.holds.length };
+  const offsets = last.deviation || [];
+  let sum = 0;
+  for (let i = 0; i < offsets.length; i++) sum += offsets[i];
+  const meanMm = offsets.length ? sum / offsets.length : 0;
+  const mean = { mm: meanMm, within: meanMm <= Number(tolerance) };
   // the pull a tendon, the tendons and what they put into the column heads in
   // all (spec 2026-10-11 across tendons, section 5)
   const lines = sim.tendons ? sim.tendons.lines.length : 0;
   const pull = lines ? { newtons: sim.tendons.pull, tendons: lines, total: sim.tendons.pull * lines } : null;
-  return { needed, have, gap, form, holds, pull };
+  return { needed, have, gap, form, mean, trees: treesLoad(sim), pull };
 }
 
-// The mechanism as the answer names it: "23HS45-4204D-E1000 20:1".
-function shortMechanism(mechanism) {
-  if (!mechanism) return "";
-  return mechanism.motor + (mechanism.ratio == null ? " direct" : " " + mechanism.ratio + ":1");
+// The tree member the run judges worst, at the capture it is worst: its
+// force, N, what its tube takes there and the ratio; null with no trees.
+function treesLoad(sim) {
+  let worst = null;
+  sim.captures.forEach((c, k) => {
+    const u = c.treeUtilisation;
+    for (let m = 0; u && m < u.length; m++) {
+      if (!worst || u[m] > worst.utilisation) worst = { utilisation: u[m], member: m, capture: k };
+    }
+  });
+  if (!worst) return null;
+  const c = sim.captures[worst.capture];
+  const [p, q] = sim.trees.members[worst.member];
+  const length = Math.hypot(c.treeX[3 * q] - c.treeX[3 * p], c.treeX[3 * q + 1] - c.treeX[3 * p + 1],
+                            c.treeX[3 * q + 2] - c.treeX[3 * p + 2]) * 1000;
+  const n = c.treeAxial[worst.member] || 0;
+  const wall = Number(sim.trees.wall);
+  const capacity = length < FOLDED_MM || !(wall > 0) ? null
+    : resistance(sim.trees.diameter, wall, length, n < 0);
+  return { ...worst, newtons: Math.abs(n), capacity, label: captureLabel(c) };
 }
 
-// The answer block (spec section 4.3): a row each, value then what it is;
+// The answer block (spec section 4.3): a row each, its name and its value;
 // Needed's row carries its capture and wire, so a click goes there. Greyed
 // (stale) while the run is out of date.
 export function answerHtml(a, { stale = false } = {}) {
   if (!a) return "";
-  const mark = (ok) => (ok ? "✓" : "✗");
-  const row = (name, value, note = "", attrs = "") =>
-    `<tr${attrs}><th>${escapeHtml(name)}</th><td>${value}</td><td>${escapeHtml(note)}</td></tr>`;
+  // what falls short in deep red (his ask of 11 October 2026: no cross), and a
+  // name and a value a row, nothing said about either (his ruling of the same
+  // day: no descriptive text)
+  const short = (text, bad) => (bad ? `<span class="over">${text}</span>` : text);
+  const row = (name, value, attrs = "") =>
+    `<tr${attrs}><th>${escapeHtml(name)}</th><td>${value}</td></tr>`;
   const rows = [];
   if (a.needed) {
     rows.push(row("Needed", grouped(a.needed.newtons),
-                  "worst wire " + a.needed.name + ", at " + a.needed.label,
                   ` data-capture="${a.needed.capture}" data-wire="${a.needed.wire}"`));
   }
-  rows.push(a.have ? row("Have", grouped(a.have.newtons), "one spool, " + shortMechanism(a.have.mechanism))
-    : row("Have", "none"));
-  if (a.gap) rows.push(row(a.gap.missing ? "Missing" : "Spare", grouped(a.gap.newtons) + " " + mark(!a.gap.missing)));
-  rows.push(row("Form", millimetres(a.form.mm) + " " + mark(a.form.within),
-                "worst offset, tolerance " + Number(a.form.tolerance) + " mm"));
-  const rods = a.holds ? a.holds.rods : 0;
-  const counted = rods + (rods === 1 ? " rod" : " rods");
-  rows.push(row("Holds", !rods ? "none"
-    : a.holds.perSide ? a.holds.perSide + " a side, " + counted : counted));
+  rows.push(row("Have", a.have ? grouped(a.have.newtons) : "none"));
+  if (a.gap) rows.push(row(a.gap.missing ? "Missing" : "Spare", short(grouped(a.gap.newtons), a.gap.missing)));
+  rows.push(row("Worst offset", short(millimetres(a.form.mm), !a.form.within)));
+  if (a.mean) rows.push(row("Mean offset", short(millimetres(a.mean.mm), !a.mean.within)));
+  if (a.trees) {
+    rows.push(row("Trees load", short(grouped(a.trees.newtons), a.trees.utilisation > 1)));
+    if (a.trees.capacity != null) rows.push(row("Trees capacity", grouped(a.trees.capacity)));
+  }
   if (a.pull) {
-    rows.push(row("Pull in", grouped(a.pull.newtons) + " a tendon",
-                  a.pull.tendons + (a.pull.tendons === 1 ? " tendon, " : " tendons, ")
-                  + grouped(a.pull.total) + " in all"));
+    rows.push(row("Pull in", grouped(a.pull.newtons)));
+    rows.push(row("Pull total", grouped(a.pull.total)));
   }
   return `<table class="answer${stale ? " stale" : ""}">` + rows.join("") + "</table>";
 }
@@ -766,8 +886,6 @@ export function recordingCaption(sim, index) {
     "Wire max " + newtons(line.wire), "Trees " + line.trees.toFixed(2),
     "Deviation max " + millimetres(line.deviation),
     "Heads touching " + line.touching + "/" + line.heads,
-    ...(line.holds ? ["Struts " + line.struts + "/" + line.holds, "Ties " + line.ties + "/" + line.holds]
-      : []),
     ...(line.tendons ? ["Pulling " + line.pulling + "/" + line.tendons, "At the stop " + line.atStop]
       : [])].join("   ");
 }
@@ -817,7 +935,10 @@ export function paintOverlay(ctx, { width, height, caption, labels, key }) {
     ctx.font = px(12) + "px sans-serif";
     ctx.fillText(key.title, barX, y0 + px(14));
     const gradient = ctx.createLinearGradient(barX, 0, barX + barW, 0);
-    RAMP_STOPS.forEach((stop, i) => gradient.addColorStop(i / (RAMP_STOPS.length - 1), stop));
+    const stops = key.judged
+      ? JUDGED_STOPS.map(([share, colour]) => [share / JUDGED_TOP, colour])
+      : RAMP_STOPS.map((colour, i) => [i / (RAMP_STOPS.length - 1), colour]);
+    stops.forEach(([at, colour]) => gradient.addColorStop(at, colour));
     ctx.fillStyle = gradient;
     ctx.fillRect(barX, barY, barW, barH);
     // the limit marked at its place on the bar, when it is within the run

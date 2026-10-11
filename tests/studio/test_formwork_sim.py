@@ -223,7 +223,7 @@ def test_each_lines_side_is_its_free_edge_nodes():
 
 def test_a_net_with_no_principal_line_or_lines_that_do_not_sort_has_none_and_says_why():
     faces, heads, node = _strip_net()
-    why = "No tendons: this net's lines do not run across from a principal line"
+    why = "No tendons"
     assert formwork_sim.across_lines(faces, [node(2, 0)]) == (None, [], why)       # one head
     assert formwork_sim.across_lines(faces + [[node(0, 0), node(1, 0), node(1, 1)]], heads) == (
         None, [], why)                                                             # a triangle

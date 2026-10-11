@@ -19,11 +19,11 @@ LIST = [
                  "rope": "rope-8mm", "wires_per_motor": 1},
      "have_newtons": 6660.0, "limit": "rope tension", "part": "rope-8mm",
      "part_name": "8 mm 7x19",
-     "label": "ES-MH342200, 7:1, 185 mm pulleys, 8 mm 7x19: 6,660 N a spool"},
+     "label": "ES-MH342200, 7:1, 185 mm pulleys, 8 mm 7x19: 6,660 N"},
     {"choices": {"motor": "23HS45-4204D-E1000", "ratio": 20, "pulley": "Pfaff-DSRB-90-6",
                  "rope": "rope-6mm", "wires_per_motor": 1},
      "have_newtons": 3229.4, "limit": "motor torque", "part": "23HS45-4204D-E1000",
-     "label": "23HS45-4204D-E1000, 20:1, 90 mm pulleys, 6 mm 7x19: 3,229 N a spool"},
+     "label": "23HS45-4204D-E1000, 20:1, 90 mm pulleys, 6 mm 7x19: 3,229 N"},
 ]
 
 HARNESS = """
@@ -67,23 +67,27 @@ def test_the_choice_is_the_motor_this_browser_left_else_the_strongest(out):
 def test_the_dropdown_lists_each_mechanism_by_its_label(out):
     options = out["options"]
     assert options == ('<option value="0">ES-MH342200, 7:1, 185 mm pulleys, 8 mm 7x19: '
-                       '6,660 N a spool</option><option value="1" selected>23HS45-4204D-E1000, '
-                       '20:1, 90 mm pulleys, 6 mm 7x19: 3,229 N a spool</option>')
+                       '6,660 N</option><option value="1" selected>23HS45-4204D-E1000, '
+                       '20:1, 90 mm pulleys, 6 mm 7x19: 3,229 N</option>')
 
 
 def test_under_it_three_lines_have_limited_by_and_checks(out):
     html = out["html"]
-    assert "<th>Have</th><td>3,229 N a spool</td>" in html["pass"]
+    assert "<th>Have</th><td>3,229 N</td>" in html["pass"]
     # what gives way first, then the part by the name it is bought by; a
     # list from before the names were sent falls back on the part's key
     assert "<th>Limited by</th><td>motor, 23HS45-4204D-E1000</td>" in html["pass"]
-    assert "<th>Checks</th><td>all pass ✓</td>" in html["pass"]
-    # only what fails, a line each
-    assert "<th>Checks</th><td>rope on drum 4,000 of 3,616 mm ✗</td>" in html["fail"]
-    assert "<td>carriage 400 of 300 mm ✗</td>" in html["fail"]
+    # nothing to say when every check passes (his ruling of 11 October 2026)
+    assert "Checks" not in html["pass"] and "pass" not in html["pass"]
+    # only what fails, a line each, in deep red rather than marked with a
+    # cross (his ask of 11 October 2026)
+    assert ('<th>Checks</th><td><span class="over">rope on drum 4,000 of 3,616 mm</span></td>'
+            in html["fail"])
+    assert '<td><span class="over">carriage 400 of 300 mm</span></td>' in html["fail"]
+    assert "✗" not in html["fail"] and "✓" not in html["pass"]
     assert "all pass" not in html["fail"]
     # before a run there is nothing to check yet
-    assert "<th>Checks</th><td>after a run</td>" in html["before"]
+    assert "Checks" not in html["before"] and "after a run" not in html["before"]
     assert "<th>Limited by</th><td>rope, 8 mm 7x19</td>" in html["before"]
     assert html["none"] == ""
     # three lines, no paragraph

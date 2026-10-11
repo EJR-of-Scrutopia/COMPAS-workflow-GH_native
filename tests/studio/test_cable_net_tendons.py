@@ -56,16 +56,16 @@ out.colours = {
   both: [0, 1, 2, 3].map((e) => colour("both", e)),
   offset: colour("deviation", 0),
   unsorted: m.memberColour("along", unsorted, unsorted.captures[2], 0),
-  ramp: [m.ramp(1), m.ramp(700 / 3300), m.ramp(200 / 3300), m.ramp(3000 / 3300)],
+  judged: [m.judged(3000 / 1800), m.judged(400 / 1800), m.judged(200 / 1800)],
   other: m.OTHER_FAMILY,
 };
-out.force = m.memberForce(sim, sim.captures[2], 1);
+out.force = "memberForce" in m;
 const limits = { have: 1200, rope: 1800, tolerance: 20 };
 out.keys = ["along", "across", "both"].map((by) => m.colourKey(by, sim, limits));
 const flat = (list) => list.map((l) => [l.kind, l.index, l.text]);
-out.labels = { along: flat(m.colourLabels(sim, 2, "along", 1)),
-               across: flat(m.colourLabels(sim, 2, "across", 1)),
-               both: flat(m.colourLabels(sim, 2, "both", 1)) };
+out.labels = { along: flat(m.colourLabels(sim, 2, "along")),
+               across: flat(m.colourLabels(sim, 2, "across")),
+               both: flat(m.colourLabels(sim, 2, "both")) };
 out.shown = ["along", "across", "both"].map((by) => m.labelsShown(by, { net: true }));
 out.weakest = m.weakestAt(sim, 2, limits).filter((w) => w.kind === "member");
 out.line = [m.frameLine(sim, 1), m.frameLine(sim, 3)];
@@ -103,7 +103,7 @@ def out(tmp_path_factory):
     reason = _run()
     reason["options"]["pull_in"] = 300.0
     reason["tendons"] = None
-    reason["tendons_reason"] = "No tendons: this net's lines do not run across from a principal line"
+    reason["tendons_reason"] = "No tendons"
     unread = _run()
     del unread["net"]["families"]
     script = tmp_path_factory.mktemp("cable_net_tendons") / "harness.mjs"
@@ -127,10 +127,10 @@ def test_the_tendons_are_read_with_every_edges_family_and_each_edges_tendon(out)
     # edge 1 (1 to 2) carries the first tendon, edge 2 (2 to 3) the second
     assert read["edgeTendon"] == [-1, 0, 1, -1]
     assert read["pulls"] == [[0, 0], [300, 0], [300, 300], [300, 300]]
-    # along: the ropes alone, largest 200 N on edge 0; across and both: each
-    # across rope with its tendon, largest 3,000 + 300 N on edge 1
+    # each family by its ropes alone (his answer of 11 October 2026): along
+    # largest 200 N on edge 0, across and both 3,000 N on edge 1
     scales = read["scales"]
-    assert (scales["along"], scales["across"], scales["both"]) == (200, 3300, 3300)
+    assert (scales["along"], scales["across"], scales["both"]) == (200, 3000, 3000)
     assert read["older"] is False
     # a run without a pull has none, and its captures none
     assert read["plainTendons"] is None and read["plainPulls"] == []
@@ -144,43 +144,46 @@ def test_colour_by_is_wires_along_across_both_offset_trees_or_off(out):
 
 
 def test_along_and_across_colour_their_own_family_and_grey_the_other(out):
+    # each rope by its own tension against its 1,800 N working load, the
+    # tendon beside it left out (his answer of 11 October 2026)
     c = out["colours"]
-    red, edge2, edge0, _ = c["ramp"]
+    edge1, edge2, edge0 = c["judged"]
     other = c["other"]
-    # along at S1 q1: edge 0 at 200 N, the run's largest along; edges 1 and 2 grey
-    assert c["along"][0] == pytest.approx(red)
+    # along at S1 q1: edge 0 at 200 N; edges 1 and 2 grey
+    assert c["along"][0] == pytest.approx(edge0)
     assert c["along"][1] == c["along"][2] == other
     assert c["along"][3] != other
-    # across: edge 1 at 3,000 + 300 N, the largest; edge 2 at 400 + 300 N
-    assert c["across"][1] == pytest.approx(red)
+    # across: edge 1's rope at 3,000 N, edge 2's at 400 N
+    assert c["across"][1] == pytest.approx(edge1)
     assert c["across"][2] == pytest.approx(edge2)
     assert c["across"][0] == c["across"][3] == other
-    # both: every member by its whole force, on one scale
+    # both: every rope so
     assert c["both"][0] == pytest.approx(edge0)
-    assert c["both"][1] == pytest.approx(red)
+    assert c["both"][1] == pytest.approx(edge1)
     assert other not in c["both"]
     assert c["offset"] is None
     # a net with no families: nothing is either family's
     assert c["unsorted"] == other
-    assert out["force"] == 3300
+    assert out["force"] is False
 
 
-def test_along_and_both_mark_the_ropes_working_load_and_across_none(out):
+def test_along_across_and_both_mark_the_ropes_working_load(out):
     along, across, both = out["keys"]
-    assert along == {"title": "along, rope tension, kN", "min": "0", "max": "0.2 kN",
-                     "limitText": "working load 1.8 kN", "fraction": None}
-    assert across == {"title": "across, rope and tendon, kN", "min": "0", "max": "3.3 kN",
-                      "limitText": None, "fraction": None}
-    assert both["title"] == "rope and tendon, kN" and both["max"] == "3.3 kN"
-    assert both["limitText"] == "working load 1.8 kN"
-    assert both["fraction"] == pytest.approx(1800 / 3300)
+    assert along == {"title": "along, rope tension, kN", "min": "0", "max": "3.6 kN",
+                     "limitText": "working load 1.8 kN", "fraction": 0.5, "judged": True}
+    assert across == {"title": "across, rope tension, kN", "min": "0", "max": "3.6 kN",
+                      "limitText": "working load 1.8 kN", "fraction": 0.5, "judged": True}
+    assert both["title"] == "rope tension, kN" and both["max"] == "3.6 kN"
 
 
-def test_the_values_on_the_model_are_each_familys_worst_and_its_worst_a_side(out):
+def test_the_values_on_the_model_are_the_worst_of_each_line_of_the_family(out):
     labels = out["labels"]
-    assert labels["along"] == [["member", 0, "0.2 kN"], ["member", 3, "0.1 kN"]]
-    assert labels["across"] == [["member", 1, "3.3 kN"], ["member", 2, "0.7 kN"]]
-    assert labels["both"] == [["member", 1, "3.3 kN"], ["member", 2, "0.7 kN"]]
+    # the worst of every line of the family (his answer of 11 October 2026):
+    # along, its one line's worst; across, each side's line
+    assert labels["along"] == [["member", 0, "0.2 kN"]]
+    assert labels["across"] == [["member", 1, "3.0 kN"], ["member", 2, "0.4 kN"]]
+    assert labels["both"] == [["member", 1, "3.0 kN"], ["member", 2, "0.4 kN"],
+                              ["member", 0, "0.2 kN"]]
     assert out["shown"] == [True, True, True]
 
 
@@ -210,8 +213,10 @@ def test_a_nodes_card_gives_its_tendons_tension(out):
 def test_the_answer_says_the_pull_a_tendon_and_in_all(out):
     pull, html, plainPull, plainHtml = out["answer"]
     assert pull == {"newtons": 300, "tendons": 2, "total": 600}
-    assert "<th>Pull in</th><td>300 N a tendon</td><td>2 tendons, 600 N in all</td>" in html
-    assert html.index("Holds") < html.index("Pull in")
+    # a tendon's pull, and all of them together (his ruling of 11 October
+    # 2026: values, not notes)
+    assert "<tr><th>Pull in</th><td>300 N</td></tr><tr><th>Pull total</th><td>600 N</td></tr>" in html
+    assert html.index("Trees load") < html.index("Pull in") and "Holds" not in html
     assert plainPull is None and "Pull in" not in plainHtml
 
 
@@ -222,7 +227,7 @@ def test_the_run_is_out_of_date_when_the_pull_changes(out):
     assert w["plain"] == [] and w["loading"] == []
     assert w["plainPulled"] == ["Run again: pull changed"]
     # a pulled run on a net with no principal line says why it has no tendons
-    assert w["reason"] == ["No tendons: this net's lines do not run across from a principal line"]
+    assert w["reason"] == ["No tendons"]
 
 
 def test_a_run_read_without_families_is_an_older_run(out):
@@ -241,5 +246,5 @@ def test_the_other_family_is_a_quiet_mid_grey(out):
 def test_a_third_graph_draws_the_pull_of_all_the_tendons(out):
     assert out["series"] == [0, 300, 600, 600]
     pulled, plain = out["graphs"]
-    assert pulled.count("<svg") == 3 and "pull in, all tendons, N" in pulled
+    assert pulled.count("<svg") == 3 and "pull total, N" in pulled
     assert plain.count("<svg") == 2

@@ -118,4 +118,4 @@ def test_a_module_level_throw_is_reported_rather_than_swallowed():
     )
     script = inline_script(page)
     assert 'window.addEventListener("error"' in script
-    assert "stopped setting itself up" in script
+    assert "Studio failed to start" in script

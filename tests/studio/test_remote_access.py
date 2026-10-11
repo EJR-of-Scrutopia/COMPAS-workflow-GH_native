@@ -581,7 +581,7 @@ def test_the_analysis_lenses_are_buttons_one_at_a_time():
     assert 'setShowMode("framework");' in set_layer
     assert 'setShowMode(state.showModeBeforeForces || "both");' in set_layer
 
-    build = _js_function(js, "function buildLensButtons(holder, table, notes, alwaysShown)")
+    build = _js_function(js, "function buildLensButtons(holder, table)")
     assert 'className = "layer-btn"' in build
     assert "holder.appendChild(exaggerationRow)" in build, (
         "the exaggeration slider seats under the Deflection button")
@@ -595,8 +595,8 @@ def test_the_analysis_lenses_are_buttons_one_at_a_time():
     # Round two removed the stress threshold on his word.
     recolour = _js_function(js, "function recolourSegments()")
     assert "threshold" not in recolour
-    assert '"member force, kN (extremes clamped)"' in js, (
-        "the key speaks for the wires too, and admits its clamp")
+    assert '"member force, kN"' in js, "the key speaks for the wires too"
+    assert "extremes clamped" not in js, "a name and a unit (his ruling of 11 October 2026)"
 
     # Colours you can SEE (his report: "surely i should be seeing the
     # force colours?"): p95 normalisation spreads the body of the
@@ -638,13 +638,14 @@ def test_the_analysis_lenses_are_buttons_one_at_a_time():
     for shade in ("0x3f9e57", "0xc99a2e", "0xc24936"):
         assert shade in vectors, "the thrust buckets wear the verdict colours"
     assert "state.analysisSliders.thrustScale, magnitudeMax" in vectors
-    # And the lens explains itself ON the panel (the pulse taught this
-    # panel that much; a tooltip was not the answer).
-    build2 = _js_function(js, "function buildLensButtons(holder, table, notes, alwaysShown)")
-    assert '"layer-note"' in build2
-    assert ("buildLensButtons(holder, LAYERS, { thrust: THRUST_NOTE }, true)"
-            in _js_function(js, "function buildLayerToggles()")), (
-        "the thrust note is always shown under its button")
+    # The note under the Support thrust button went with his ruling of 11
+    # October 2026 (no descriptive text): the arrows' colours are the
+    # verdict colours, and the panel does not explain them.
+    build2 = _js_function(js, "function buildLensButtons(holder, table)")
+    assert '"layer-note"' not in build2
+    assert "THRUST_NOTE" not in js
+    assert ("buildLensButtons(holder, LAYERS);"
+            in _js_function(js, "function buildLayerToggles()"))
 
     arrows = _js_function(js, "function arrowField(entries, colour, anchor, lengthScale = 1,")
     assert "depthTest: false" in arrows
@@ -920,7 +921,7 @@ def test_the_skin_is_weighed_in_the_analysis():
 
     The skin stops being render-only for weight. Its density travels to
     the solver, earns its own cache slot, is recorded in provenance, and
-    the narrative says which density it used and why."""
+    the Analysis tab says which density it used and whose it was."""
 
     import sys
     sys.path.insert(0, str(REPO / "bench" / "studio"))
@@ -973,11 +974,13 @@ def test_the_skin_is_weighed_in_the_analysis():
     assert 'url += "&density=" + weighAs;' in js
     assert "density: params.density," in js, "the staged run is weighed too"
 
-    # And the narrative says which density it used, and whose it was.
+    # And the Analysis tab says which density it used, and whose it was:
+    # since his ruling of 11 October 2026 a row's name says it rather
+    # than a sentence, Skin density when the skin's own weighed the vault.
     narrative = (REPO / "bench" / "studio" / "static"
                  / "data_analysis.js").read_text(encoding="utf-8")
     assert "input.densityFromSkin = !!bundle.provenance.density_from_skin;" in narrative
-    assert "the SKIN's own density rather than the structural" in narrative
+    assert 'input.densityFromSkin ? "Skin density" : "Density"' in narrative
     # And the self-weight ESTIMATE weighs with the same density it just
     # reported, or a copper shell is announced at 8940 and then weighed as
     # concrete two sentences later.
@@ -1000,7 +1003,9 @@ def test_the_weight_note_names_the_material_and_shows_on_load():
     assert "entry.label" in label, "a library skin answers with its own name"
     note = _js_function(js, "function updateWeightNote()")
     assert "weighedAsLabel() + \": \"" in note, "the name leads"
-    assert "kg/m3 x " in note and "kN/m2" in note
+    # the density and the load, no sum and no tooltip (his ruling of 11
+    # October 2026: values, not explanations)
+    assert "kg/m3, " in note and "kN/m2" in note and " mm = " not in note and "note.title" not in note
     # Written on every study load, not only when a control moves. Pinned
     # CONTIGUOUS with the call above it, so an early return slipped in
     # between cannot leave the text standing while the row goes blank.
@@ -1263,7 +1268,7 @@ def test_a_lamp_is_a_prop_that_carries_a_real_light():
     # be told when the count changes -- it read "Lights" over two lamps
     # until a placement started saying so.
     sync = _js_function(js, "function syncLightControls()")
-    assert '"tuning all " + lamps.length + " fixtures"' in sync, (
+    assert '"All " + lamps.length + " fixtures' in sync, (
         "the heading moved into the Lights drawer's readout line, and it "
         "stopped calling them lamps: Param asked for both")
     assert "  if (isLamp(record)) syncLightControls();\n  if (save) saveProps();" in js
@@ -1430,22 +1435,24 @@ def test_a_fixture_can_be_made_invisible_and_still_picked_up():
         "the same rule Output and Warmth follow")
 
     # THE CONTROL, in his word, in the four-part shape, with a title
-    # that says what it does and what it does not.
+    # that names it: the body is hidden, not the light.
     drawer = html[html.index('<div id="lights-panel"'):]
     drawer = drawer[:drawer.index('<div id="shelf-grid"')]
     assert "<span>Invisible</span>" in drawer
     assert '<input id="lamp-invisible" type="checkbox">' in drawer
-    assert '<b id="lamp-invisible-value">no</b><em></em>' in drawer, (
+    assert '<b id="lamp-invisible-value"></b><em></em>' in drawer, (
         "a toggle has no unit, and an empty cell keeps the four-cell "
-        "grid the block is read down")
+        "grid the block is read down; at rest the tick says the state")
     row = drawer[:drawer.index("<span>Invisible</span>")]
     row = row[row.rindex("<label "):]
-    assert "its light does not change" in row, (
-        "the title says what it does NOT do as well; a control that "
-        "looked like it turned the light off would be read as one")
+    assert 'title="Hide fixture body"' in row, (
+        "the title names what it hides, the body and not the light; a "
+        "control that looked like it turned the light off would be read as one")
+    # The reading beside the tick is left empty: the tick shows the state
+    # (his ruling of 11 October 2026), in the drawer and on the card.
     sync = _js_function(js, "function syncLightControls()")
-    assert 'const said = document.getElementById("lamp-invisible-value");' in sync
-    assert 'said.textContent = hidden ? "yes" : "no";' in sync
+    assert 'getElementById("lamp-invisible-value")' not in sync
+    assert 'hidden ? "yes" : "no"' not in js
     assert 'writeLamps("invisible", !!e.target.checked);' in js
     aimed = _js_function(js, "function writeLamps(field, value)")
     assert 'else if (field === "invisible") state.lampInvisible = value;' in aimed
@@ -1577,14 +1584,14 @@ def test_the_spot_has_an_aperture_and_the_panel_has_one_face():
         assert '<b id="%s-value">' % control in drawer, control
         assert unit in drawer, control
     assert '<input id="lamp-shadow" type="checkbox" checked>' in drawer
-    assert '<b id="lamp-shadow-value">on</b><em></em>' in drawer
+    assert '<b id="lamp-shadow-value"></b><em></em>' in drawer
     assert drawer.count('class="spot-dial hidden"') == 4, (
         "all four are hidden until a spot is in hand")
     assert 'data-unit="1"' in drawer[drawer.index('id="lamp-reach"') - 200:
                                      drawer.index('id="lamp-reach"') + 80], (
         "Reach rests at zero, where the typable reading cannot derive "
         "its own factor")
-    assert "nought means no limit" in drawer, (
+    assert 'title="Beam reach, 0 unlimited"' in drawer, (
         "and the title says what a nought reach means, because nothing "
         "about a slider at its floor says it")
     sync = _js_function(js, "function syncLightControls()")
@@ -1593,7 +1600,7 @@ def test_the_spot_has_an_aperture_and_the_panel_has_one_face():
         "the selected fixture, or any spot in the scene when nothing is "
         "selected: the same rule the rest of the drawer follows")
     assert 'write("lamp-aperture", aperture, Math.round(aperture));' in sync
-    assert 'said.textContent = cast ? "on" : "off";' in sync
+    assert 'cast ? "on" : "off"' not in js
 
     # The four reach SPOTS alone. A sphere handed an aperture would
     # carry it through the layout and the scene for ever and never use it.
@@ -1980,7 +1987,8 @@ def test_the_machines_are_derived_when_the_document_places_none():
         "past it")
     # A derived placement is a studio OPINION and must never be mistaken
     # for his authoring, so it says so where he will see it.
-    assert '    showBanner("This mechanism carries no placements, so the machines are "' in build
+    assert ('    showBanner("Derived from the supports: " + derived.instances.length\n'
+            '      + " machines, " + derived.wires.length + " cables", "info");') in build
 
     # A SPOOL, not a pulley: they arrive under the same `reels` key and
     # only the winding radius separates them. The writer's own figure
@@ -2076,7 +2084,7 @@ def test_a_scene_tile_can_update_itself_from_the_view_on_screen():
     # The tile underneath restores the scene, so the pip must not do both.
     assert "      event.stopPropagation();\n" \
         "      if (!state.bundle) {\n" \
-        '        showBanner("Load a study before updating a scene", "error");' in js
+        '        showBanner("No study loaded", "error");' in js
     assert "      await refreshScenes();\n    });\n    const holder" in js, (
         "the list is re-read so the new still appears at once")
     # Hovering ANYWHERE on the tile reveals the pip. A sibling selector
@@ -2087,7 +2095,7 @@ def test_a_scene_tile_can_update_itself_from_the_view_on_screen():
     # scene is bad. "Method Not Allowed" is the least useful thing that
     # could be said about that, and it is what he was shown.
     assert "        showBanner(response.status === 405" in js
-    assert '            + "update route existed. Restart it and this will work."' in js
+    assert '          ? "Scene not updated: restart the server"' in js
 
     css = (REPO / "bench" / "studio" / "static" / "studio.css").read_text(encoding="utf-8")
     # POSITIONING UNSCOPED, because the scene list is drawn in two places:
@@ -2262,7 +2270,7 @@ def test_the_machine_draws_the_way_he_asked():
     assert "    state.recordStop = true;" in js, "a second press stops the take"
     # A stopped take is not stitched: he pressed stop because it was
     # wrong, and handing him a video of it anyway would be a surprise.
-    assert '      status.textContent = "stopped at frame " + stopped + " of " + total' in js
+    assert '      status.textContent = "stopped at frame " + stopped + " / " + total;' in js
     # And the button goes back to Record however the take ended.
     assert "    state.recording = false;\n" \
         "    state.recordStop = false;\n" \
@@ -2282,8 +2290,9 @@ def test_the_machine_draws_the_way_he_asked():
     assert "  if (!model.wires.length) {\n" \
         '    logStudio("machine: this document carries NO wires, so no cables are "' in build
     assert "  if (!model.instances.length || !model.wires.length) {\n" in build
-    assert '      + ", so the machine is drawn once and does not run", "error");' in build, (
+    assert '    showBanner("Mechanism export missing "\n' in build, (
         "loud enough to answer the question before he has to ask it")
+    assert '", so the machine is drawn once and does not run"' not in build
     assert '[model.instances.length ? null : "machine placements",\n' \
         '         model.wires.length ? null : "wires"].filter(Boolean).join(" and ")' in build, (
             "and it names which of the two is missing, not both blindly")
@@ -2464,9 +2473,9 @@ def test_the_entry_box_is_torn_down_exactly_once():
     boot = html[html.index("function bootFault(message)"):]
     boot = boot[:boot.index('window.addEventListener("error"')]
     assert "if (window.__studioReady) {" in boot
-    assert "<b>Something in the studio threw.</b>" in boot
+    assert "<b>Studio error.</b>" in boot
     assert boot.index("if (window.__studioReady) {") \
-        < boot.index("<b>The studio stopped setting itself up.</b>"), (
+        < boot.index("<b>Studio failed to start.</b>"), (
         "the ready check has to come FIRST or the boot message wins anyway")
 
 
@@ -2696,17 +2705,20 @@ def test_a_scene_missing_its_sky_says_so_and_restores_the_rest():
     verdict = apply_body.index("await loadHdri(hdri.name);")
     after_load = apply_body[verdict:]
     assert "if (state.hdriName !== hdri.name)" in after_load
-    assert "is not in the sky " in after_load
-    assert "the rest of the scene is restored" in after_load
+    # a few words (his ruling of 11 October 2026: no descriptive text)
+    assert "showBanner('Sky \"' + hdri.name + '\" missing', \"error\");" in after_load
+    assert "the rest of the scene is restored" not in after_load
 
 
-def test_the_folder_status_line_carries_the_reason():
-    """The client repeats the server's zero-vault hint beside the count
-    instead of leaving a bare "0 vaults in this folder" (the line Param
-    met when the picker took the cut cache)."""
+def test_the_folder_status_line_is_the_count():
+    """The client used to repeat the server's zero-vault hint beside the
+    count (the line Param met when the picker took the cut cache). His
+    ruling of 11 October 2026 keeps the data and drops the explanation:
+    the line is the number of vaults."""
 
     js = STUDIO_JS.read_text(encoding="utf-8")
-    assert 'folder.hint ? " -- " + folder.hint : ""' in js
+    assert "folder.hint" not in js
+    assert 'status.textContent = folder.studies + " vaults";' in js
 
 
 def test_the_data_sheet_leads_with_the_analysis():
@@ -2737,6 +2749,34 @@ def test_the_data_sheet_leads_with_the_analysis():
     assert '"data_analysis.js"' in app_py, (
         "the module must join the versioned import remap or a stale copy "
         "outlives every edit")
+
+
+def test_the_data_sheet_says_what_is_missing_in_a_word_or_two():
+    """His ruling of 11 October 2026: "i dont think we need all this
+    descriptive text... just showing the data with red for bad, and a
+    basic layout for information". The Data sheet's empty and failed
+    states are a heading's worth of words, and a figure past its limit
+    wears the same deep red the Cable net answer does."""
+
+    js = STUDIO_JS.read_text(encoding="utf-8")
+    render = _js_function(js, "function renderAnalysisTab()")
+    assert 'holder.innerHTML = "<h3>No study</h3>";' in render
+    assert 'holder.textContent = "Not built: " + error.message;' in render
+    graphs = _js_function(js, "async function renderDataGraphs()")
+    assert 'holder.innerHTML = "<p>No study</p>";' in graphs
+    assert 'holder.innerHTML = "<p>No staged run</p>";' in graphs
+    for gone in ("Load a study first", "could not be built",
+                 "the Overview tab still has", "come back"):
+        assert gone not in render + graphs, gone
+
+    css = (REPO / "bench" / "studio" / "static" / "studio.css").read_text(
+        encoding="utf-8")
+    assert "#data-analysis .over { color: #e2453a; font-weight: 600; }" in css
+    assert (':root[data-theme="light"] #data-analysis .over '
+            "{ color: #a3231a; }") in css
+    # The pills and the disclaimer box left with the prose they dressed.
+    for gone in (".pill", ".data-note"):
+        assert gone not in css, gone
 
 
 def test_the_waker_stays_on_loopback_and_stays_silent():
@@ -2811,8 +2851,9 @@ def test_the_scatter_stops_at_a_measured_budget_and_says_why():
     assert "if (triangles >= SCATTER_BUDGET_TRIANGLES) break;" in solve
     assert "if (placed.length >= SCATTER_MAX_ITEMS) break;" in solve
     paint = _js_function(js, "function paintScatter(solved)")
-    assert "stopped at" in paint, (
-        "a guard rail with no explanation reads as a broken tool")
+    assert '"Stopped: " + solved.stopped' in paint, (
+        "a guard rail that does not say it stopped reads as a broken tool; "
+        "which cap it hit is the reason, in deep red")
 
 
 def test_the_scatter_region_outline_cannot_steal_a_click():
@@ -3647,16 +3688,24 @@ def test_every_placement_lands_on_the_open_layer():
     assert 'pushUndo("grouping " + chosen.length + " props", () => {' in group
     assert "at = dropLayerIfEmpty(home);" in group
     assert "() => groupToNewLayer({ chosen, home, at, openBefore })" in group
-    # Say where things go.
+    # Say where things go: the layer by name, and no instructions round
+    # it (his ruling of 11 October 2026: no descriptive text).
     paint = _js_function(js, "function paintScatter(solved)")
-    assert '"  --  brush it on, or drag an area, onto " + placingOntoName()' in paint
-    assert '" placed onto "' in paint
-    assert '"press and drag to paint onto " + placingOntoName()' in _js_function(
+    # the species and their weights are the chips above it: not said twice
+    assert 'readout.textContent = "Layer: " + placingOntoName();\n    return;' in paint
+    assert "names.join" not in paint
+    assert '" placed  \\u00b7  Layer: "' in paint
+    assert 'readout.textContent = "Layer: " + placingOntoName();' in _js_function(
         js, "function armScatterBrush()")
-    assert '"drag a rectangle to fill it onto " + placingOntoName()' in _js_function(
+    assert 'readout.textContent = "Layer: " + placingOntoName();' in _js_function(
         js, "function armScatterArea()")
-    assert '"; new fixtures go onto " + placingOntoName()' in _js_function(
+    assert '+ "Layer: " + placingOntoName();' in _js_function(
         js, "function syncLightControls()")
+    for gone in ("brush it on, or drag an area", "press and drag to paint",
+                 "drag a rectangle to fill it", "new fixtures go onto",
+                 "loosen the spacing", "pick one or more species",
+                 "click a fixture to place it"):
+        assert gone not in js, gone
 
 
 def _js_whole_function(source, header):
@@ -4976,8 +5025,8 @@ def test_the_setting_and_the_weather_live_in_the_skies_drawer():
     # and the pair read as one finished control and one unfinished one.
     picker = drawer[drawer.index('<button id="weather-picker"'):]
     picker = picker[:picker.index("</button>")]
-    assert 'title="The sky itself:' in picker, (
-        "the weather picker says what it does, like its twin")
+    assert 'title="Weather"' in picker, (
+        "the weather picker carries a title, like its twin")
 
     scene = html[html.index('<details id="scene-section">'):]
     scene = scene[:scene.index("</details>")]
@@ -6028,7 +6077,7 @@ def test_a_still_is_tiled_through_its_own_endpoint_and_covers_the_viewport():
     assert "paintStillReadout" not in paint, (
         "the size line belongs to paintStillSize, written when the size "
         "changes and never in the finally clause of a render")
-    assert "written in " in still
+    assert "written in " not in still and '" s  " + done.still' in still
 
     # Named for the page.
     assert '{ key: "a3-300", label: "A3", long: 4961 }' in js

@@ -4,14 +4,11 @@
 // THREE is handed in rather than imported, so the drawing runs under node in
 // the tests as it does in the page.
 
-import {
-  bandColour, colourOf, holdForce, holdRod, jackedAt, memberColour, placedFaces, targetPoint,
-} from "./formwork_model.js";
+import { bandColour, colourOf, memberColour, placedFaces, targetPoint } from "./formwork_model.js";
 
 const WIRE_STUB_M = 0.3;        // each rim wire drawn 300 mm along the way it runs in
 const MARK_M = 0.05;            // an anchor's mark, and twice a ground contact's
 const HEAD_M = 0.08;            // a head's mark
-const PROP_M = 0.03;            // a hold's rod, this thick (spec 2026-10-10 formwork holds)
 const RING_M = 0.12;            // the ring round a weakest part (spec 2026-10-11 section 5.3)
 const RING_TUBE_M = 0.015;
 // the Tendons chip (spec 2026-10-11 across tendons, section 6): each tendon
@@ -30,7 +27,6 @@ const PLAIN = [0.86, 0.86, 0.86];
 const TREE_PLAIN = [0.72, 0.74, 0.78];
 const HEAD_TOUCHING = [0x3f / 255, 0x9e / 255, 0x57 / 255];
 const HEAD_CLEAR = [0x9a / 255, 0xa4 / 255, 0xb2 / 255];
-const TIE = [0x2f / 255, 0x6f / 255, 0xd0 / 255];
 const SKIN_COLOUR = 0xc8b49a;
 const DESIGN_COLOUR = 0x9aa4b2;
 const ANCHOR = [0x66 / 255, 0xaa / 255, 0xff / 255];
@@ -103,6 +99,13 @@ export function createFormworkView(THREE) {
     return object;
   }
 
+  // The same run judged again for a new wall, which changes only the trees'
+  // utilisation: drawn from it without building anything again (found by the
+  // final review of 11 October 2026: the tubes kept the run's own wall).
+  function rejudge(next) {
+    if (sim && next) sim = next;
+  }
+
   // Everything the document draws, once; the design and the anchors stand
   // still, the rest moves with the captures.
   function build(next) {
@@ -126,8 +129,6 @@ export function createFormworkView(THREE) {
       ground: marks(new THREE.SphereGeometry(MARK_M / 2, 8, 6), sim.nodes,
                     new THREE.MeshBasicMaterial({ color: 0xc99a2e })),
       skin: skin(),
-      props: marks(new THREE.CylinderGeometry(PROP_M / 2, PROP_M / 2, 1, 8), sim.holds.length,
-                   new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.6 })),
       rings: marks(new THREE.TorusGeometry(RING_M, RING_TUBE_M, 8, 24),
                    sim.nodes + sim.edges.length + rim + sim.trees.members.length,
                    new THREE.MeshBasicMaterial({ color: 0xffffff })),
@@ -190,8 +191,8 @@ export function createFormworkView(THREE) {
   // The capture the player is at: positions blended between the two either
   // side for the drawing, every colour from the nearer one (spec section 7).
   // settings: { show: {net, trees, heads, wires, anchors, ground, skin,
-  // design, holds}, colour, tolerance, weakest (weakestAt's parts), compare,
-  // skinOpacity (0 to 0.5; 0 hides the skin) }.
+  // design, tendons}, colour, tolerance, weakest (weakestAt's parts), compare,
+  // skinOpacity (0 to 1; 0 hides the skin) }.
   function show(head, settings) {
     if (!sim || !parts || !head) return;
     const a = sim.captures[head.from];
@@ -330,9 +331,18 @@ export function createFormworkView(THREE) {
     surface.attributes.position.array.set(at);
     surface.attributes.position.needsUpdate = true;
     if (surface.index && surface.index.count) surface.computeVertexNormals();
-    // the skin's slider (spec 2026-10-11 section 5.5): how opaque, 0 hiding it
+    // the skin's slider (spec 2026-10-11 section 5.5): how opaque, 0 hiding it,
+    // to fully opaque (his ask of 11 October 2026), a solid then
     const opacity = settings.skinOpacity;
-    if (opacity != null) parts.skin.material.opacity = Math.min(0.5, Math.max(0, Number(opacity)));
+    if (opacity != null) {
+      const material = parts.skin.material;
+      material.opacity = Math.min(1, Math.max(0, Number(opacity)));
+      const clear = material.opacity < 1;
+      if (material.transparent !== clear) {
+        material.transparent = clear;
+        material.needsUpdate = true;
+      }
+    }
 
     // the weakest parts (section 5.3): a ring round each, red over its limit,
     // amber the closest when none is over
@@ -365,29 +375,6 @@ export function createFormworkView(THREE) {
       offsets.color.needsUpdate = true;
     }
 
-    // the holds' rods (his ruling of 10 October 2026: a hold is a gripped rod
-    // along its own force): from the jacking on, each set at the angle of its
-    // force at the capture after the jacking, from its foot on the ground up
-    // to its node's design point; green while it pushes, blue while it pulls,
-    // grey while it carries nothing
-    const jacked = near.phase === "holds" || near.phase === "tiling";
-    const set = sim.captures[jackedAt(sim)];
-    sim.holds.forEach((holdNode, h) => {
-      const top = [sim.design[3 * holdNode], sim.design[3 * holdNode + 1], sim.design[3 * holdNode + 2]];
-      const u = holdRod(holdForce(set, h)).u;
-      const length = Math.max(top[2], 1e-6) / u[2];
-      // a cylinder stands along y: turned along the rod, then made as long as it
-      turn.setFromUnitVectors(up, start.set(u[0], u[1], u[2]));
-      matrix.compose(middle.set(top[0] - u[0] * length / 2, top[1] - u[1] * length / 2,
-                                top[2] - u[2] * length / 2), turn, stretch.set(1, length, 1));
-      parts.props.setMatrixAt(h, matrix);
-      const kind = holdRod(holdForce(near, h)).kind;
-      parts.props.setColorAt(h, tone(kind === "strut" ? HEAD_TOUCHING : kind === "tie" ? TIE : HEAD_CLEAR));
-    });
-    parts.props.count = sim.holds.length;
-    parts.props.instanceMatrix.needsUpdate = true;
-    if (parts.props.instanceColor) parts.props.instanceColor.needsUpdate = true;
-
     const on = settings.show || {};
     parts.net.visible = !!on.net;
     parts.design.visible = compare || !!on.design;
@@ -402,7 +389,6 @@ export function createFormworkView(THREE) {
     parts.ground.visible = !!on.ground;
     parts.skin.visible = (opacity != null ? Number(opacity) > 0 : !!on.skin)
       && !!(surface.index && surface.index.count);
-    parts.props.visible = !!on.holds && jacked && sim.holds.length > 0;
     parts.tendons.visible = !!on.tendons && segment > 0;
     parts.reels.visible = parts.tendons.visible;
   }
@@ -465,5 +451,5 @@ export function createFormworkView(THREE) {
     edgeIndex = null;
   }
 
-  return { group, build, show, point, project, nearestNode, clear, parts: () => parts };
+  return { group, build, rejudge, show, point, project, nearestNode, clear, parts: () => parts };
 }

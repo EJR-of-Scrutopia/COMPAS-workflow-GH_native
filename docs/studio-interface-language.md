@@ -51,7 +51,7 @@ Corners are `--radius` on a control and `--radius-s` on a thumbnail.
 This is the rule that the sweep found most often broken, and the one that
 matters most because Param reads these numbers all day.
 
-    <label title="what it does, in a sentence"><span>Name</span>
+    <label title="a few words naming it"><span>Name</span>
       <input id="thing" type="range" min=".." max=".." step="..">
       <b id="thing-value">1.20</b><em>x</em></label>
 
@@ -114,16 +114,15 @@ stop at the panel and reach no drawer.
 
 **So is a toggle, and its unit cell stays empty.** Invisible is
 `<span>Invisible</span>`, a checkbox, a `<b id="lamp-invisible-value">`
-reading yes or no, and an empty `<em></em>`. A toggle has no unit, and
+left empty (the tick is the state), and an empty `<em></em>`. A toggle has no unit, and
 inventing one ("body", "state") is worse than a blank column: the four
 cells are what the whole block is read down, and the blank is the
 honest fourth. The box sits at its own width at the left of its cell
 (`justify-self: start`) rather than stretching a track it does not
 have.
 
-A dial's `title` says what it changes in one sentence, in Param's own
-terms. "The clear gap between items, as a multiple of each one's own
-width" is right; "spacing factor" is not.
+A title names its control in a few words. The panel shows names, values
+and units; explanations are not shown (his ruling of 11 October 2026).
 
 
 ## 4. Naming
@@ -218,21 +217,21 @@ mode and always shows, in the Scene section's Sky group since
 switches to HDRI. The atmosphere picker shows in every mode, because the
 fog works in all three; its ten dials, in the Scene section's Atmosphere
 group, show only while a preset other than None is chosen, and until
-then the group says where the choice is made.
+then the group says there is none.
 
-The readout line is a full sentence in the second ink, and it says the
-state, not an instruction, once there is state to report: "18 placed,
-0.0 M triangles" rather than "Ready".
+The readout line is in the second ink and says the state as values,
+"18 placed, 0.0 M triangles", never an instruction; with no state to
+report it is empty.
 
 
 ## 8. Messages
 
-- Say what happened and what to do, in that order: "stopped at 271 -- 25
-  M triangles. Loosen the spacing or pick a lighter tree."
+- Say what happened in a few words, and what to do only when there is
+  one thing to do: "Run again: pull changed". No explanation.
 - Never blame the user's file for a limit of our reader. The morning of
   2026-09-09 was lost to "Upload one from the Skin component", said of a
   study whose skin was already on disk.
-- A guard rail with no explanation reads as a broken tool.
+- A guard rail still says what stopped it, or it reads as a broken tool.
 - No em dashes anywhere, in the interface or the source. Two hyphens.
 
 
@@ -297,8 +296,8 @@ Glow was removed on 2026-09-11 (Param: "glow doesnt work well id
 rather remove it"), and the Lights row above is four dials. A fixture
 reads as a light by what it lights. The Skies drawer then took the
 atmosphere's nine dials, and Light rays made them ten on 2026-09-13, with Wind, Wind from and Gusts added the same day, and the Cable net
-section's Prestress and Rope speed on 2026-10-08 and its Tolerance and Wires a motor on 2026-10-09, and its Prestress went on 2026-10-10 (worked out from the load now), and the Formwork section's Wall, Capture and Speed came on 2026-10-10, and the one Cable net tab's Tolerance, Wires a motor and Skin came on 2026-10-11 as the old Cable net's Tolerance, Wires a motor and Rope speed went, and its Holds a side came the same day, and its Pull in the same day with the across tendons, so the count is now **67 of 73**: 67 visible
-dials, every one of them in the language, out of 73 range inputs, the
+section's Prestress and Rope speed on 2026-10-08 and its Tolerance and Wires a motor on 2026-10-09, and its Prestress went on 2026-10-10 (worked out from the load now), and the Formwork section's Wall, Capture and Speed came on 2026-10-10, and the one Cable net tab's Tolerance, Wires a motor and Skin came on 2026-10-11 as the old Cable net's Tolerance, Wires a motor and Rope speed went, and its Holds a side came the same day, and its Pull in the same day with the across tendons, and its Holds a side went that evening, so the count is now **66 of 72**: 66 visible
+dials, every one of them in the language, out of 72 range inputs, the
 other six being the three hidden models and the three exemptions named
 above. The figure is measured rather than remembered, by
 `test_the_dial_census_is_the_page_s_own_tally`, which counts the page
@@ -363,7 +362,7 @@ true of the SHELF drawers, which sit outside `#panel` and keep their
 labels; inside the panel a dial is one full-width scrub row. Both are
 the language.
 
-The inventory of section 10 is now 73 sliders. Since then: `site-
+The inventory of section 10 is now 72 sliders. Since then: `site-
 latitude`, `site-longitude`, `site-north` (Scene, Site), `section-offset`
 (Scene, Section), `camera-width` (Camera, shown in orthographic in place
 of Field of view), the Skies drawer's nine atmosphere dials, the
@@ -372,7 +371,7 @@ Output section's `still-size` segments, and `cablenet-tolerance`,
 `cablenet-prestress` came and went, the prestress now worked out from the
 load; and `formwork-wall`, `formwork-scrub` and `formwork-speed` (Formwork:
 the tree tube's wall, the capture the player is at, and the playback speed);
-and `formwork-holds` (Cable net: the rods a side the studio places);
+`formwork-holds` (Cable net: the rods a side) came and went on 2026-10-11;
 and `formwork-pull` (Cable net: the pull on each across tendon).
 
 **Two gestures, written down.** A scatter tool never disables
@@ -418,8 +417,8 @@ column's right edge (`#graphs-collapse`) tucks it off to the left and
 brings it back, and the studio remembers which he left
 (`vaulted-live-graphs-tucked`); tucked, the cards cost nothing. Each
 card's header carries the name, the unit and the live reading in
-monospace; the notes line states every assumption in full; `CSV` hands
-over every series with those assumptions on top. The one number no
+monospace; the assumptions are not shown on the page (his ruling of 11
+October 2026), and `CSV` hands over every series with them on top. The one number no
 document states, the prestress the reels put into the net, is a dial in
 the four-part form, and the graphs say what fraction it is set to: a
 fraction of each cable's final thrust, its force once the whole shell is
@@ -547,7 +546,7 @@ rules the next one follows.
   about the fixture they are both showing.
 - **It is the same language inside.** An id-carrying `.dial-block`,
   four parts to every control, readings named `<slider-id>-value`, a
-  `title` on each one in Param's own terms, themed tokens only.
+  short `title` on each one, themed tokens only.
 - **It shows only what applies.** The spot's four rows are hidden for
   every other kind, and Length is hidden where stretching the body
   would not move the light (`fixtureStretches`: a fixture whose light
@@ -753,7 +752,7 @@ add movement with wsad and 1-4 for moevement speeds". Unreal's viewport
 keys: W and S along the look, A and D across it, the orbit point moving
 with the eye so that letting go leaves the orbit where he now stands.
 1 walks at 1.5 m/s, 2 goes 5, 3 goes 15, 4 goes 45; a diagonal is no
-faster than a straight, and the log says the speed when it changes. The
+faster than a straight, and the console log records the speed. The
 keys stand down while anything with a caret has focus, while Ctrl, Alt
 or Cmd is held, and while a take or a plate owns the camera. Measured:
 held for a second at 2 the eye travelled 5.08 m, and at 4, 24.2 m in
@@ -845,11 +844,11 @@ skies and the four dials that tune the photograph it shows (Projection,
 Scale, Height, Rotation). Brightness moved to the Scene section under a
 new Sky heading, first in the backdrop's block beside Background. The
 atmosphere's ten dials, Light rays among them, moved under Atmosphere,
-which says "No atmosphere: choose one from the Skies tile" while there
+which says "No atmosphere" while there
 is none. Wind, Wind from and Gusts moved under Wind. Folded, each heading
 reads its settings back: the sky's brightness as a percentage, the
 atmosphere by name with its rays when they are on, and the wind's
-strength and bearing, or "calm". MOVED, not copied: every id is on the
+strength and bearing, or "0%". MOVED, not copied: every id is on the
 page once.
 
 THE PANEL MET THEM HIDDEN. `upgradeSliders` skipped a label that was
@@ -880,10 +879,9 @@ as the one face:
 WHAT STAYED, and why. The folders, because which library a tile shows is
 a setting and not a picture. The hidden selects (`render-skin`,
 `ground-preset`, `hdri-select`), because every reader of the choice goes
-through them and the tiles write them. The take's report under Take, which
-says at rest that a take records at 1080p from the icon beside Play, the
-resolution the button's name used to carry; the icon's own title says it
-too.
+through them and the tiles write them. The take's report under Take, empty
+at rest since 11 October 2026; the record icon's own title says 1080p, the
+resolution the button's name used to carry.
 
 THE ICONS CALL THE TAKE'S FUNCTIONS. They used to click the panel's
 buttons, so the buttons could not simply be deleted: `togglePlay`,
@@ -916,8 +914,8 @@ breeze.
 
 Nothing saved is touched: no request from it reaches `/api/scenes`. The
 study's working layout is written empty, as Clear writes it, so a reload
-opens on the blank start. The picture it replaced is one Ctrl+Z away, and
-the button's title says both. Measured on his layout of 98,815 props with
+opens on the blank start. The picture it replaced is one Ctrl+Z away; the
+button's title is "Blank scene". Measured on his layout of 98,815 props with
 Haze, a 40 per cent wind and the sky at 70: New scene left 0 props, no
 atmosphere, a 10 per cent wind and the sky at 100 with the three saved
 scenes unchanged, and Ctrl+Z put all 98,815 back with the Haze, the wind

@@ -360,7 +360,7 @@ def sides_of(faces, edges, rim_nodes, node_count):
     return sides
 
 
-NO_TENDONS = "No tendons: this net's lines do not run across from a principal line"
+NO_TENDONS = "No tendons"
 
 
 def across_lines(faces, heads, sides=None):

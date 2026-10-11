@@ -303,10 +303,12 @@ def test_randomise_now_randomises_every_tile():
     # A WAY BACK. A floor whose pattern is meant to read as a regular
     # grid wants this off, and a button with no opposite is a trap.
     assert 'id="ground-breakup"' in html
-    box = html[html.index('<label title="Read every tile'):]
+    box = html[html.rindex("<label", 0, html.index('id="ground-breakup"')):]
     box = box[:box.index("</label>")]
     assert 'id="ground-breakup" type="checkbox"' in box
-    assert "regular grid" in box, "the caveat is on the control itself"
+    # His ruling of 11 October 2026: the caveat is not shown; the
+    # checkbox's own words name it.
+    assert box == '<label><input id="ground-breakup" type="checkbox"> Break up the repeat', box
 
     setter = _body(js, "function setGroundBreakup(on)")
     assert "material.needsUpdate = true;" in setter, (

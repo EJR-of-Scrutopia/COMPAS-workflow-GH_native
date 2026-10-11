@@ -43,9 +43,9 @@ def capture(phase, time, row, quarter, lift, tension, deviation, push, wire, uti
 
 
 def with_holds(doc):
-    # node 3 held from the jacking on: the capture after the hold, pushing
-    # 40 N straight up (a strut), then pulling 50 N down and sideways (a tie);
-    # one rod a side, its side 1 (spec 2026-10-11 one Cable net tab, section 6)
+    # a run made while the studio still placed holds (they went on 11 October
+    # 2026): node 3 held from the jacking on, pushing 40 N straight up, then
+    # pulling 50 N down and sideways; one rod a side, its side 1
     doc = json.loads(json.dumps(doc))
     doc["net"]["holds"] = [3]
     doc["net"]["holds_per_side"] = 1
@@ -134,16 +134,15 @@ out.points = [{ kind: "member", index: 1 }, { kind: "node", index: 2 }, { kind: 
 out.pickHead = m.formworkPickHtml(sim, 1, 2);
 out.pickRim = m.formworkPickHtml(sim, 1, 0);
 out.pickNone = m.formworkPickHtml(sim, 1, 9);
-// the holds (spec 2026-10-10 formwork holds, section 5)
+// a run made with holds, which went on 11 October 2026 (his word: "it doesnt
+// work for what i am thinking"): read, said to be run again, and nothing of
+// its rods shown
 const held = m.readSim(holdsDoc);
-out.heldRead = { holds: held.holds, perSide: held.holdsPerSide, sides: held.holdSides,
-                 push: held.captures.map((c) => Array.from(c.holdPush)) };
-out.plainHolds = [sim.holds, sim.holdsPerSide, sim.holdSides, Array.from(sim.captures[0].holdPush)];
-out.heldLine = [m.frameLine(held, 2), m.frameLineHtml(m.frameLine(held, 2)), m.frameLineHtml(m.frameLine(held, 3))];
-out.plainLine = m.frameLineHtml(m.frameLine(sim, 2));
-out.heldPick = [m.formworkPickHtml(held, 2, 3), m.formworkPickHtml(held, 3, 3), m.formworkPickHtml(held, 2, 2)];
-// each hold a rod along its own force (his ruling of 10 October 2026)
-out.rods = [[0, 0, 40], [30, 0, -40], [100, 0, 1], [0, 0, 0], [0, 0, -1e-9]].map((f) => m.holdRod(f));
+out.heldRead = [held.held, sim.held, m.formworkWarnings(held, {}), m.formworkWarnings(sim, {})];
+out.heldShown = [JSON.stringify(m.frameLine(held, 2)), m.frameLineHtml(m.frameLine(held, 2)),
+                 m.formworkPickHtml(held, 2, 3), m.recordingCaption(held, 2)];
+out.holdsGone = ["holdRod", "holdForce", "jackedAt", "HOLD_FLOOR_N", "ROD_LEAN_MAX"]
+  .filter((name) => name in m);
 // a run with holds: the hold and the capture after the jacking both at
 // machine time 100 (found by the final review: the player could not reach the
 // hold, and Back stuck at the jacking)
@@ -152,9 +151,6 @@ const jackRun = [{ phase: "raise", time: 30 }, { phase: "finish", time: 60 }, { 
 out.jackTimes = m.captureTimes(jackRun);
 out.jackNearer = [2, 3, 4].map((i) => m.playhead(out.jackTimes, out.jackTimes[i]).nearer);
 out.jackLabel = m.captureLabel(jackRun[3]);
-out.heldCaption = [m.recordingCaption(held, 2), m.recordingCaption(held, 3)];
-out.jackedAt = [m.jackedAt(held), m.jackedAt(sim),
-  m.jackedAt({ captures: [{ phase: "hold" }, { phase: "holds" }, { phase: "tiling" }] })];
 // what a recorded frame carries over the picture (the owner's choice of
 // 10 October 2026: record the raise with the tab's labels and key)
 out.caption = m.recordingCaption(sim, 1);
@@ -165,7 +161,8 @@ function fakeContext() {
     measureText: (text) => ({ width: String(text).length * 6 }),
     fillRect: () => { drawn.rects += 1; },
     fillText: (text, x, y) => { drawn.texts.push([String(text), Math.round(x), Math.round(y)]); },
-    createLinearGradient: () => { drawn.gradients += 1; return { addColorStop() {} }; } };
+    createLinearGradient: () => { drawn.gradients += 1;
+      return { addColorStop: (at, colour) => { (drawn.stops = drawn.stops || []).push([at, colour]); } }; } };
   return [ctx, drawn];
 }
 {
@@ -319,58 +316,36 @@ def test_a_recorded_frame_carries_the_labels_and_the_key(out):
     # the key: its title, its two ends, and its limit on a line of its own
     # under them, as the page's legend has it (found in the video of 11
     # October: drawn over the bar, it sat on the title)
-    assert texts == [out["caption"], "3.0 kN", "offset, mm", "0", "500 mm", "tolerance 20 mm"]
+    assert texts == [out["caption"], "3.0 kN", "offset, mm", "0", "40 mm", "tolerance 20 mm"]
     at = {text: y for text, _, y in out["overlayBands"]["texts"]}
     assert at["offset, mm"] < at["0"] < at["tolerance 20 mm"]
     label = next(t for t in out["overlayBands"]["texts"] if t[0] == "3.0 kN")
     # standing on its point, as the page's labels do
     assert abs(label[1] - 500) < 30 and label[2] < 400
     assert out["overlayBands"]["gradients"] == 1 and out["overlayBands"]["rects"] >= 4
+    # judged against its limit, the key's bar green to deep red, the limit at
+    # its middle (his answer of 11 October 2026)
+    assert out["overlayBands"]["stops"] == [[0, "#3f9e57"], [0.25, "#c99a2e"], [0.5, "#c24936"],
+                                            [1, "#7a1610"]]
     ramp = out["overlayRamp"]
+    # a rope with no working load named keeps the ramp over the run
     assert [text for text, _, _ in ramp["texts"]] == ["rope tension, kN", "0", "3.0 kN"]
     assert ramp["gradients"] == 1
+    assert [colour for _, colour in ramp["stops"]] == ["#3a6fc4", "#3fa6a0", "#e8c547", "#cc2211"]
     assert out["overlayNone"]["texts"] == [] and out["overlayNone"]["rects"] == 0
 
 
-def test_the_holds_are_read_with_each_holds_push(out):
-    read = out["heldRead"]
-    assert read["holds"] == [3] and read["perSide"] == 1 and read["sides"] == [1]
-    assert read["push"] == [[0, 0, 0], [0, 0, 0], [0, 0, 40], [30, 0, -40]]
-    # a run with no holds reads none
-    holds, per_side, sides, push = out["plainHolds"]
-    assert holds == [] and per_side == 0 and sides is None and push == []
-
-
-def test_the_frame_line_and_the_card_count_the_struts_and_the_ties(out):
-    line, html, pulling = out["heldLine"]
-    assert (line["holds"], line["struts"], line["ties"]) == (1, 1, 0)
-    assert "<th>Struts</th><td>1/1</td>" in html and "<th>Ties</th><td>0/1</td>" in html
-    assert "<th>Struts</th><td>0/1</td>" in pulling and "<th>Ties</th><td>1/1</td>" in pulling
-    assert "Struts" not in out["plainLine"] and "Ties" not in out["plainLine"]
-    pushing, pulled, other = out["heldPick"]
-    assert "<th>Hold</th><td>strut 40 N</td>" in pushing
-    assert "<th>Hold</th><td>tie 50 N</td>" in pulled
-    assert "<th>Hold</th>" not in other
-
-
-def test_each_hold_is_a_rod_along_its_own_force(out):
-    strut, tie, level, idle, residue = out["rods"]
-    # pushing straight up: a strut standing straight under its node
-    assert strut["kind"] == "strut" and strut["u"] == pytest.approx([0, 0, 1])
-    assert strut["lean"] == pytest.approx(0)
-    # pulling down and sideways: a tie running down from its node along the
-    # pull; u points from its foot up to the node
-    assert tie["kind"] == "tie" and tie["u"] == pytest.approx([-0.6, 0, 0.8])
-    assert tie["lean"] == pytest.approx(36.8699, abs=1e-3)
-    # a force near level is drawn at 80 degrees; its true lean is kept
-    assert level["kind"] == "strut" and level["lean"] == pytest.approx(89.427, abs=1e-3)
-    assert level["u"] == pytest.approx([0.98481, 0, 0.17365], abs=1e-5)
-    # carrying nothing, or only the engine's residue (under its 0.01 N): upright
-    assert idle["kind"] == "none" and idle["u"] == pytest.approx([0, 0, 1])
-    assert residue["kind"] == "none"
-    # the rods are set at the capture after the jacking: its own, or the
-    # first of the tiling in a document from before it had one
-    assert out["jackedAt"] == [2, 2, 1]
+def test_a_run_made_with_holds_is_to_be_run_again_and_its_rods_are_not_shown(out):
+    # the holds went on 11 October 2026: a run made with them says so, greying
+    # the answer, and a run without them says nothing
+    held, plain, warned, quiet = out["heldRead"]
+    assert held is True and plain is False
+    assert "Run again: made with holds" in warned and "Run again: made with holds" not in quiet
+    line, html, card, caption = out["heldShown"]
+    for shown in (line, html, card, caption):
+        assert "Struts" not in shown and "Ties" not in shown and "struts" not in shown
+    assert "<th>Hold</th>" not in card
+    assert out["holdsGone"] == []
 
 
 def test_the_hold_and_the_capture_after_the_jacking_each_have_their_own_beat(out):
@@ -383,8 +358,3 @@ def test_the_hold_and_the_capture_after_the_jacking_each_have_their_own_beat(out
     assert out["jackLabel"] == "t 100 holds"
 
 
-def test_a_recorded_frame_counts_the_struts_and_the_ties(out):
-    pushing, pulling = out["heldCaption"]
-    assert pushing.endswith("   Struts 1/1   Ties 0/1")
-    assert pulling.endswith("   Struts 0/1   Ties 1/1")
-    assert "Struts" not in out["caption"]

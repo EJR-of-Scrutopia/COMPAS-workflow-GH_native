@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pytest
 
-from test_formwork_model import document, with_holds
+from test_formwork_model import document, pack, with_holds
 
 STATIC = Path(__file__).resolve().parents[2] / "bench" / "studio" / "static"
 CHOSEN = {"motor": "23HS45-4204D-E1000", "ratio": 20, "pulley": "Pfaff-DSRB-90-4",
@@ -47,7 +47,11 @@ out.staleHtml = m.answerHtml(out.answer, { stale: true });
 out.spare = m.answerHtml(m.answer(spare, 30));
 out.plain = [m.answer(plain, 20), m.answerHtml(m.answer(plain, 20))];
 out.none = [m.answer(null, 20), m.answerHtml(null)];
-out.held = [m.answer(held, 20).holds, m.answerHtml(m.answer(held, 20)), out.answer.holds];
+out.held = [m.answer(held, 20), m.answerHtml(m.answer(held, 20))];
+const treesOver = m.readSim(%(treesOver)s);
+const judged = m.withWall(sim, 3.2);
+out.trees = { over: m.answer(treesOver, 20).trees, overHtml: m.answerHtml(m.answer(treesOver, 20)),
+              within: m.answer(judged, 20).trees, withinHtml: m.answerHtml(m.answer(judged, 20)) };
 const chosen = %(chosen)s;
 out.warnings = {
   none: m.formworkWarnings(null, { mechanism: chosen }),
@@ -57,9 +61,6 @@ out.warnings = {
   noChoice: m.formworkWarnings(sim, { mechanism: null }),
   plainRun: m.formworkWarnings(plain, { mechanism: chosen }),
   older: m.formworkWarnings(m.readSim(%(older)s), { mechanism: chosen }),
-  rodsSame: m.formworkWarnings(sim, { mechanism: chosen, holdsPerSide: 0 }),
-  rods: m.formworkWarnings(sim, { mechanism: chosen, holdsPerSide: 3 }),
-  rodsAndMechanism: m.formworkWarnings(sim, { mechanism: { ...chosen, ratio: 50 }, holdsPerSide: 3 }),
 };
 const thicker = m.withWall(sim, 4.0);
 out.wall = { utilisation: thicker.captures.map((c) => Array.from(c.treeUtilisation)),
@@ -83,6 +84,16 @@ def _resistance(diameter, wall, length, compression):
     return min(1.0, 1.0 / (phi + math.sqrt(phi ** 2 - slenderness ** 2))) * plastic
 
 
+def _trees_over():
+    # the tree member at the last capture pushed 250,000 N, over its 60.3 x
+    # 3.2 tube's resistance at its 500 mm, and judged so by the engine
+    doc = _run()
+    load = 250000.0
+    doc["captures"][3]["tree_axial"] = pack([-load])
+    doc["captures"][3]["tree_utilisation"] = pack([load / _resistance(60.3, 3.2, 500.0, True)])
+    return doc
+
+
 @pytest.fixture(scope="module")
 def out(tmp_path_factory):
     if shutil.which("node") is None:
@@ -94,6 +105,7 @@ def out(tmp_path_factory):
         "doc": json.dumps(_run()), "spare": json.dumps(_run(2000.0)),
         "plain": json.dumps(plain), "older": json.dumps(document(older=True)),
         "held": json.dumps(with_holds(_run())),
+        "treesOver": json.dumps(_trees_over()),
         "chosen": json.dumps(CHOSEN)}, encoding="utf-8")
     result = subprocess.run(["node", str(script)], capture_output=True, text=True,
                             encoding="utf-8")
@@ -115,18 +127,45 @@ def test_the_answer_is_the_force_needed_one_spools_pull_and_the_gap(out):
                           "label": "S1 q1"}
     assert a["have"]["newtons"] == 1200.0 and a["have"]["part"] == "23HS45-4204D-E1000"
     assert a["gap"] == {"newtons": 300.0, "missing": True}
-    # the form: the worst offset at the end of the tiling against the tolerance
+    # the form: the worst offset and the mean at the end of the tiling against
+    # the tolerance (his ask of 11 October 2026: the mean and the worst both)
     assert a["form"] == {"mm": 25.0, "tolerance": 20.0, "within": False}
+    assert a["mean"] == {"mm": 10.25, "within": True}
     html = out["html"]
-    assert ('<tr data-capture="2" data-wire="0"><th>Needed</th><td>1,500 N</td>'
-            "<td>worst wire w0, at S1 q1</td></tr>") in html
-    assert "<th>Have</th><td>1,200 N</td><td>one spool, 23HS45-4204D-E1000 20:1</td>" in html
-    assert "<th>Missing</th><td>300 N ✗</td>" in html
-    assert "<th>Form</th><td>25 mm ✗</td><td>worst offset, tolerance 20 mm</td>" in html
+    # a name and a value a row, nothing said about either (his ruling of 11
+    # October 2026: no descriptive text); Needed's row still goes to its wire
+    assert '<tr data-capture="2" data-wire="0"><th>Needed</th><td>1,500 N</td></tr>' in html
+    assert "<tr><th>Have</th><td>1,200 N</td></tr>" in html
+    # what falls short is in deep red, not marked with a cross
+    assert '<tr><th>Missing</th><td><span class="over">300 N</span></td></tr>' in html
+    assert '<tr><th>Worst offset</th><td><span class="over">25 mm</span></td></tr>' in html
+    assert "<tr><th>Mean offset</th><td>10 mm</td></tr>" in html
+    assert "</td><td>" not in html
     assert 'class="answer stale"' in out["staleHtml"] and 'class="answer stale"' not in html
     # a spool that pulls more than the run needs: spare, and the form within 30 mm
-    assert "<th>Spare</th><td>500 N ✓</td>" in out["spare"]
-    assert "<th>Form</th><td>25 mm ✓</td><td>worst offset, tolerance 30 mm</td>" in out["spare"]
+    assert "<tr><th>Spare</th><td>500 N</td></tr>" in out["spare"]
+    assert "<tr><th>Worst offset</th><td>25 mm</td></tr>" in out["spare"]
+    for marked in (html, out["spare"]):
+        assert "✗" not in marked and "✓" not in marked and "<th>Form</th>" not in marked
+
+
+def test_the_answer_gives_the_trees_load_and_what_its_tube_takes(out):
+    # his ask of 11 October 2026: the trees as a load, not a bare ratio. The
+    # member and capture the run judges worst, its force and its tube's
+    # resistance, in deep red past it
+    resistance = _resistance(60.3, 3.2, 500.0, True)
+    over = out["trees"]["over"]
+    assert over["capture"] == 3 and over["member"] == 0 and over["label"] == "S1 q2"
+    assert over["newtons"] == 250000.0
+    assert over["capacity"] == pytest.approx(resistance, rel=1e-6)
+    assert over["utilisation"] == pytest.approx(250000.0 / resistance, rel=1e-5)
+    tube = "{:,} N".format(round(resistance))
+    assert ('<tr><th>Trees load</th><td><span class="over">250,000 N</span></td></tr>'
+            "<tr><th>Trees capacity</th><td>" + tube + "</td></tr>") in out["trees"]["overHtml"]
+    within = out["trees"]["within"]
+    assert within["capture"] == 2 and within["newtons"] == 900.0
+    assert ("<tr><th>Trees load</th><td>900 N</td></tr><tr><th>Trees capacity</th><td>" + tube
+            + "</td></tr>" in out["trees"]["withinHtml"])
 
 
 def test_a_run_with_no_mechanism_says_none_for_what_one_spool_pulls(out):
@@ -147,22 +186,11 @@ def test_the_run_is_out_of_date_when_the_mechanism_changes(out):
     assert w["older"][0] == "Run again: older run"
 
 
-def test_the_answer_says_the_rods_a_side_and_how_many_went_on(out):
-    # spec 2026-10-11 one Cable net tab, section 4.3: Holds, 3 a side, 15 rods
-    holds, html, plain = out["held"]
-    assert holds == {"perSide": 1, "rods": 1}
-    assert "<th>Holds</th><td>1 a side, 1 rod</td>" in html
-    assert plain == {"perSide": 0, "rods": 0}
-    assert "<th>Holds</th><td>none</td>" in out["html"]
-
-
-def test_the_run_is_out_of_date_when_the_rods_a_side_change(out):
-    # spec section 7: rods a side changed, a run from the hold
-    w = out["warnings"]
-    assert w["rodsSame"] == []
-    assert w["rods"] == ["Run again: rods a side changed"]
-    assert w["rodsAndMechanism"] == ["Run again: mechanism changed",
-                                     "Run again: rods a side changed"]
+def test_the_answer_has_no_holds_row(out):
+    # the holds went on 11 October 2026, even from a run made with them
+    answer, html = out["held"]
+    assert "holds" not in answer
+    assert "Holds" not in html and "Holds" not in out["html"]
 
 
 def test_a_new_wall_judges_the_trees_again_from_the_runs_own_forces(out):

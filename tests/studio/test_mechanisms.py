@@ -65,9 +65,9 @@ def test_the_list_holds_one_whole_mechanism_a_buildable_motor_strongest_first():
         assert entry["described"] == machine.describe(parts, built)
         # by real names and its pull: motor, ratio, pulleys, rope, newtons a spool
         assert re.fullmatch(r"[\w-]+, (direct|\d+:1), (\d+ mm pulleys|no pulleys), "
-                            r"\d+ mm [\w ]+: [\d,]+ N a spool", entry["label"]), entry["label"]
+                            r"\d+ mm [\w ]+: [\d,]+ N", entry["label"]), entry["label"]
     top = listed[0]
-    assert top["label"].endswith(": {:,.0f} N a spool".format(top["have_newtons"]))
+    assert top["label"].endswith(": {:,.0f} N".format(top["have_newtons"]))
     assert top["limit"] and top["part"]
 
 

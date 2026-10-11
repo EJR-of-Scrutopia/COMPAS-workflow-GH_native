@@ -13,7 +13,8 @@ function pounds(n, places = 0) {
                                                    maximumFractionDigits: places });
 }
 
-// The cost (section 8.2), a row each: what it is, its figure, a note.
+// The cost (section 8.2), a row each: what it is and its figures, nothing
+// said about them (his ruling of 11 October 2026).
 export function costHtml(cost) {
   if (!cost) return "";
   const row = (name, value, note = "", title = "") =>
@@ -21,13 +22,13 @@ export function costHtml(cost) {
     + `<td>${value}</td><td>${escapeHtml(note)}</td></tr>`;
   const rows = [];
   const one = cost.spool_gbp == null ? "unpriced" : pounds(cost.spool_gbp, 2);
-  rows.push(row("One spool", one, cost.described || ""));
+  rows.push(row("One spool", one));
   rows.push(row("Spools", cost.spools + " × " + one,
                 cost.spool_gbp == null ? "" : pounds(cost.spool_gbp * cost.spools)));
   rows.push(row("Cabinets", String(cost.cabinets), pounds(cost.cabinets_gbp)));
-  rows.push(row("Total", pounds(cost.total_gbp), "VAT excluded"));
+  rows.push(row("Total ex VAT", pounds(cost.total_gbp)));
   if (cost.unpriced > 0) {
-    rows.push(row("Unpriced", cost.unpriced + (cost.unpriced === 1 ? " part" : " parts"), "",
+    rows.push(row("Unpriced", String(cost.unpriced), "",
                   (cost.unpriced_parts || []).join(", ")));
   }
   return "<table>" + rows.join("") + "</table>";
@@ -102,5 +103,5 @@ export function graphsHtml(sim, have, tolerance) {
     limitText: pull == null ? "" : "one spool " + Math.round(pull).toLocaleString("en-GB") + " N" })
     + graphSvg(series.offset, Number(tolerance), { title: "worst offset, mm",
       limitText: "tolerance " + Number(tolerance) + " mm" })
-    + (sim.tendons ? graphSvg(series.pull, null, { title: "pull in, all tendons, N" }) : "");
+    + (sim.tendons ? graphSvg(series.pull, null, { title: "pull total, N" }) : "");
 }
