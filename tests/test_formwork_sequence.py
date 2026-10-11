@@ -347,3 +347,59 @@ def test_a_run_from_the_state_at_the_hold_is_the_full_run_with_the_same_holds(wi
     assert again.thinnest_wall == full.thinnest_wall
     # only the jacking and the tiling are worked out again
     assert told[-1] == (5, 5) and {total for _, total in told} == {5}
+
+
+# spec 2026-10-11 across tendons, section 3: in the toy the column head is the
+# centre node, and its four across lines run out to the edge midpoints
+TENDONS = ((4, 1), (4, 3), (4, 5), (4, 7))
+
+
+def _line_length(points, path):
+    points = np.asarray(points, dtype=float)
+    return float(sum(np.linalg.norm(points[b] - points[a]) for a, b in zip(path, path[1:])))
+
+
+def test_the_tendons_hold_each_lines_length_through_the_raise_and_from_the_hold_on():
+    model = _toy()._replace(tendons=TENDONS)
+    result = fs.simulate(model)
+    frames = {frame.time: frame for frame in model.frames}
+    for c in result.captures:
+        assert c.tendon_tension.shape == (4,)
+        # through the raise each reel holds its line to the frame's length; from
+        # the hold on, to the design's; a slack tendon is no longer than that
+        points = frames[c.time].net if c.phase in ("raise", "finish", "hold") else model.design
+        for path, pull in zip(TENDONS, c.tendon_tension):
+            length, target = _line_length(c.x, path), _line_length(points, path)
+            if pull > 0.0:
+                assert abs(length - target) < 1.0, (c.phase, path, length, target)
+            else:
+                assert length <= target + 1.0e-6
+    assert max(float(c.tendon_tension.max()) for c in result.captures) > 0.0
+    # and a run without tendons captures none
+    assert all(c.tendon_tension.shape == (0,) for c in fs.simulate(_toy()).captures)
+
+
+def test_the_tendons_pull_reaches_the_tree_at_the_head():
+    model = _toy()._replace(tendons=TENDONS)
+    result = fs.simulate(model)
+    net = ne.ropes(model.edges, result.rest_lengths, model.ea)
+    for c in result.captures:
+        # the head holds the centre node against everything on it: its ropes,
+        # its tendons and its weight (and a tiling quarter's skin, nought there)
+        on = ne.rope_forces(c.x, net)[0][4] + model.weight[4]
+        for path, pull in zip(TENDONS, c.tendon_tension):
+            unit = (c.x[path[1]] - c.x[path[0]]) / np.linalg.norm(c.x[path[1]] - c.x[path[0]])
+            on = on + pull * unit
+        assert c.head_push[0] == pytest.approx(-on, abs=0.05), c.phase
+
+
+@pytest.mark.parametrize("wires_per_motor", [1, 2])
+def test_a_run_from_the_state_at_the_hold_with_tendons_is_the_full_run(wires_per_motor):
+    sided = _toy(wires_per_motor)._replace(sides=SIDES, tendons=TENDONS)
+    base = fs.simulate(sided)
+    model = sided._replace(holds_per_side=1)
+    full = fs.simulate(model)
+    again = fs.simulate(model, state=base.state)
+    assert again.holds == full.holds
+    for mine, theirs in zip(again.captures, full.captures):
+        _same_capture(mine, theirs)

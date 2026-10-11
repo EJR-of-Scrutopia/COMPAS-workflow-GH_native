@@ -91,7 +91,9 @@ def model_from(request):
         wires_per_motor=int(request["wires_per_motor"]), wall=float(request["wall"]),
         holds=tuple(int(node) for node in request.get("holds") or ()),
         sides=tuple(-1 if side is None else int(side) for side in request.get("sides") or ()),
-        holds_per_side=int(request.get("holds_per_side") or 0))
+        holds_per_side=int(request.get("holds_per_side") or 0),
+        tendons=tuple(tuple(int(node) for node in line["path"])
+                      for line in request.get("tendons") or ()))
 
 
 # What a state does not depend on: the rods, where the state goes, and words.
@@ -116,7 +118,8 @@ def _from_array(entry):
 
 
 ARRAYS = ("x", "tension", "deviation", "head_push", "hold_push", "anchor_force",
-          "wire_tension", "reel", "let_out", "tree_x", "tree_axial", "tree_utilisation")
+          "wire_tension", "reel", "let_out", "tree_x", "tree_axial", "tree_utilisation",
+          "tendon_tension")
 
 
 def _capture_state(capture):
@@ -202,7 +205,7 @@ def _capture_entry(capture, added_faces=None):
         "iterations": int(capture.iterations), "leftover": float(capture.leftover),
         "x": pack(capture.x), "tension": pack(capture.tension),
         "deviation": pack(capture.deviation), "head_push": pack(capture.head_push),
-        "hold_push": pack(capture.hold_push),
+        "hold_push": pack(capture.hold_push), "tendon_tension": pack(capture.tendon_tension),
         "anchor_force": pack(capture.anchor_force), "wire_tension": pack(capture.wire_tension),
         "reel": pack(capture.reel), "let_out": pack(capture.let_out),
         "tree_x": pack(capture.tree_x), "tree_axial": pack(capture.tree_axial),
@@ -241,6 +244,9 @@ def _summary(result):
         # worst deviation from the jacking on, every node counted
         "holds_deviation_max_mm": None if not any(c.phase == "holds" for c in every) else max(
             float(c.deviation.max()) for c in every if c.phase in ("holds", "tiling")),
+        # spec 2026-10-11 across tendons, section 4: the most any tendon carries
+        "tendon_tension_max_n": None if not any(len(c.tendon_tension) for c in every) else max(
+            float(c.tendon_tension.max()) for c in every if len(c.tendon_tension)),
     }
 
 
@@ -274,6 +280,13 @@ def solve(request, progress=None):
         "seconds": round(seconds, 1),
         # whether the run started from a saved state at the hold
         "resumed": state is not None,
+        # each tendon's line and its length at the design (spec 2026-10-11
+        # across tendons, section 4); null for a run without
+        "tendons": None if not model.tendons else {"lines": [
+            {"head": line.get("head"), "side": line.get("side"),
+             "path": [int(node) for node in line["path"]],
+             "design_length_mm": float(length)}
+            for line, length in zip(request["tendons"], fs._line_lengths(model, model.design))]},
         "net": {
             "nodes": len(model.design), "edges": model.edges.tolist(),
             "ea": model.ea, "prestress": model.prestress, "design": pack(model.design),

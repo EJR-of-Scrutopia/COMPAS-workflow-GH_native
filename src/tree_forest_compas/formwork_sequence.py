@@ -71,6 +71,8 @@ class Model(NamedTuple):
     sides: tuple = ()       # each node's side, a wired run of the rim; -1 for none (spec
                             # 2026-10-11 one Cable net tab, section 6)
     holds_per_side: int = 0  # the rods placed on each side at the hold when holds is empty
+    tendons: tuple = ()     # each tendon's path of nodes, from its column head to the free
+                            # edge (spec 2026-10-11 across tendons)
 
 
 class Capture(NamedTuple):
@@ -99,6 +101,7 @@ class Capture(NamedTuple):
     solver: str
     iterations: int
     leftover: float
+    tendon_tension: object = None   # (tendons,) each tendon's tension, N
 
 
 class HoldState(NamedTuple):
@@ -182,6 +185,23 @@ def _places(model):
     return bool(model.holds) or (int(model.holds_per_side) > 0 and len(model.sides) > 0)
 
 
+def _line_lengths(model, points):
+    """Each tendon's line's length through these points, mm."""
+
+    points = np.asarray(points, dtype=float)
+    return np.array([float(np.linalg.norm(np.diff(points[list(path)], axis=0), axis=1).sum())
+                     for path in model.tendons])
+
+
+def _held_to(model, net, target):
+    """The net with its tendons reeled to these lengths (spec 2026-10-11 across
+    tendons, section 3); as it is with none."""
+
+    if not model.tendons:
+        return net
+    return net._replace(tendons=ne.tendons(model.tendons, target))
+
+
 def _count(model):
     return (len(model.frames) + (1 if _places(model) else 0)
             + sum(len(row.quarters) for row in model.rows))
@@ -233,6 +253,8 @@ def _capture(model, rest, contacts, reel, target, tree_x, phase, time, row, quar
         tree_bending=loads.bending,
         ground=tuple(sorted(int(node) for node in contacts.resting)),
         solver=rest.solver, iterations=rest.iterations, leftover=rest.leftover,
+        tendon_tension=np.zeros(0) if rest.tendon_tension is None
+        else np.asarray(rest.tendon_tension, dtype=float),
     )
 
 
@@ -287,7 +309,12 @@ def _raise(model, net, plan, progress, total):
              for node, tree in tree_of.items()}
     contacts = ne.Contacts(first, frozenset(tree_of), resting, frozenset(rim),
                            tied=frozenset(tree_of))
-    rest, contacts = ne.settle(x, net, model.weight, anchors, contacts, slide=True)
+    # the tendons reeled through the raise to their lines' lengths in the
+    # frame, interpolated between frames as the heads are (spec 2026-10-11
+    # across tendons, section 3)
+    before = _line_lengths(model, model.frames[0].net)
+    rest, contacts = ne.settle(x, _held_to(model, net, before), model.weight, anchors, contacts,
+                               slide=True)
     x = rest.x
     reel = {node: 0.0 for node in rim}
     needs = []
@@ -299,22 +326,25 @@ def _raise(model, net, plan, progress, total):
         now = {node: np.asarray(frame.trees[tree], dtype=float) for node, tree in tree_of.items()}
         if previous is None:
             previous = now
+        after = _line_lengths(model, frame.net)
         move = max((float(np.linalg.norm(now[k] - previous[k])) for k in now), default=0.0)
         steps = max(1, int(np.ceil(move / SUB_STEP_MM)))
         for step in range(1, steps + 1):
             heads = {k: previous[k] + (now[k] - previous[k]) * step / steps for k in now}
             contacts = contacts._replace(heads=heads)
+            held = _held_to(model, net, before + (after - before) * step / steps)
             if plan is None:
-                rest, contacts = ne.settle(x, net, model.weight, anchors, contacts)
+                rest, contacts = ne.settle(x, held, model.weight, anchors, contacts)
                 reel = {node: _need(rest.reaction[node], model.rim[node]) for node in rim}
                 needs.append(reel)
             else:
                 reel = plan[done_steps]
-                rest, contacts = ne.settle(x, net, model.weight, {}, contacts,
+                rest, contacts = ne.settle(x, held, model.weight, {}, contacts,
                                            wires=_wires(model, reel))
             done_steps += 1
             x = rest.x
         previous = now
+        before = after
         captures.append(_capture(model, rest, contacts, reel, frame.net, frame.trees,
                                  frame.phase, float(frame.time), None, None))
         if progress is not None:
@@ -323,6 +353,8 @@ def _raise(model, net, plan, progress, total):
 
 
 def _jack_and_tile(model, net, progress, total, captures, x, contacts, reel, wires, tree_x):
+    # from the hold on the tendons are held at their lines' design lengths
+    net = _held_to(model, net, _line_lengths(model, model.design))
     # the holds (spec 2026-10-10 formwork holds, section 3): once the net is up,
     # each hold is put under its node and jacked to the node's design point, at
     # most SUB_STEP_MM a step, gripping it; it keeps its grip from then on,

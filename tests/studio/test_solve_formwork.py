@@ -185,3 +185,31 @@ def test_a_state_for_another_request_or_none_readable_is_a_full_run(tmp_path):
         assert again["resumed"] is False and again["captures"] == full["captures"]
     state.write_bytes(b"not a state")
     assert solve_formwork.solve({**other, "state_in": str(state)})["resumed"] is False
+
+
+TENDON_LINES = [{"head": 0, "side": side, "path": [4, node]}
+                for side, node in ((0, 1), (0, 3), (1, 5), (2, 7))]
+
+
+def test_the_document_carries_each_tendon_its_line_and_its_tension(tmp_path):
+    document = solve_formwork.solve({**_request(), "tendons": TENDON_LINES})
+    lines = document["tendons"]["lines"]
+    assert [line["path"] for line in lines] == [[4, 1], [4, 3], [4, 5], [4, 7]]
+    assert [line["side"] for line in lines] == [0, 0, 1, 2] and lines[0]["head"] == 0
+    design = np.asarray(_request()["design"], dtype=float)
+    assert lines[0]["design_length_mm"] == pytest.approx(float(np.linalg.norm(design[1] - design[4])))
+    for c in document["captures"]:
+        assert solve_formwork.unpack(c["tendon_tension"]).shape == (4,)
+    assert document["summary"]["tendon_tension_max_n"] > 0.0
+    # a run without tendons has none
+    plain = solve_formwork.solve(_request())
+    assert plain["tendons"] is None and plain["summary"]["tendon_tension_max_n"] is None
+    assert solve_formwork.unpack(plain["captures"][0]["tendon_tension"]).shape == (0,)
+    # and a state at the hold with tendons is a full run's to the bit
+    state = tmp_path / "state.json.gz"
+    solve_formwork.solve({**_request(), "tendons": TENDON_LINES, "sides": SIDES,
+                          "state_out": str(state)})
+    asked = {**_request(), "tendons": TENDON_LINES, "sides": SIDES, "holds_per_side": 1}
+    again = solve_formwork.solve({**asked, "state_in": str(state)})
+    assert again["resumed"] is True
+    assert again["captures"] == solve_formwork.solve(asked)["captures"]
