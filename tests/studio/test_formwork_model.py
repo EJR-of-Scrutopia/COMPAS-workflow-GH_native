@@ -44,17 +44,15 @@ def capture(phase, time, row, quarter, lift, tension, deviation, push, wire, uti
 
 def with_holds(doc):
     # node 3 held from the jacking on: the capture after the hold, pushing
-    # 40 N straight up (a strut), then pulling 50 N down and sideways (a tie),
-    # and the search that chose it
+    # 40 N straight up (a strut), then pulling 50 N down and sideways (a tie);
+    # one rod a side, its side 1 (spec 2026-10-11 one Cable net tab, section 6)
     doc = json.loads(json.dumps(doc))
     doc["net"]["holds"] = [3]
+    doc["net"]["holds_per_side"] = 1
+    doc["net"]["hold_sides"] = [1]
     pushes = [[0, 0, 0], [0, 0, 0], [0, 0, 40], [30, 0, -40]]
     for c, push in zip(doc["captures"], pushes):
         c["hold_push"] = pack([push])
-    doc["holds"] = {"spacing": 5, "bands": [5, 10], "count": 190, "tolerance_mm": 20.0,
-                    "met": True, "tried": [
-                        {"spacing": 10, "count": 95, "deviation_max_mm": 412.3},
-                        {"spacing": 5, "count": 190, "deviation_max_mm": 14.2}]}
     return doc
 
 
@@ -127,55 +125,20 @@ out.noHead = m.playhead([], 1);
 out.line = m.frameLine(sim, 1);
 out.lineHtml = m.frameLineHtml(out.line);
 out.noLine = m.frameLine(sim, 9);
-out.colours = { high: m.colourOf("tension", 3000, sim, 20), low: m.colourOf("tension", 0, sim, 20),
-  over: m.colourOf("utilisation", 1.2, sim, 20), half: m.colourOf("utilisation", 0.5, sim, 20),
-  nearCapacity: m.colourOf("utilisation", 0.8, sim, 20),
-  wire: m.colourOf("wire", 1500, sim, 20),
-  deviation: [5, 12, 40].map((v) => m.colourOf("deviation", v, sim, 20)),
-  off: m.colourOf("off", 3, sim, 20) };
-out.keys = ["tension", "deviation", "utilisation", "wire", "off"].map((by) => m.colourKey(by, sim, 20));
 out.points = [{ kind: "member", index: 1 }, { kind: "node", index: 2 }, { kind: "wire", index: 1 },
   { kind: "tree", index: 0 }, { kind: "machine", index: 0 }, { kind: "member", index: 9 }]
   .map((target) => m.targetPoint(sim, 1, target));
-out.labels2 = m.formworkLabels(sim, 2, ["rope", "deviation", "contact"], 2);
-out.contact3 = m.formworkLabels(sim, 3, ["contact"]);
-out.inView = [m.labelKindsInView(["rope", "deviation", "contact"], { net: true, heads: true }),
-              m.labelKindsInView(["rope", "deviation", "contact"], { net: false, heads: true }),
-              m.labelKindsInView(["rope", "deviation", "contact"], { net: true, heads: false }),
-              m.labelKindsInView(["deviation"], { trees: true })];
 out.pickHead = m.formworkPickHtml(sim, 1, 2);
 out.pickRim = m.formworkPickHtml(sim, 1, 0);
 out.pickNone = m.formworkPickHtml(sim, 1, 9);
-const chosen = { rope: "rope-4mm", wires_per_motor: 1, pulleys: true, wall: 3.2, prestress: 723.4 };
-out.warn = [m.formworkWarnings(null, chosen), m.formworkWarnings(sim, chosen),
-  m.formworkWarnings(m.readSim(older), chosen),
-  m.formworkWarnings(sim, { ...chosen, wires_per_motor: 2 }),
-  m.formworkWarnings(sim, { ...chosen, prestress: 6660 }),
-  m.formworkWarnings(sim, { ...chosen, prestress: 725 }),
-  m.formworkWarnings(sim, { ...chosen, wall: 2.6 }),
-  m.formworkWarnings(sim, { ...chosen, prestress: null }),
-  m.formworkWarnings(sim, { ...chosen, rope: null })];
-// the worst tables (spec section 10)
-const tables = m.worstTables(sim);
-out.worst = tables;
-out.worstHtml = Object.fromEntries(m.WORST_PARTS.map(([part]) => [part, m.worstHtml(part, tables[part], sim)]));
-out.byIndex = m.worstHtml("ropes", tables.ropes, sim, { key: "index", descending: false });
-out.many = m.worstTables({ captures: [{ tension: Float32Array.from({ length: 60 }, (_, i) => i + 1) }],
-  edges: [], rim: { nodes: [], names: [], machines: [] }, trees: { members: [], heads: [] } }).ropes;
-out.noTables = m.worstTables(null);
-out.worstRows = m.WORST_ROWS;
 // the holds (spec 2026-10-10 formwork holds, section 5)
 const held = m.readSim(holdsDoc);
-out.heldRead = { holds: held.holds, search: held.search,
+out.heldRead = { holds: held.holds, perSide: held.holdsPerSide, sides: held.holdSides,
                  push: held.captures.map((c) => Array.from(c.holdPush)) };
-out.plainHolds = [sim.holds, sim.search, Array.from(sim.captures[0].holdPush)];
+out.plainHolds = [sim.holds, sim.holdsPerSide, sim.holdSides, Array.from(sim.captures[0].holdPush)];
 out.heldLine = [m.frameLine(held, 2), m.frameLineHtml(m.frameLine(held, 2)), m.frameLineHtml(m.frameLine(held, 3))];
 out.plainLine = m.frameLineHtml(m.frameLine(sim, 2));
 out.heldPick = [m.formworkPickHtml(held, 2, 3), m.formworkPickHtml(held, 3, 3), m.formworkPickHtml(held, 2, 2)];
-out.holdsTable = m.holdsHtml(held);
-out.holdsMissed = m.holdsHtml({ ...held, search: { ...held.search, met: false, spacing: 1, count: 950,
-  tried: [{ spacing: 10, count: 95, deviation_max_mm: 412.3 }, { spacing: 1, count: 950, deviation_max_mm: 31.5 }] } });
-out.holdsNone = [m.holdsHtml(sim), m.holdsHtml(null)];
 // each hold a rod along its own force (his ruling of 10 October 2026)
 out.rods = [[0, 0, 40], [30, 0, -40], [100, 0, 1], [0, 0, 0], [0, 0, -1e-9]].map((f) => m.holdRod(f));
 // a run with holds: the hold and the capture after the jacking both at
@@ -189,7 +152,6 @@ out.jackLabel = m.captureLabel(jackRun[3]);
 out.heldCaption = [m.recordingCaption(held, 2), m.recordingCaption(held, 3)];
 out.jackedAt = [m.jackedAt(held), m.jackedAt(sim),
   m.jackedAt({ captures: [{ phase: "hold" }, { phase: "holds" }, { phase: "tiling" }] })];
-out.names = [10, 5, 2, 1, 3].map((s) => m.spacingName(s, s === 3 ? 9 : 10));
 // what a recorded frame carries over the picture (the owner's choice of
 // 10 October 2026: record the raise with the tab's labels and key)
 out.caption = m.recordingCaption(sim, 1);
@@ -315,60 +277,12 @@ def test_the_frame_line_is_the_captures_largest_and_its_heads_touching(out):
     assert out["noLine"] is None
 
 
-def test_each_colour_by_draws_on_the_runs_own_scale(out):
-    colours = out["colours"]
-    red, cream = [0xcc / 255, 0x22 / 255, 0x11 / 255], [0xf2 / 255, 0xef / 255, 0xe8 / 255]
-    assert colours["high"] == pytest.approx(red) and colours["low"] == pytest.approx(cream)
-    assert colours["wire"] == pytest.approx(red)
-    # a tree is banded at its capacity, 1.0, as the Sag lens bands a sag:
-    # within to half of it, near to it, over it (final review 3: a ramp
-    # clamped at 1.0 drew 2.36 and 1.0 the same red)
-    assert colours["over"] == pytest.approx([0xc2 / 255, 0x49 / 255, 0x36 / 255])
-    assert colours["nearCapacity"] == pytest.approx([0xc9 / 255, 0x9a / 255, 0x2e / 255])
-    assert colours["half"] == pytest.approx(cream)
-    # deviation in the Sag lens's bands against the tolerance
-    within, near, over = colours["deviation"]
-    assert within == pytest.approx(cream)
-    assert near == pytest.approx([0xc9 / 255, 0x9a / 255, 0x2e / 255])
-    assert over == pytest.approx([0xc2 / 255, 0x49 / 255, 0x36 / 255])
-    assert colours["off"] is None
-
-
-def test_each_colour_by_has_its_key(out):
-    tension, deviation, utilisation, wire, off = out["keys"]
-    assert tension == {"title": "rope tension, kN", "min": "0", "max": "3.0"}
-    assert deviation["title"] == "deviation, mm: tolerance 20" and deviation["max"] == "500"
-    assert [band["name"] for band in deviation["bands"]] == ["within", "near", "over"]
-    assert utilisation["title"] == "tree utilisation: capacity 1.0"
-    assert (utilisation["min"], utilisation["max"]) == ("0", "1.20")
-    assert [band["name"] for band in utilisation["bands"]] == ["within", "near", "over"]
-    assert wire == {"title": "wire tension, N", "min": "0", "max": "1500"}
-    assert off is None
-
-
 def test_each_part_has_a_point_at_the_capture(out):
     member, node, wire, tree, machine, missing = out["points"]
     assert member == pytest.approx([1.0, 0.5, 0.25])
     assert node == pytest.approx([1.0, 1.0, 0.5]) and wire == pytest.approx([1.0, 0.0, 0.0])
     assert tree == pytest.approx([1.0, 1.0, 0.25]) and machine == pytest.approx([0.5, 0.0, 0.0])
     assert missing is None
-
-
-def test_the_labels_are_the_largest_of_each_ticked_kind(out):
-    assert out["labels2"] == [
-        {"kind": "member", "index": 1, "text": "3.0 kN"}, {"kind": "member", "index": 2, "text": "0.4 kN"},
-        {"kind": "node", "index": 3, "text": "40 mm"}, {"kind": "node", "index": 2, "text": "12 mm"},
-        {"kind": "node", "index": 2, "text": "900 N"}]
-    # a head that has let go of its node pushes nothing, and says nothing
-    assert out["contact3"] == []
-
-
-def test_the_labels_are_for_what_is_in_view(out):
-    # rope and deviation labels stand on the net, contact labels on the heads
-    # (found on screen: deviation labels over the trees alone)
-    every, no_net, no_heads, trees = out["inView"]
-    assert every == ["rope", "deviation", "contact"]
-    assert no_net == ["contact"] and no_heads == ["rope", "deviation"] and trees == []
 
 
 def test_the_card_gives_the_node_its_head_or_wire_and_its_members(out):
@@ -385,60 +299,6 @@ def test_the_card_gives_the_node_its_head_or_wire_and_its_members(out):
     assert out["pickNone"] == ""
 
 
-def test_the_warnings_are_one_line_each(out):
-    none, same, older, machine, prestress, within, wall, unknown, unloaded = out["warn"]
-    # the Cable net tab's choices not loaded yet: no machine to differ (final
-    # review 6: a false "Run again: machine no wire")
-    assert unloaded == []
-    assert none == ["No formwork run: Run formwork analysis"]
-    assert same == [] and within == [] and unknown == []
-    assert older == ["Run again: older formwork run"]
-    assert machine == ["Run again: machine rope-4mm, 2 a motor, pulleys, "
-                       "run rope-4mm, 1 a motor, pulleys"]
-    assert prestress == ["Run again: prestress 6660.0 N, run 723.4 N"]
-    assert wall == ["Run again: wall 2.6 mm, run 3.2 mm"]
-
-
-def test_each_worst_table_holds_each_parts_worst_over_the_run_and_where(out):
-    worst = out["worst"]
-    assert [(r["index"], r["value"], r["capture"]) for r in worst["ropes"]] == [
-        (1, 3000, 2), (2, 450, 3), (0, 200, 2), (3, 70, 3)]
-    assert worst["wires"] == [{"index": 0, "value": 1500, "capture": 2, "node": 0, "name": "w0"},
-                              {"index": 1, "value": 1100, "capture": 3, "node": 1, "name": "w1"}]
-    assert [(r["index"], r["capture"]) for r in worst["trees"]] == [(0, 3)]
-    assert worst["trees"][0]["value"] == pytest.approx(1.2)
-    # a node's worst is its first capture at that value
-    assert [(r["index"], r["value"], r["capture"]) for r in worst["nodes"]] == [
-        (2, 500, 0), (3, 40, 2), (0, 5, 2), (1, 1, 3)]
-    assert worst["machines"] == [{"index": 0, "value": 1500, "capture": 2, "wire": "w0"}]
-    assert out["noTables"] is None
-
-
-def test_each_table_keeps_its_fifty_worst(out):
-    assert out["worstRows"] == 50
-    assert len(out["many"]) == 50 and out["many"][0]["value"] == 60
-
-
-def test_a_worst_table_sorts_by_its_headers_and_its_rows_fly_to_the_part(out):
-    ropes = out["worstHtml"]["ropes"]
-    assert ropes.startswith('<table class="worst"><tr><th data-sort="index">Member</th>'
-                            '<th data-sort="value" class="sorted down">kN</th>'
-                            '<th data-sort="capture">Capture</th></tr>')
-    assert ('<tr data-capture="2" data-kind="member" data-index="1"><td>1</td><td>3.0</td>'
-            '<td>S1 q1</td></tr>') in ropes
-    assert ropes.index('data-index="1"') < ropes.index('data-index="2"')
-    by_index = out["byIndex"]
-    assert '<th data-sort="index" class="sorted up">Member</th>' in by_index
-    assert by_index.index('data-index="0"') < by_index.index('data-index="1"')
-    html = out["worstHtml"]
-    assert '<td>w0</td><td>1500</td><td>S1 q1</td>' in html["wires"]
-    assert 'data-kind="wire"' in html["wires"]
-    assert '<td>0</td><td>1.20</td><td>S1 q2</td>' in html["trees"]
-    assert ('<tr data-capture="0" data-kind="node" data-index="2"><td>2</td><td>500</td>'
-            '<td>t 30 raise</td></tr>') in html["nodes"]
-    assert '<tr data-capture="2" data-kind="machine" data-index="0"><td>M1</td><td>1500</td>' in html["machines"]
-
-
 def test_a_recorded_frame_carries_the_captures_figures(out):
     # the page's frame line, on one line along the top of the video
     assert out["caption"] == ("t 100 hold   Rope max 2.5 kN   Wire max 1200 N   Trees 0.40   "
@@ -450,26 +310,29 @@ def test_a_recorded_frame_carries_the_labels_and_the_key(out):
     # the page's labels and key are HTML, which never reach the canvas the
     # recorder reads, so they are drawn over each frame
     texts = [text for text, _, _ in out["overlayBands"]["texts"]]
-    assert texts == [out["caption"], "3.0 kN", "deviation, mm: tolerance 20",
-                     "within", "near", "over", "0", "500"]
+    # the key: its title, its two ends, and its limit on a line of its own
+    # under them, as the page's legend has it (found in the video of 11
+    # October: drawn over the bar, it sat on the title)
+    assert texts == [out["caption"], "3.0 kN", "offset, mm", "0", "500 mm", "tolerance 20 mm"]
+    at = {text: y for text, _, y in out["overlayBands"]["texts"]}
+    assert at["offset, mm"] < at["0"] < at["tolerance 20 mm"]
     label = next(t for t in out["overlayBands"]["texts"] if t[0] == "3.0 kN")
     # standing on its point, as the page's labels do
     assert abs(label[1] - 500) < 30 and label[2] < 400
-    assert out["overlayBands"]["rects"] >= 6
+    assert out["overlayBands"]["gradients"] == 1 and out["overlayBands"]["rects"] >= 4
     ramp = out["overlayRamp"]
-    assert [text for text, _, _ in ramp["texts"]] == ["rope tension, kN", "0", "3.0"]
+    assert [text for text, _, _ in ramp["texts"]] == ["rope tension, kN", "0", "3.0 kN"]
     assert ramp["gradients"] == 1
     assert out["overlayNone"]["texts"] == [] and out["overlayNone"]["rects"] == 0
 
 
 def test_the_holds_are_read_with_each_holds_push(out):
     read = out["heldRead"]
-    assert read["holds"] == [3]
-    assert read["search"]["spacing"] == 5 and read["search"]["met"] is True
+    assert read["holds"] == [3] and read["perSide"] == 1 and read["sides"] == [1]
     assert read["push"] == [[0, 0, 0], [0, 0, 0], [0, 0, 40], [30, 0, -40]]
     # a run with no holds reads none
-    holds, search, push = out["plainHolds"]
-    assert holds == [] and search is None and push == []
+    holds, per_side, sides, push = out["plainHolds"]
+    assert holds == [] and per_side == 0 and sides is None and push == []
 
 
 def test_the_frame_line_and_the_card_count_the_struts_and_the_ties(out):
@@ -519,21 +382,3 @@ def test_a_recorded_frame_counts_the_struts_and_the_ties(out):
     assert pushing.endswith("   Struts 1/1   Ties 0/1")
     assert pulling.endswith("   Struts 0/1   Ties 1/1")
     assert "Struts" not in out["caption"]
-
-
-def test_the_search_is_one_table_kept_spacing_first_then_each_try(out):
-    table = out["holdsTable"]
-    assert "<th>Holds</th><td>every 5th line, 190</td>" in table
-    assert "<th>Worst</th><td>14 mm ✓</td>" in table
-    assert "<th>Tried</th><td>the open edges, 95: 412 mm</td>" in table
-    assert "<td>every 5th line, 190: 14 mm</td>" in table
-    # then the rods as they are set, from the capture after the jacking
-    assert "<th>Struts</th><td>1</td>" in table and "<th>Ties</th><td>0</td>" in table
-    assert "<th>Push max</th><td>40 N</td>" in table and "<th>Pull max</th><td>0 N</td>" in table
-    assert "<th>Lean max</th><td>0°</td>" in table
-    missed = out["holdsMissed"]
-    assert "<th>Holds</th><td>every line, 950</td>" in missed
-    assert "<th>Worst</th><td>32 mm ✗</td>" in missed or "<th>Worst</th><td>31 mm ✗</td>" in missed
-    assert out["holdsNone"] == ["", ""]
-    assert out["names"] == ["the open edges", "every 5th line", "every 2nd line", "every line",
-                            "every 3rd line"]

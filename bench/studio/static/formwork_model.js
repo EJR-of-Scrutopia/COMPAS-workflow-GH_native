@@ -3,7 +3,7 @@
 // player's clock over it. Pure: no page and no three.js, so it runs under node
 // in the tests. formwork.js wires it to the page, formwork_view.js draws it.
 
-import { escapeHtml, forceLabel } from "./cablenet_model.js";
+import { escapeHtml, forceLabel } from "./labels.js";
 
 export const SCHEMA = "bench.formwork-sim/1";
 // The studio plays machine time 0 to 100 in its 12 s formwork act; the raise,
@@ -71,6 +71,7 @@ export function readSim(doc) {
     letOut: decodeF32(c.let_out),
     treeX: metres(decodeF32(c.tree_x)),
     treeUtilisation: decodeF32(c.tree_utilisation),
+    treeAxial: decodeF32(c.tree_axial) || new Float32Array(0),
     ground: Array.isArray(c.ground) ? c.ground : null,
     addedFaces: Array.isArray(c.added_faces) ? c.added_faces : null,
     holdPush: decodeF32(c.hold_push) || new Float32Array(0),
@@ -100,10 +101,16 @@ export function readSim(doc) {
     trees: { members: trees.members || [], heads: trees.heads || [], feet: trees.feet || [],
              diameter: Number(trees.diameter) || 60.3, wall: trees.wall },
     captures,
-    // the holds (spec 2026-10-10 formwork holds): the held nodes, and the
-    // search that chose them, or none
+    // the holds (spec 2026-10-10 formwork holds): the held nodes, the rods a
+    // side asked for and each rod's side (spec 2026-10-11 one Cable net tab,
+    // section 6)
     holds: Array.isArray(net.holds) ? net.holds : [],
-    search: doc.holds || null,
+    holdsPerSide: Number(net.holds_per_side) || 0,
+    holdSides: Array.isArray(net.hold_sides) ? net.hold_sides : null,
+    // each node's side (spec 2026-10-11 one Cable net tab, section 6), and the
+    // mechanism's drum and carriage judged on the run's own reels (8.1)
+    sides: Array.isArray(net.sides) ? net.sides : null,
+    checks: doc.checks || null,
     scales: { tension: scale("tension"), wire: scale("wireTension"),
               deviation: scale("deviation"), utilisation: scale("treeUtilisation"), push },
     older: !Array.isArray(net.faces) || doc.captures.some((c) => !Array.isArray(c.ground)),
@@ -251,14 +258,15 @@ export function frameLineHtml(line) {
       : [])]);
 }
 
-export const COLOUR_BY = [["tension", "Rope tension"], ["deviation", "Deviation"],
-  ["utilisation", "Tree utilisation"], ["wire", "Wire tension"], ["off", "Off"]];
+// Colour by (spec 2026-10-11 one Cable net tab, section 5.1), one at a time.
+export const COLOUR_BY = [["wire", "Wires"], ["tension", "Ropes"], ["deviation", "Offset"],
+  ["utilisation", "Trees"], ["off", "Off"]];
 
-// The two ends of the studio's one-sided ramp (#legend.deflection's bar), and
-// the deviation bands in the colours the Sag lens draws them.
-const RAMP_LOW = [0xf2, 0xef, 0xe8];
-const RAMP_HIGH = [0xcc, 0x22, 0x11];
-const DEVIATION_COLOURS = { within: "#f2efe8", near: "#c99a2e", over: "#c24936" };
+// The full ramp every Colour by is drawn on, from a cool blue that shows on the
+// net (so the whole object reads, not only its hotspots) through to red; and
+// the tolerance's bands, which Compare's offset lines wear.
+export const RAMP_STOPS = ["#3a6fc4", "#3fa6a0", "#e8c547", "#cc2211"];
+const DEVIATION_COLOURS = { within: "#3f9e57", near: "#c99a2e", over: "#c24936" };
 
 function hexRgb(hex) {
   const n = parseInt(hex.slice(1), 16);
@@ -266,8 +274,15 @@ function hexRgb(hex) {
 }
 
 export function ramp(fraction) {
-  const f = Math.min(1, Math.max(0, Number(fraction) || 0));
-  return RAMP_LOW.map((low, i) => (low + (RAMP_HIGH[i] - low) * f) / 255);
+  const f = Math.min(1, Math.max(0, Number(fraction) || 0)) * (RAMP_STOPS.length - 1);
+  const i = Math.min(RAMP_STOPS.length - 2, Math.floor(f));
+  const a = hexRgb(RAMP_STOPS[i]);
+  const b = hexRgb(RAMP_STOPS[i + 1]);
+  return a.map((v, k) => v + (b[k] - v) * (f - i));
+}
+
+export function bandColour(mm, tolerance) {
+  return hexRgb(DEVIATION_COLOURS[deviationBand(mm, tolerance)]);
 }
 
 // A deviation's band against the tolerance, as the Sag lens bands a sag: over
@@ -278,37 +293,146 @@ export function deviationBand(mm, tolerance) {
   return "within";
 }
 
+// The scale of each Colour by: the run's largest, so a colour is the same
+// value in every capture.
+const SCALE = { wire: "wire", tension: "tension", deviation: "deviation", utilisation: "utilisation" };
+
 // The colour a value is drawn in under a Colour by choice, [r, g, b] from 0 to
-// 1, on the run's own scale; null where the choice colours nothing (Off).
-export function colourOf(by, value, sim, tolerance) {
-  if (!sim || value == null) return null;
-  if (by === "tension") return ramp(sim.scales.tension > 0 ? value / sim.scales.tension : 0);
-  if (by === "wire") return ramp(sim.scales.wire > 0 ? value / sim.scales.wire : 0);
-  // banded at the tube's capacity, 1.0, as a sag is at the tolerance
-  // (final review 3: a ramp clamped at 1.0 drew 2.36 and 1.0 the same red)
-  if (by === "utilisation") return hexRgb(DEVIATION_COLOURS[deviationBand(value, 1)]);
-  if (by === "deviation") return hexRgb(DEVIATION_COLOURS[deviationBand(value, tolerance)]);
-  return null;
+// 1, on the full ramp over the run (spec 2026-10-11 section 5.1); null where
+// the choice colours nothing (Off). Whether a part is over its limit is
+// Weakest's to show, not the colour's.
+export function colourOf(by, value, sim) {
+  if (!sim || value == null || !SCALE[by]) return null;
+  const top = sim.scales[SCALE[by]];
+  return ramp(top > 0 ? value / top : 0);
 }
 
-// The key a Colour by choice draws, in the legend's own shape (lensLegend's).
-export function colourKey(by, sim, tolerance) {
-  if (!sim) return null;
-  if (by === "tension") {
-    return { title: "rope tension, kN", min: "0", max: (sim.scales.tension / 1000).toFixed(1) };
+function kilo(n) {
+  return (Number(n) / 1000).toFixed(1) + " kN";
+}
+
+// The key a Colour by choice draws: a real scale from nought to the run's
+// largest, and the limit named, with its place on the bar (fraction) when it
+// is on it; null for Off. limits: { have, rope, tolerance } (a bare number is
+// the tolerance, as the tab's older calls give it).
+export function colourKey(by, sim, limits) {
+  if (!sim || !SCALE[by]) return null;
+  const given = typeof limits === "number" ? { tolerance: limits } : (limits || {});
+  const top = sim.scales[SCALE[by]];
+  const keyed = {
+    wire: ["wire tension, N", grouped(top), given.have, (v) => "one spool " + grouped(v)],
+    tension: ["rope tension, kN", kilo(top), given.rope, (v) => "working load " + kilo(v)],
+    deviation: ["offset, mm", millimetres(top), given.tolerance, (v) => "tolerance " + Number(v) + " mm"],
+    utilisation: ["tree utilisation", top.toFixed(2), 1.0, (v) => "capacity " + Number(v).toFixed(1)],
+  }[by];
+  const [title, max, limit, named] = keyed;
+  const known = limit != null && Number.isFinite(Number(limit));
+  const fraction = known && top > 0 && Number(limit) <= top ? Number(limit) / top : null;
+  return { title, min: "0", max, limitText: known ? named(limit) : null, fraction };
+}
+
+// The parts a Colour by puts its values on, and which Show tick they need.
+const LABEL_PART = { wire: "wires", tension: "net", deviation: "net", utilisation: "trees", off: "heads" };
+
+export function labelsShown(by, show) {
+  return !!(show || {})[LABEL_PART[by]];
+}
+
+// Each value a capture has for a Colour by: [target, value, side], the side
+// the part is on (null where the run has none, and for the trees).
+function valuesFor(sim, c, by) {
+  const side = (node) => (sim.sides && node != null ? sim.sides[node] ?? null : null);
+  const out = [];
+  if (by === "wire") {
+    sim.rim.nodes.forEach((node, w) => out.push([{ kind: "wire", index: w }, c.wireTension[w], side(node)]));
+  } else if (by === "tension") {
+    sim.edges.forEach(([u], e) => out.push([{ kind: "member", index: e }, c.tension[e], side(u)]));
+  } else if (by === "deviation") {
+    for (let i = 0; i < sim.nodes; i++) out.push([{ kind: "node", index: i }, c.deviation[i], side(i)]);
+  } else if (by === "utilisation") {
+    sim.trees.members.forEach((_, k) => out.push([{ kind: "tree", index: k }, c.treeUtilisation[k], null]));
+  } else if (by === "off") {
+    sim.trees.heads.forEach(([node], h) => out.push([{ kind: "node", index: node }, pushOf(c, h), side(node)]));
   }
-  if (by === "wire") return { title: "wire tension, N", min: "0", max: sim.scales.wire.toFixed(0) };
-  if (by === "utilisation") {
-    return { title: "tree utilisation: capacity 1.0", min: "0",
-             max: sim.scales.utilisation.toFixed(2),
-             bands: ["within", "near", "over"].map((name) => ({ name, colour: DEVIATION_COLOURS[name] })) };
+  return out;
+}
+
+function textFor(by, value) {
+  if (by === "wire" || by === "off") return grouped(value);
+  if (by === "tension") return kilo(value);
+  if (by === "deviation") return millimetres(value);
+  return Number(value).toFixed(2);
+}
+
+// The values a capture puts on the model (spec 2026-10-11 section 5.2): for
+// the Colour by shown, its count largest, then the largest of each side not
+// yet among them; with Colour by off, the heads' pushes. Largest first, so
+// where they crowd the largest is the one kept.
+export function colourLabels(sim, index, by, count = 5) {
+  const c = sim && sim.captures[index];
+  if (!c || !LABEL_PART[by]) return [];
+  const values = valuesFor(sim, c, by).filter(([, value]) => value > 0);
+  values.sort((a, b) => b[1] - a[1] || a[0].index - b[0].index);
+  const picked = values.slice(0, count);
+  const sides = new Set(picked.map(([, , side]) => side));
+  for (const entry of values) {
+    if (entry[2] != null && !sides.has(entry[2])) {
+      picked.push(entry);
+      sides.add(entry[2]);
+    }
   }
-  if (by === "deviation") {
-    return { title: "deviation, mm: tolerance " + Number(tolerance), min: "0",
-             max: sim.scales.deviation.toFixed(0),
-             bands: ["within", "near", "over"].map((name) => ({ name, colour: DEVIATION_COLOURS[name] })) };
+  return picked.map(([target, value]) => ({ ...target, value, text: textFor(by, value) }));
+}
+
+// The values on the model (spec 2026-10-11 sections 5.2 to 5.4): the Colour
+// by's (by, or null with the values off), then each weakest part's value, or
+// with none over what it has to spare, then with Compare the largest offsets
+// in mm. One label a part, the first kept; largest first within each.
+const KIND_BY = { wire: "wire", member: "tension", tree: "utilisation", node: "deviation" };
+
+export function modelLabels(sim, index, { by = null, weakest = [], compare = false } = {}) {
+  const out = [];
+  const seen = new Set();
+  const add = (label) => {
+    const key = label.kind + ":" + label.index;
+    if (!seen.has(key)) {
+      seen.add(key);
+      out.push(label);
+    }
+  };
+  if (!sim) return out;
+  if (by != null) colourLabels(sim, index, by).forEach(add);
+  for (const item of weakest || []) {
+    add({ kind: item.kind, index: item.index, value: item.value,
+          text: item.over ? item.text : textFor(KIND_BY[item.kind], item.limit - item.value) + " spare" });
   }
-  return null;
+  if (compare) colourLabels(sim, index, "deviation").forEach(add);
+  return out;
+}
+
+// The weakest parts at a capture (spec 2026-10-11 section 5.3): every part
+// over its limit, the furthest over first (a wire over one spool's pull, a
+// rope over its working load, a tree member over 1.0, a node outside the
+// tolerance); with none over, the five closest to their limits. A kind with
+// no limit is not judged. limits: { have, rope, tolerance }.
+export function weakestAt(sim, index, limits) {
+  const c = sim && sim.captures[index];
+  if (!c) return [];
+  const given = limits || {};
+  const kinds = [["wire", "wire", given.have], ["tension", "member", given.rope],
+                 ["utilisation", "tree", 1.0], ["deviation", "node", given.tolerance]];
+  const all = [];
+  for (const [by, kind, limit] of kinds) {
+    if (limit == null || !(Number(limit) > 0)) continue;
+    for (const [target, value] of valuesFor(sim, c, by)) {
+      if (value == null || !Number.isFinite(value)) continue;
+      all.push({ kind, index: target.index, value, limit: Number(limit), ratio: value / Number(limit),
+                 over: value > Number(limit), text: textFor(by, value) });
+    }
+  }
+  all.sort((a, b) => b.ratio - a.ratio);
+  const over = all.filter((item) => item.over);
+  return over.length ? over : all.slice(0, 5);
 }
 
 // Where a part is at a capture, in metres: a member's midpoint, a node, a
@@ -336,50 +460,6 @@ export function targetPoint(sim, index, target) {
     return [0, 1, 2].map((k) => points.reduce((sum, p) => sum + p[k], 0) / points.length);
   }
   return null;
-}
-
-export const LABEL_KINDS = [["rope", "Rope"], ["deviation", "Deviation"], ["contact", "Contact"]];
-
-function largestIndices(values, count) {
-  const found = [];
-  if (!values) return found;
-  for (let i = 0; i < values.length; i++) if (values[i] > 0) found.push(i);
-  found.sort((a, b) => values[b] - values[a] || a - b);
-  return found.slice(0, count);
-}
-
-// The label kinds ticked whose part is in view: rope and deviation stand on
-// the net, contact on the heads (found on screen: deviation labels over the
-// trees alone).
-export function labelKindsInView(kinds, show) {
-  const part = { rope: "net", deviation: "net", contact: "heads" };
-  return (kinds || []).filter((kind) => !!(show || {})[part[kind]]);
-}
-
-// The labels a capture puts on the model for the ticked kinds, each kind's
-// largest first, so where they crowd the largest is the one kept: rope kN at a
-// member, deviation mm at a node, the push of each head touching its node.
-export function formworkLabels(sim, index, kinds, count = 20) {
-  const c = sim && sim.captures[index];
-  if (!c) return [];
-  const out = [];
-  if (kinds.includes("rope")) {
-    for (const i of largestIndices(c.tension, count)) {
-      out.push({ kind: "member", index: i, text: kilonewtons(c.tension[i]) });
-    }
-  }
-  if (kinds.includes("deviation")) {
-    for (const i of largestIndices(c.deviation, count)) {
-      out.push({ kind: "node", index: i, text: millimetres(c.deviation[i]) });
-    }
-  }
-  if (kinds.includes("contact")) {
-    const push = sim.trees.heads.map((_, h) => pushOf(c, h));
-    for (const h of largestIndices(push, count)) {
-      out.push({ kind: "node", index: sim.trees.heads[h][0], text: newtons(push[h]) });
-    }
-  }
-  return out;
 }
 
 // The card a click on a node opens (spec section 9): where it is, how far from
@@ -415,36 +495,136 @@ export function formworkPickHtml(sim, index, node) {
     ? "<table><tr><th>To node</th><th>Tension</th></tr>" + members.join("") + "</table>" : "");
 }
 
-// The machine as a warning names it: its wire, wires a motor and pulleys.
-function machineName(options) {
-  return (options.rope || "no wire") + ", " + (options.wires_per_motor || 1) + " a motor, "
-    + (options.pulleys === false ? "no pulleys" : "pulleys");
+const MECHANISM_KEYS = ["motor", "ratio", "pulley", "rope", "wires_per_motor"];
+
+// One line each (spec 2026-10-11 one Cable net tab, section 4.4): no run yet,
+// an older run, and a run not made with the mechanism chosen (its five
+// choices, wires a motor among them). A wall is judged again without a run
+// (withWall), so it never makes a run out of date. chosen: { mechanism }, the
+// pop-up's five choices, null while they load.
+export function formworkWarnings(sim, chosen) {
+  if (!sim) return ["No run yet: Run"];
+  const out = [];
+  if (sim.older) out.push("Run again: older run");
+  const mine = chosen && chosen.mechanism;
+  const ran = (sim.options || {}).mechanism;
+  if (mine && (!ran || MECHANISM_KEYS.some((key) => (ran[key] ?? null) !== (mine[key] ?? null)))) {
+    out.push("Run again: mechanism changed");
+  }
+  const rods = chosen && chosen.holdsPerSide;
+  if (rods != null && Number(rods) !== sim.holdsPerSide) out.push("Run again: rods a side changed");
+  return out;
 }
 
-// One line each (spec section 11): no run yet, an older run, and the run's
-// machine, prestress or wall not the chosen ones. chosen: the Cable net tab's
-// rope, wires_per_motor and pulleys, the Wall dial, and the cable net run's
-// design prestress (null when there is none).
-export function formworkWarnings(sim, chosen) {
-  if (!sim) return ["No formwork run: Run formwork analysis"];
-  const out = [];
-  if (sim.older) out.push("Run again: older formwork run");
-  const ran = sim.options || {};
-  if (!chosen) return out;
-  if (chosen.rope != null && machineName(chosen) !== machineName(ran)) {
-    out.push("Run again: machine " + machineName(chosen) + ", run " + machineName(ran));
+// A whole number of newtons with its thousands marked: "57,476 N".
+export function grouped(n) {
+  return Math.round(Number(n)).toLocaleString("en-GB") + " N";
+}
+
+// The answer, from the run alone (spec 2026-10-11 one Cable net tab, section
+// 4.3): the largest wire tension anywhere in the run, its wire and capture;
+// one spool's pull of the run's mechanism; how much is missing or to spare;
+// and the form, the worst offset at the run's last capture, against the
+// tolerance. have and gap are null for a run cut for a named prestress.
+export function answer(sim, tolerance) {
+  if (!sim) return null;
+  let needed = null;
+  sim.captures.forEach((c, k) => {
+    const t = c.wireTension;
+    for (let w = 0; t && w < t.length; w++) {
+      if (!needed || t[w] > needed.newtons) needed = { newtons: t[w], wire: w, capture: k };
+    }
+  });
+  if (needed) {
+    needed.name = sim.rim.names[needed.wire] || "#" + needed.wire;
+    needed.label = captureLabel(sim.captures[needed.capture]);
   }
-  if (chosen.prestress != null && ran.prestress != null
-      && Math.abs(chosen.prestress - ran.prestress) > 0.01 * ran.prestress) {
-    out.push("Run again: prestress " + Number(chosen.prestress).toFixed(1) + " N, run "
-      + Number(ran.prestress).toFixed(1) + " N");
+  const o = sim.options || {};
+  const have = o.have_newtons == null ? null
+    : { newtons: Number(o.have_newtons), limit: o.have_limit || null, part: o.have_part || null,
+        mechanism: o.mechanism || null };
+  const gap = needed && have
+    ? { newtons: Math.abs(needed.newtons - have.newtons), missing: needed.newtons > have.newtons }
+    : null;
+  const last = sim.captures[sim.captures.length - 1];
+  const worst = largestOf(last.deviation);
+  const form = { mm: worst, tolerance: Number(tolerance), within: worst <= Number(tolerance) };
+  // the rods a side asked for and how many went on (spec section 6)
+  const holds = { perSide: sim.holdsPerSide, rods: sim.holds.length };
+  return { needed, have, gap, form, holds };
+}
+
+// The mechanism as the answer names it: "23HS45-4204D-E1000 20:1".
+function shortMechanism(mechanism) {
+  if (!mechanism) return "";
+  return mechanism.motor + (mechanism.ratio == null ? " direct" : " " + mechanism.ratio + ":1");
+}
+
+// The answer block (spec section 4.3): a row each, value then what it is;
+// Needed's row carries its capture and wire, so a click goes there. Greyed
+// (stale) while the run is out of date.
+export function answerHtml(a, { stale = false } = {}) {
+  if (!a) return "";
+  const mark = (ok) => (ok ? "✓" : "✗");
+  const row = (name, value, note = "", attrs = "") =>
+    `<tr${attrs}><th>${escapeHtml(name)}</th><td>${value}</td><td>${escapeHtml(note)}</td></tr>`;
+  const rows = [];
+  if (a.needed) {
+    rows.push(row("Needed", grouped(a.needed.newtons),
+                  "worst wire " + a.needed.name + ", at " + a.needed.label,
+                  ` data-capture="${a.needed.capture}" data-wire="${a.needed.wire}"`));
   }
-  if (chosen.wall != null && ran.wall != null
-      && Number(chosen.wall).toFixed(1) !== Number(ran.wall).toFixed(1)) {
-    out.push("Run again: wall " + Number(chosen.wall).toFixed(1) + " mm, run "
-      + Number(ran.wall).toFixed(1) + " mm");
-  }
-  return out;
+  rows.push(a.have ? row("Have", grouped(a.have.newtons), "one spool, " + shortMechanism(a.have.mechanism))
+    : row("Have", "none"));
+  if (a.gap) rows.push(row(a.gap.missing ? "Missing" : "Spare", grouped(a.gap.newtons) + " " + mark(!a.gap.missing)));
+  rows.push(row("Form", millimetres(a.form.mm) + " " + mark(a.form.within),
+                "worst offset, tolerance " + Number(a.form.tolerance) + " mm"));
+  const rods = a.holds ? a.holds.rods : 0;
+  const counted = rods + (rods === 1 ? " rod" : " rods");
+  rows.push(row("Holds", !rods ? "none"
+    : a.holds.perSide ? a.holds.perSide + " a side, " + counted : counted));
+  return `<table class="answer${stale ? " stale" : ""}">` + rows.join("") + "</table>";
+}
+
+// ---------- the trees judged again for a new wall ----------
+// trees.resistance, ported (spec 2026-10-11 section 7: a new wall is judged
+// again from the run's own member forces, without a run): EN 1993-1-1 6.3.1,
+// buckling curve a, S355, the member's own length as its buckling length.
+const E_STEEL = 210000.0;
+const FY_S355 = 355.0;
+const ALPHA_CURVE_A = 0.21;
+const FOLDED_MM = 1.0e-6;
+
+function resistance(diameter, wall, length, compression) {
+  const inner = diameter - 2 * wall;
+  const area = Math.PI / 4 * (diameter ** 2 - inner ** 2);
+  const plastic = area * FY_S355;
+  if (!compression) return plastic;
+  const inertia = Math.PI / 64 * (diameter ** 4 - inner ** 4);
+  const critical = Math.PI ** 2 * E_STEEL * inertia / length ** 2;
+  const slenderness = Math.sqrt(plastic / critical);
+  const phi = 0.5 * (1 + ALPHA_CURVE_A * (slenderness - 0.2) + slenderness ** 2);
+  return Math.min(1, 1 / (phi + Math.sqrt(phi ** 2 - slenderness ** 2))) * plastic;
+}
+
+// The run with its trees judged in a tube of this wall: each capture's
+// utilisation from its members' forces and lengths, and the scale with them.
+// The run read is left as it is.
+export function withWall(sim, wall) {
+  if (!sim) return sim;
+  const diameter = sim.trees.diameter;
+  const captures = sim.captures.map((c) => {
+    const utilisation = new Float32Array(sim.trees.members.length);
+    sim.trees.members.forEach(([p, q], k) => {
+      const length = Math.hypot(c.treeX[3 * q] - c.treeX[3 * p], c.treeX[3 * q + 1] - c.treeX[3 * p + 1],
+                                c.treeX[3 * q + 2] - c.treeX[3 * p + 2]) * 1000;
+      const n = c.treeAxial[k] || 0;
+      utilisation[k] = length < FOLDED_MM ? 0 : Math.abs(n) / resistance(diameter, wall, length, n < 0);
+    });
+    return { ...c, treeUtilisation: utilisation };
+  });
+  const scale = Math.max(0, ...captures.map((c) => largestOf(c.treeUtilisation)));
+  return { ...sim, captures, trees: { ...sim.trees, wall }, scales: { ...sim.scales, utilisation: scale } };
 }
 
 // ---------- what a recorded frame carries ----------
@@ -497,127 +677,35 @@ export function paintOverlay(ctx, { width, height, caption, labels, key }) {
   }
   if (key) {
     const bw = px(220);
-    const bh = px(70);
+    const bh = px(74);
     const x0 = width - bw - px(16);
     const y0 = height - bh - px(16);
     const barX = x0 + px(10);
     const barW = bw - px(20);
-    const barY = y0 + px(28);
+    const barY = y0 + px(24);
     const barH = px(14);
     ctx.fillStyle = OVERLAY_GROUND;
     ctx.fillRect(x0, y0, bw, bh);
     ctx.fillStyle = OVERLAY_INK;
     ctx.font = px(12) + "px sans-serif";
     ctx.fillText(key.title, barX, y0 + px(14));
-    if (key.bands) {
-      const each = barW / key.bands.length;
-      key.bands.forEach((band, i) => {
-        ctx.fillStyle = band.colour;
-        ctx.fillRect(barX + i * each, barY, each - 1, barH);
-        ctx.fillStyle = "#111111";
-        ctx.font = px(10) + "px sans-serif";
-        ctx.fillText(band.name, barX + i * each + px(4), barY + barH / 2);
-      });
-    } else {
-      const ramp = ctx.createLinearGradient(barX, 0, barX + barW, 0);
-      ramp.addColorStop(0, "#f2efe8");
-      ramp.addColorStop(1, "#cc2211");
-      ctx.fillStyle = ramp;
-      ctx.fillRect(barX, barY, barW, barH);
+    const gradient = ctx.createLinearGradient(barX, 0, barX + barW, 0);
+    RAMP_STOPS.forEach((stop, i) => gradient.addColorStop(i / (RAMP_STOPS.length - 1), stop));
+    ctx.fillStyle = gradient;
+    ctx.fillRect(barX, barY, barW, barH);
+    // the limit marked at its place on the bar, when it is within the run
+    if (key.limitText && key.fraction != null) {
+      ctx.fillStyle = OVERLAY_INK;
+      ctx.fillRect(barX + key.fraction * barW - px(1), barY - px(3), px(2), barH + px(6));
     }
     ctx.fillStyle = OVERLAY_INK;
     ctx.font = px(11) + "px sans-serif";
     ctx.fillText(key.min, barX, barY + barH + px(12));
     ctx.fillText(key.max, barX + barW - ctx.measureText(key.max).width, barY + barH + px(12));
+    // and named on a line of its own under the ends, as the page's legend
+    if (key.limitText) ctx.fillText(key.limitText, barX, barY + barH + px(27));
   }
   ctx.restore();
-}
-
-// ---------- the worst tables ----------
-
-export const WORST_PARTS = [["ropes", "Ropes"], ["wires", "Wires"], ["trees", "Trees"],
-  ["nodes", "Nodes"], ["machines", "Machines"]];
-export const WORST_ROWS = 50;
-
-// Each element's largest value over every capture, and the first capture it
-// reaches it at.
-function worstOver(sim, field) {
-  const best = [];
-  sim.captures.forEach((c, k) => {
-    const values = c[field];
-    if (!values) return;
-    for (let i = 0; i < values.length; i++) {
-      if (best[i] == null || values[i] > best[i].value) best[i] = { index: i, value: values[i], capture: k };
-    }
-  });
-  return best.filter(Boolean);
-}
-
-function worstFirst(rows) {
-  return rows.sort((a, b) => b.value - a.value || a.index - b.index).slice(0, WORST_ROWS);
-}
-
-// The worst tables (spec section 10): each part's worst over the whole
-// sequence with the capture it happens at, the WORST_ROWS worst of each. A
-// machine's worst is its worst wire's.
-export function worstTables(sim) {
-  if (!sim) return null;
-  const wires = worstOver(sim, "wireTension").map((row) => ({
-    ...row, node: sim.rim.nodes[row.index], name: sim.rim.names[row.index] || "#" + row.index }));
-  const machines = sim.rim.machines.map((nodes, m) => {
-    let worst = null;
-    for (const node of nodes) {
-      const row = wires.find((r) => r.node === node);
-      if (row && (!worst || row.value > worst.value)) {
-        worst = { index: m, value: row.value, capture: row.capture, wire: row.name };
-      }
-    }
-    return worst;
-  }).filter(Boolean);
-  return { ropes: worstFirst(worstOver(sim, "tension")), wires: worstFirst(wires),
-           trees: worstFirst(worstOver(sim, "treeUtilisation")),
-           nodes: worstFirst(worstOver(sim, "deviation")), machines: worstFirst(machines) };
-}
-
-export function sortRows(rows, key, descending) {
-  const sign = descending ? -1 : 1;
-  return [...rows].sort((a, b) => sign * (a[key] - b[key]) || a.index - b.index);
-}
-
-const WORST_COLUMNS = {
-  ropes: [["index", "Member"], ["value", "kN"], ["capture", "Capture"]],
-  wires: [["index", "Wire"], ["value", "N"], ["capture", "Capture"]],
-  trees: [["index", "Member"], ["value", "Utilisation"], ["capture", "Capture"]],
-  nodes: [["index", "Node"], ["value", "mm"], ["capture", "Capture"]],
-  machines: [["index", "Machine"], ["value", "Worst wire, N"], ["capture", "Capture"]],
-};
-const WORST_KIND = { ropes: "member", wires: "wire", trees: "tree", nodes: "node", machines: "machine" };
-
-function worstCell(part, key, row, sim) {
-  if (key === "capture") return escapeHtml(captureLabel(sim.captures[row.capture]));
-  if (key === "index") {
-    if (part === "wires") return escapeHtml(row.name);
-    if (part === "machines") return "M" + (row.index + 1);
-    return String(row.index);
-  }
-  if (part === "ropes") return (row.value / 1000).toFixed(1);
-  if (part === "trees") return row.value.toFixed(2);
-  if (part === "nodes") return row.value >= 10 ? row.value.toFixed(0) : row.value.toFixed(1);
-  return row.value.toFixed(0);
-}
-
-// A worst table: a header a column, which sorts (the sorted one marked); a row
-// a part, carrying its capture and the part to turn the camera onto.
-export function worstHtml(part, rows, sim, sort = { key: "value", descending: true }) {
-  const columns = WORST_COLUMNS[part];
-  if (!columns || !sim) return "";
-  const head = columns.map(([key, name]) => `<th data-sort="${key}"`
-    + (key === sort.key ? ` class="sorted ${sort.descending ? "down" : "up"}"` : "")
-    + `>${escapeHtml(name)}</th>`).join("");
-  const body = sortRows(rows || [], sort.key, sort.descending).map((row) =>
-    `<tr data-capture="${row.capture}" data-kind="${WORST_KIND[part]}" data-index="${row.index}">`
-    + columns.map(([key]) => `<td>${worstCell(part, key, row, sim)}</td>`).join("") + "</tr>").join("");
-  return `<table class="worst"><tr>${head}</tr>${body}</table>`;
 }
 
 // The faces the skin has on it at a capture: every tiling quarter's up to it
@@ -629,48 +717,4 @@ export function placedFaces(sim, index) {
     for (const face of sim.captures[k].addedFaces || []) out.push(face);
   }
   return out;
-}
-
-// ---------- the holds' search ----------
-
-// A spacing as the tab says it (formwork_sim.spacing_name): the open edges,
-// every 5th line, every line.
-export function spacingName(spacing, widest) {
-  if (spacing === widest) return "the open edges";
-  if (spacing === 1) return "every line";
-  const tens = spacing % 100;
-  const suffix = tens >= 11 && tens <= 13 ? "th" : ({ 1: "st", 2: "nd", 3: "rd" }[spacing % 10] || "th");
-  return "every " + spacing + suffix + " line";
-}
-
-// The search as one table (spec 2026-10-10 formwork holds, section 5): the
-// spacing kept and its holds, the worst deviation marked against the
-// tolerance, then each try. A run with no search shows nothing.
-export function holdsHtml(sim) {
-  const search = sim && sim.search;
-  if (!search || !Array.isArray(search.tried) || !search.tried.length) return "";
-  const widest = Math.max(...search.tried.map((t) => t.spacing));
-  const worstOf = (t) => (t.deviation_max_mm == null ? "none" : Number(t.deviation_max_mm).toFixed(0) + " mm");
-  const kept = search.tried.find((t) => t.spacing === search.spacing) || search.tried[search.tried.length - 1];
-  const rows = [["Holds", escapeHtml(spacingName(search.spacing, widest)) + ", " + search.count],
-                ["Worst", worstOf(kept) + " " + (search.met ? "✓" : "✗")]];
-  search.tried.forEach((t, i) => {
-    rows.push([i === 0 ? "Tried" : "", escapeHtml(spacingName(t.spacing, widest)) + ", " + t.count + ": " + worstOf(t)]);
-  });
-  // then the rods as they are set, at the capture after the jacking
-  const set = sim.captures && sim.captures[jackedAt(sim)];
-  if (set && sim.holds.length) {
-    let struts = 0, ties = 0, push = 0, pull = 0, lean = 0;
-    sim.holds.forEach((_, h) => {
-      const force = holdForce(set, h);
-      const rod = holdRod(force);
-      const size = Math.hypot(...force);
-      if (rod.kind === "strut") { struts += 1; push = Math.max(push, size); }
-      if (rod.kind === "tie") { ties += 1; pull = Math.max(pull, size); }
-      lean = Math.max(lean, rod.lean);
-    });
-    rows.push(["Struts", String(struts)], ["Ties", String(ties)], ["Push max", newtons(push)],
-              ["Pull max", newtons(pull)], ["Lean max", lean.toFixed(0) + "°"]);
-  }
-  return keyed(rows);
 }

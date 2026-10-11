@@ -1,22 +1,31 @@
-// The Formwork tab's controller (spec 2026-10-10 formwork tab): it runs the
-// formwork engine, fetches its captures, plays them, and fills the section and
-// the worst pop-up from formwork_model.js. studio.js hands it the study, the
-// Cable net tab's machine, the drawing (formwork_view.js) and its own hooks;
-// this file touches no three.js. A tool, not a text: numbers, marks, tables.
+// The one Cable net tab's controller (spec 2026-10-11 one Cable net tab): it
+// runs the physics engine with the mechanism chosen in the pop-up
+// (mechanism_pick.js), fetches the run's captures, plays them, gives the
+// answer, and fills the section from formwork_model.js. studio.js hands it the
+// study, the mechanism pop-up, the drawing (formwork_view.js) and its own
+// hooks; this file touches no three.js. A tool, not a text: numbers, marks,
+// tables.
 
 import {
-  captureLabel, captureTimes, colourKey, formworkLabels, formworkPickHtml, formworkWarnings,
-  frameLine, frameLineHtml, holdsHtml, labelKindsInView, paintOverlay, playhead, readSim,
-  recordingCaption, worstHtml, worstTables,
+  answer, answerHtml, captureLabel, captureTimes, colourKey, formworkPickHtml, modelLabels,
+  formworkWarnings, frameLine, frameLineHtml, labelsShown, paintOverlay, playhead, readSim,
+  recordingCaption, weakestAt, withWall,
 } from "./formwork_model.js";
-import { spreadLabels } from "./cablenet_model.js";
+import { spreadLabels } from "./labels.js";
+import { costHtml, graphsHtml } from "./run_popup_model.js";
 
-// As the Cable net tab's labels and card (studio.js).
+// As the studio's labels and card.
 const LABEL_MAX = 125;
 const LABEL_GAP_X = 44;
 const LABEL_GAP_Y = 16;
 const CARD_WIDTH = 220;
 const CARD_CLEAR_BOTTOM = 70;
+// A change that needs a run starts it once nothing has changed for this long
+// (spec 2026-10-11 section 7).
+const RERUN_SETTLE_MS = 1000;
+// The studio's own play and pause symbols (paintPlayButtons).
+const PLAY = "▶";
+const PAUSE = "❚❚";
 
 const ESCAPES = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" };
 
@@ -25,7 +34,7 @@ function esc(value) {
 }
 
 function byId(id) {
-  return document.getElementById(id);
+  return typeof document === "undefined" ? null : document.getElementById(id);
 }
 
 async function getJson(url, init) {
@@ -40,8 +49,7 @@ async function getJson(url, init) {
   return response.json();
 }
 
-// The study's options as the cable net demand is keyed: a null or empty value
-// is left out.
+// The study's options as a run is keyed: a null or empty value is left out.
 function sentOptions(options) {
   const sent = {};
   for (const [key, value] of Object.entries(options || {})) {
@@ -56,103 +64,102 @@ function simUrl(studyName, options) {
   return `/api/studies/${encodeURIComponent(studyName)}/formwork/sim?${query.toString()}`;
 }
 
-// hooks: enter() and leave() (the studio's timeline and objects), legend(key)
-// (null hides it), showMachine(on), aim(point), camera(), canvasRect(),
-// viewRight(), onPopup(), record() (the studio's recorder: start, or stop).
-export function mountFormwork({ studyName, studyOptions, machine, designPrestress, tolerance, view,
-                                hooks }) {
+// mechanism: the pop-up's controller (mechanism_pick.js). hooks: enter() and
+// leave() (the studio's timeline and objects), legend(key) (null hides it),
+// aim(point), camera(), canvasRect(), viewRight(), record() (the studio's
+// recorder: start, or stop).
+export function mountFormwork({ studyName, studyOptions, mechanism, view, hooks }) {
   const el = {
     run: byId("formwork-run"), runStatus: byId("formwork-run-status"),
-    machine: byId("formwork-machine"), wall: byId("formwork-wall"),
-    wallValue: byId("formwork-wall-value"), scrub: byId("formwork-scrub"),
-    scrubValue: byId("formwork-scrub-value"), speed: byId("formwork-speed"),
-    speedValue: byId("formwork-speed-value"), back: byId("formwork-back"),
-    play: byId("formwork-play"), on: byId("formwork-on"), label: byId("formwork-label"),
-    line: byId("formwork-line"), show: byId("formwork-show"), colour: byId("formwork-colour"),
-    labelTicks: byId("formwork-label-ticks"), worstToggle: byId("formwork-worst-toggle"),
-    warnings: byId("formwork-warnings"), popup: byId("formwork-popup"),
-    popupClose: byId("formwork-popup-close"), worst: byId("formwork-worst"),
-    labels: byId("formwork-labels"), pick: byId("formwork-pick"),
-    record: byId("formwork-record"),
-    holdsChoice: byId("formwork-holds-choice"), holds: byId("formwork-holds"),
+    answer: byId("formwork-answer"), mechanismToggle: byId("mechanism-toggle"),
+    mechanismName: byId("formwork-mechanism-name"),
+    tolerance: byId("formwork-tolerance"), toleranceValue: byId("formwork-tolerance-value"),
+    wires: byId("formwork-wires"), wiresValue: byId("formwork-wires-value"),
+    holds: byId("formwork-holds"), holdsValue: byId("formwork-holds-value"),
+    wall: byId("formwork-wall"), wallValue: byId("formwork-wall-value"),
+    skin: byId("formwork-skin"), skinValue: byId("formwork-skin-value"),
+    scrub: byId("formwork-scrub"), scrubValue: byId("formwork-scrub-value"),
+    speed: byId("formwork-speed"), speedValue: byId("formwork-speed-value"),
+    back: byId("formwork-back"), play: byId("formwork-play"), on: byId("formwork-on"),
+    label: byId("formwork-label"), line: byId("formwork-line"), show: byId("formwork-show"),
+    compare: byId("formwork-compare"), weakest: byId("formwork-weakest"),
+    colour: byId("formwork-colour"), values: byId("formwork-values"),
+    warnings: byId("formwork-warnings"), labels: byId("formwork-labels"),
+    pick: byId("formwork-pick"), record: byId("formwork-record"),
+    costBody: byId("cost-body"), costExport: byId("cost-export"),
+    costStatus: byId("cost-export-status"), graphs: byId("graphs-body"),
+    costFolderChoose: byId("cost-folder-choose"), costFolderPath: byId("cost-folder-path"),
   };
   const api = { active: () => false, setActive: () => {}, tick: () => {}, place: () => {},
                 pick: () => {}, clear: () => {}, reload: () => {}, refresh: () => {},
-                closePopup: () => {} };
+                closePopup: () => {}, mechanismChanged: () => {} };
   const missing = Object.keys(el).filter((name) => !el[name]);
   if (missing.length) {
-    console.warn(`the formwork section is not on this page: no element for ${missing.join(", ")}`);
+    if (typeof document !== "undefined") {
+      console.warn(`the Cable net section is not on this page: no element for ${missing.join(", ")}`);
+    }
     return api;
   }
-  const tabs = [...document.querySelectorAll("#formwork-tabs [data-fw-tab]")];
 
   // A ticket keeps a late document from overwriting a newer one, or the
-  // emptiness of a study that has gone; watcher is the interval watching a run.
+  // emptiness of a study that has gone; watcher is the interval watching a
+  // run. judged is the run with its trees judged for the Wall dial.
   const tab = {
-    active: false, sim: null, times: [], at: 0, playing: false, speed: 1,
-    worst: null, part: "ropes", sort: { key: "value", descending: true },
+    active: false, sim: null, judged: null, times: [], at: 0, playing: false, speed: 1,
     ticket: 0, watcher: null, items: [], pickNode: null, shown: -1, settingsKey: "",
+    loading: false, compare: false, weakest: false, rerun: null, again: false,
   };
+
+  // What one spool pulls, the rope's working load and the tolerance: the
+  // limits the key, the answer and the weakest are judged against.
+  function limits() {
+    const o = (tab.sim && tab.sim.options) || {};
+    return { have: o.have_newtons ?? null, rope: o.rope_working_newtons ?? null,
+             tolerance: Number(el.tolerance.value) };
+  }
 
   function settings() {
     const show = {};
     for (const box of el.show.querySelectorAll("input[data-show]")) show[box.dataset.show] = box.checked;
     const picked = el.colour.querySelector("input[name=formwork-colour]:checked");
-    const labels = [...el.labelTicks.querySelectorAll("input[data-label]")]
-      .filter((box) => box.checked).map((box) => box.dataset.label);
-    return { show, colour: picked ? picked.value : "off", labels, tolerance: Number(tolerance()) };
+    return { show, colour: picked ? picked.value : "off", values: el.values.checked,
+             tolerance: Number(el.tolerance.value), compare: tab.compare, weakestOn: tab.weakest,
+             skinOpacity: Number(el.skin.value) / 100 };
   }
 
-  // The machine the Cable net tab chose, one a study (the owner's answer of
-  // 10 October 2026), with the Wall dial and the cable net run's prestress.
-  function chosen() {
-    const choices = machine();
-    return { rope: choices ? choices.rope : null,
-             wires_per_motor: choices ? choices.wires_per_motor : 1,
-             pulleys: choices ? choices.pulley != null : true,
-             wall: Number(el.wall.value), prestress: designPrestress() };
+  function renderMechanism() {
+    const entry = mechanism.entry();
+    el.mechanismName.textContent = entry ? entry.label : "none chosen";
   }
 
-  // The holds the run is asked for (spec 2026-10-10 formwork holds): a search
-  // of evenly spaced whole lines to the tolerance, or none.
-  function holdsChoice() {
-    const picked = el.holdsChoice.querySelector("input[name=formwork-holds]:checked");
-    return picked ? picked.value : "search";
+  function outOfDate() {
+    return formworkWarnings(tab.sim, { mechanism: mechanism.chosen(),
+                                       holdsPerSide: Number(el.holds.value) });
   }
 
-  function renderMachine() {
-    const c = chosen();
-    const name = c.rope == null ? "none chosen"
-      : `${esc(c.rope)}, ${c.wires_per_motor} a motor, ${c.pulleys ? "pulleys" : "no pulleys"}`;
-    const prestress = c.prestress == null ? "Run cable net analysis" : `${Number(c.prestress).toFixed(1)} N`;
-    el.machine.innerHTML = `<table class="cablenet-answers"><tr><th>Machine</th><td>${name}</td></tr>`
-      + `<tr><th>Prestress</th><td>${prestress}</td></tr></table>`;
+  // The answer (spec section 4.3), greyed while the run is out of date.
+  function renderAnswer() {
+    if (tab.loading) { el.answer.innerHTML = ""; return; }
+    const stale = outOfDate().some((line) => line.startsWith("Run again"));
+    el.answer.innerHTML = answerHtml(answer(tab.judged, Number(el.tolerance.value)), { stale });
   }
 
-  // Nothing is said while the document is being looked for: "No formwork run"
-  // only once it is known there is none (found on screen: it showed while the
-  // 6 MB document loaded).
+  // Nothing is said while the document is being looked for: "No run yet"
+  // only once it is known there is none (found on screen: it showed while
+  // the 6 MB document loaded).
   function renderWarnings() {
     if (tab.loading) { el.warnings.innerHTML = ""; return; }
-    el.warnings.innerHTML = formworkWarnings(tab.sim, chosen())
+    el.warnings.innerHTML = outOfDate()
       .map((line) => `<div class="cablenet-warning">${esc(line)}</div>`).join("");
   }
 
-  function renderWorst() {
-    if (el.popup.classList.contains("hidden")) return;
-    for (const button of tabs) button.classList.toggle("active", button.dataset.fwTab === tab.part);
-    el.worst.innerHTML = tab.sim && tab.worst
-      ? worstHtml(tab.part, tab.worst[tab.part], tab.sim, tab.sort)
-      : `<div class="cablenet-warning">No formwork run: Run formwork analysis</div>`;
-  }
-
-  // The labels for the capture shown, rebuilt when the capture or the ticks
-  // change; placed every frame (place).
-  function rebuildLabels(index, kinds) {
+  // The values for the capture shown, rebuilt when the capture or the
+  // settings change; placed every frame (place).
+  function rebuildLabels(index, now) {
     el.labels.innerHTML = "";
     tab.items = [];
-    if (!tab.sim || !tab.active) return;
-    for (const target of formworkLabels(tab.sim, index, kinds).slice(0, LABEL_MAX)) {
+    if (!tab.judged || !tab.active) return;
+    for (const target of modelLabels(tab.judged, index, onModel(now, index)).slice(0, LABEL_MAX)) {
       const label = document.createElement("div");
       label.className = "model-label";
       label.textContent = target.text;
@@ -161,26 +168,38 @@ export function mountFormwork({ studyName, studyOptions, machine, designPrestres
     }
   }
 
+  // The Colour by whose values go on the model, or null.
+  function labelled(now) {
+    return now.values && labelsShown(now.colour, now.show) ? now.colour : null;
+  }
+
+  // What goes on the model at a capture: the Colour by's values, the weakest
+  // parts' and, with Compare on, the largest offsets (spec sections 5.2 to 5.4).
+  function onModel(now, index) {
+    return { by: labelled(now), compare: now.compare,
+             weakest: now.weakestOn ? weakestAt(tab.judged, index, limits()) : [] };
+  }
+
   // The capture the player is at, drawn: the positions blended, every number
   // the nearer capture's.
   function draw(force = false) {
-    if (!tab.sim || !tab.active) return;
+    if (!tab.judged || !tab.active) return;
     const head = playhead(tab.times, tab.at);
     if (!head) return;
     const now = settings();
-    view.show(head, now);
-    hooks.showMachine(!!now.show.wires);
+    const weakest = now.weakestOn ? weakestAt(tab.judged, head.nearer, limits()) : [];
+    view.show(head, { ...now, weakest });
     const key = JSON.stringify(now);
     const changed = force || key !== tab.settingsKey;
-    if (changed) hooks.legend(colourKey(now.colour, tab.sim, now.tolerance));
+    if (changed) hooks.legend(colourKey(now.colour, tab.judged, limits()));
     if (changed || head.nearer !== tab.shown) {
-      const capture = tab.sim.captures[head.nearer];
+      const capture = tab.judged.captures[head.nearer];
       el.label.textContent = captureLabel(capture);
       el.scrubValue.textContent = String(head.nearer + 1);
       if (document.activeElement !== el.scrub) el.scrub.value = String(head.nearer + 1);
-      el.line.innerHTML = frameLineHtml(frameLine(tab.sim, head.nearer));
-      rebuildLabels(head.nearer, labelKindsInView(now.labels, now.show));
-      if (tab.pickNode != null) el.pick.innerHTML = formworkPickHtml(tab.sim, head.nearer, tab.pickNode);
+      el.line.innerHTML = frameLineHtml(frameLine(tab.judged, head.nearer));
+      rebuildLabels(head.nearer, now);
+      if (tab.pickNode != null) el.pick.innerHTML = formworkPickHtml(tab.judged, head.nearer, tab.pickNode);
       tab.shown = head.nearer;
       tab.settingsKey = key;
     }
@@ -191,12 +210,13 @@ export function mountFormwork({ studyName, studyOptions, machine, designPrestres
   }
 
   function setPlaying(on) {
-    tab.playing = !!on && !!tab.sim;
-    el.play.textContent = tab.playing ? "Pause" : "Play";
+    tab.playing = !!on && !!tab.judged;
+    el.play.textContent = tab.playing ? PAUSE : PLAY;
+    el.play.title = tab.playing ? "Pause" : "Play";
   }
 
   function goTo(index) {
-    if (!tab.sim) return;
+    if (!tab.judged) return;
     const i = Math.min(Math.max(index, 0), tab.times.length - 1);
     tab.at = tab.times[i];
     setPlaying(false);
@@ -208,8 +228,15 @@ export function mountFormwork({ studyName, studyOptions, machine, designPrestres
     if (head) goTo(head.nearer + by);
   }
 
+  // The run with its trees judged in the Wall dial's tube (spec section 7: a
+  // new wall is judged again from the run's own forces, without a run).
+  function judge() {
+    const wall = Number(el.wall.value);
+    tab.judged = tab.sim && tab.sim.trees.wall !== wall ? withWall(tab.sim, wall) : tab.sim;
+  }
+
   el.play.addEventListener("click", () => {
-    if (!tab.sim) return;
+    if (!tab.judged) return;
     if (!tab.playing && tab.at >= end()) tab.at = 0;
     setPlaying(!tab.playing);
   });
@@ -222,50 +249,64 @@ export function mountFormwork({ studyName, studyOptions, machine, designPrestres
   });
   el.wall.addEventListener("input", () => {
     el.wallValue.textContent = Number(el.wall.value).toFixed(1);
-    renderWarnings();
+    judge();
+    renderAnswer();
+    draw(true);
   });
-  for (const holder of [el.show, el.colour, el.labelTicks]) {
-    holder.addEventListener("change", () => draw(true));
+  el.tolerance.addEventListener("input", () => {
+    el.toleranceValue.textContent = el.tolerance.value;
+    renderAnswer();
+    renderGraphs();
+    draw(true);
+  });
+  el.skin.addEventListener("input", () => {
+    el.skinValue.textContent = el.skin.value;
+    draw(true);
+  });
+  // wires a motor changes every mechanism's pull: the pop-up reads them
+  // again, and its answer starts the run (mechanismChanged)
+  el.wires.addEventListener("input", () => { el.wiresValue.textContent = el.wires.value; });
+  // Holds a side (spec section 6): a change reruns from the state at the
+  // hold once it settles (section 7)
+  function setHolds(value) {
+    el.holds.value = String(value);
+    el.holdsValue.textContent = el.holds.value;
   }
+  el.holds.addEventListener("input", () => { el.holdsValue.textContent = el.holds.value; });
+  el.holds.addEventListener("change", () => {
+    renderWarnings();
+    renderAnswer();
+    if (tab.sim && outOfDate().includes("Run again: rods a side changed")) scheduleRerun(true);
+  });
+  el.wires.addEventListener("change", () => {
+    tab.again = true;
+    mechanism.setWires(Number(el.wires.value));
+  });
+  for (const holder of [el.show, el.colour]) holder.addEventListener("change", () => draw(true));
+  el.values.addEventListener("change", () => draw(true));
+  el.compare.addEventListener("click", () => {
+    tab.compare = !tab.compare;
+    el.compare.classList.toggle("active", tab.compare);
+    draw(true);
+  });
+  el.weakest.addEventListener("click", () => {
+    tab.weakest = !tab.weakest;
+    el.weakest.classList.toggle("active", tab.weakest);
+    draw(true);
+  });
+  el.mechanismToggle.addEventListener("click", () => mechanism.toggle());
 
-  // The worst tables on the left (spec section 10), one tab a part.
-  function setPopup(open) {
-    el.popup.classList.toggle("hidden", !open);
-    el.worstToggle.classList.toggle("active", open);
-    if (open) hooks.onPopup();
-    renderWorst();
-  }
-
-  el.worstToggle.addEventListener("click", () => setPopup(el.popup.classList.contains("hidden")));
-  el.popupClose.addEventListener("click", () => setPopup(false));
-  for (const button of tabs) {
-    button.addEventListener("click", () => {
-      tab.part = button.dataset.fwTab;
-      tab.sort = { key: "value", descending: true };
-      renderWorst();
-    });
-  }
-
-  // A header sorts by its column, again the other way; a row moves the player
-  // to its capture and turns the camera onto its part.
-  el.worst.addEventListener("click", (event) => {
-    const header = event.target.closest("th[data-sort]");
-    if (header) {
-      const key = header.dataset.sort;
-      tab.sort = key === tab.sort.key ? { key, descending: !tab.sort.descending }
-        : { key, descending: key !== "index" };
-      renderWorst();
-      return;
-    }
+  // Needed's row goes to its capture and turns the camera onto its wire.
+  el.answer.addEventListener("click", (event) => {
     const row = event.target.closest("tr[data-capture]");
-    if (!row || !tab.sim) return;
+    if (!row || !tab.judged) return;
     goTo(Number(row.dataset.capture));
-    hooks.aim(view.point({ kind: row.dataset.kind, index: Number(row.dataset.index) }));
+    hooks.aim(view.point({ kind: "wire", index: Number(row.dataset.wire) }));
   });
 
   // Every frame while the tab is open: the player's clock.
   // A throw here would end the studio's render loop, which reschedules itself
-  // only on a normal exit: the player stops and says why (final review 9).
+  // only on a normal exit: the player stops and says why.
   function tick(seconds) {
     if (!tab.active || !tab.playing) return;
     try {
@@ -284,7 +325,7 @@ export function mountFormwork({ studyName, studyOptions, machine, designPrestres
       Math.min(innerHeight - el.pick.offsetHeight - CARD_CLEAR_BOTTOM, y - 20))) + "px";
   }
 
-  // Every render: each label where its part is on screen, the largest of a
+  // Every render: each value where its part is on screen, the largest of a
   // crowd kept; the card beside its node, shut when the node leaves the view.
   function place() {
     if (!tab.active) return;
@@ -322,23 +363,24 @@ export function mountFormwork({ studyName, studyOptions, machine, designPrestres
   function pick(event) {
     el.pick.classList.add("hidden");
     tab.pickNode = null;
-    if (!tab.active || !tab.sim) return;
+    if (!tab.active || !tab.judged) return;
     const node = view.nearestNode(hooks.camera(), hooks.canvasRect(), event.clientX, event.clientY);
     if (node == null) return;
     const head = playhead(tab.times, tab.at);
-    el.pick.innerHTML = formworkPickHtml(tab.sim, head.nearer, node);
+    el.pick.innerHTML = formworkPickHtml(tab.judged, head.nearer, node);
     el.pick.classList.remove("hidden");
     tab.pickNode = node;
     place();
   }
 
-  // The study's capture document, read once: none yet is said so.
+  // The study's run, read once: none yet is said so.
   async function load() {
     const mine = ++tab.ticket;
     const options = studyOptions();
     let sim = null;
     tab.loading = true;
     renderWarnings();
+    renderAnswer();
     if (options && studyName()) {
       try {
         sim = readSim(await getJson(simUrl(studyName(), options)));
@@ -348,11 +390,18 @@ export function mountFormwork({ studyName, studyOptions, machine, designPrestres
     }
     if (mine !== tab.ticket) return;
     tab.loading = false;
+    const first = !tab.sim;
     tab.sim = sim;
+    if (sim && first) {
+      setHolds(sim.holdsPerSide);
+      adoptMechanism(sim);
+    }
+    judge();
+    mechanism.setChecks(sim ? sim.checks : null);
     tab.times = sim ? captureTimes(sim.captures) : [];
-    tab.worst = sim ? worstTables(sim) : null;
-    el.holds.innerHTML = sim ? holdsHtml(sim) : "";
-    tab.at = 0;
+    // a rerun keeps the player where it was, within the new run; a study's
+    // first run starts at the raise
+    tab.at = first ? 0 : Math.min(tab.at, end());
     tab.shown = -1;
     setPlaying(false);
     el.scrub.max = String(Math.max(1, tab.times.length));
@@ -368,9 +417,100 @@ export function mountFormwork({ studyName, studyOptions, machine, designPrestres
       hooks.legend(null);
     }
     renderWarnings();
-    renderWorst();
+    renderAnswer();
+    renderGraphs();
+    loadCost();
     draw(true);
   }
+
+  // A study's run read first: the slider and the pop-up take its wires a
+  // motor and its motor, so a current run does not open out of date (found by
+  // the final review). Not his hand, so no run follows.
+  function adoptMechanism(sim) {
+    const ran = (sim.options || {}).mechanism;
+    if (!ran) return;
+    el.wires.value = String(ran.wires_per_motor);
+    el.wiresValue.textContent = el.wires.value;
+    mechanism.adopt(ran);
+  }
+
+  // The pop-up's Graphs (spec section 8.3), from the run shown: judged again
+  // for a new tolerance without a run.
+  function renderGraphs() {
+    const have = tab.sim ? (tab.sim.options || {}).have_newtons : null;
+    el.graphs.innerHTML = graphsHtml(tab.judged, have == null ? null : Number(have), Number(el.tolerance.value));
+  }
+
+  // The pop-up's Cost (section 8.2): the run's mechanism priced on the study.
+  async function loadCost() {
+    const mine = tab.ticket;
+    const options = studyOptions();
+    el.costStatus.textContent = "";
+    if (!tab.sim || !options || !studyName()) { el.costBody.innerHTML = ""; return; }
+    // a run with no mechanism has no cost to ask for (found on screen: an
+    // older run's refusal reached the console)
+    if (!(tab.sim.options || {}).mechanism) {
+      el.costBody.innerHTML = '<div class="cablenet-warning">Run again: no mechanism in this run</div>';
+      return;
+    }
+    const query = new URLSearchParams();
+    for (const [key, value] of Object.entries(sentOptions(options))) query.set(key, String(value));
+    try {
+      const cost = await getJson(
+        `/api/studies/${encodeURIComponent(studyName())}/formwork/cost?${query.toString()}`);
+      if (mine !== tab.ticket) return;
+      el.costBody.innerHTML = costHtml(cost);
+    } catch (error) {
+      if (mine !== tab.ticket) return;
+      el.costBody.innerHTML = `<div class="cablenet-warning">${esc(error.message)}</div>`;
+    }
+  }
+
+  // Export BOM: the run's bill of materials, written to the export folder.
+  async function exportBom() {
+    const options = studyOptions();
+    if (!tab.sim || !options || !studyName()) { el.costStatus.textContent = "No run yet: Run"; return; }
+    el.costExport.disabled = true;
+    el.costStatus.textContent = "writing";
+    try {
+      const written = await getJson(`/api/studies/${encodeURIComponent(studyName())}/formwork/bom`,
+        { method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(sentOptions(options)) });
+      el.costStatus.textContent = "saved: " + written.path;
+    } catch (error) {
+      el.costStatus.textContent = error.message;
+    } finally {
+      el.costExport.disabled = false;
+    }
+  }
+  el.costExport.addEventListener("click", exportBom);
+
+  // Where Export BOM writes, and the choice of it (the export folder routes).
+  function showFolder(row) {
+    el.costFolderPath.textContent = row && row.path ? row.path : "no folder chosen";
+    el.costFolderPath.title = row && row.path
+      ? (row.exists ? row.path : `${row.path} (this folder is not there)`) : "";
+  }
+  async function loadFolder() {
+    try { showFolder(await getJson("/api/cablenet/exports/folder")); }
+    catch (error) { el.costFolderPath.textContent = error.message; }
+  }
+  el.costFolderChoose.addEventListener("click", async () => {
+    el.costFolderChoose.disabled = true;
+    try {
+      const browsed = await getJson("/api/cablenet/exports/folder/browse", { method: "POST" });
+      if (browsed && browsed.path) {
+        showFolder(await getJson("/api/cablenet/exports/folder", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ path: browsed.path }) }));
+      }
+    } catch (error) {
+      el.costStatus.textContent = error.message;
+    } finally {
+      el.costFolderChoose.disabled = false;
+    }
+  });
+  loadFolder();
 
   function stopWatching() {
     if (tab.watcher != null) clearInterval(tab.watcher);
@@ -383,17 +523,18 @@ export function mountFormwork({ studyName, studyOptions, machine, designPrestres
       try {
         const run = await getJson(`/api/runs/${encodeURIComponent(runId)}`);
         if (tab.watcher !== poll) return;
-        // a search names its try: the server's message is "<try>: <what>"
-        const counter = `capture ${run.stage} of ${run.of}`;
-        const named = tab.searching && typeof run.message === "string" && run.message.includes(": ");
-        el.runStatus.textContent = run.of > 0
-          ? (named ? run.message.split(": ")[0] + ": " + counter : counter)
+        el.runStatus.textContent = run.of > 0 ? `capture ${run.stage} of ${run.of}`
           : `${run.state} (${run.phase})`;
         if (run.state === "done") {
           stopWatching();
           el.run.disabled = false;
           el.runStatus.textContent = "";
           await load();
+          // a change made while this run went on: run again for it, from the
+          // hold when only the rods changed
+          const lines = outOfDate();
+          if (lines.includes("Run again: mechanism changed")) scheduleRerun(false);
+          else if (lines.includes("Run again: rods a side changed")) scheduleRerun(true);
         }
         if (run.state === "failed") {
           stopWatching();
@@ -410,19 +551,19 @@ export function mountFormwork({ studyName, studyOptions, machine, designPrestres
     tab.watcher = poll;
   }
 
-  // The run takes the cable net run's prestress at the server; the tab sends
-  // the cut, the machine and the wall, and never a prestress.
-  async function startRun() {
+  // The run takes the mechanism chosen in the pop-up; the server cuts the net
+  // for one spool's pull of it. The tab never sends a prestress. resume: start
+  // from the state at the hold, for other rods a side.
+  async function startRun(resume = false) {
     const options = studyOptions();
     if (!options || !studyName()) { el.runStatus.textContent = "open a study first"; return; }
-    const c = chosen();
+    const choices = mechanism.chosen();
+    if (!choices) { el.runStatus.textContent = "Choose a mechanism"; return; }
     el.run.disabled = true;
-    tab.searching = holdsChoice() === "search";
-    el.runStatus.textContent = tab.searching ? "starting: a few minutes, one run a spacing tried" : "starting: about two minutes";
+    el.runStatus.textContent = "starting: about two minutes";
     try {
-      const body = { ...sentOptions(options), wires_per_motor: c.wires_per_motor,
-                     pulleys: c.pulleys, wall: c.wall, holds: holdsChoice(), tolerance_mm: Number(tolerance()) };
-      if (c.rope != null) body.rope = c.rope;
+      const body = { ...sentOptions(options), mechanism: choices, wall: Number(el.wall.value),
+                     holds_per_side: Number(el.holds.value), resume };
       const response = await fetch(`/api/studies/${encodeURIComponent(studyName())}/formwork/run`,
         { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
       let started = null;
@@ -448,8 +589,34 @@ export function mountFormwork({ studyName, studyOptions, machine, designPrestres
       el.run.disabled = false;
     }
   }
-  el.run.addEventListener("click", startRun);
+  el.run.addEventListener("click", () => startRun(false));
   el.record.addEventListener("click", () => hooks.record());
+
+  // A change that needs a run (the mechanism, wires a motor, the rods a
+  // side) starts it once the changes settle; one already running is followed
+  // by another. resume: from the hold, when only the rods changed; a full run
+  // waiting wins.
+  function scheduleRerun(resume = false) {
+    tab.resume = tab.rerun == null ? resume : tab.resume && resume;
+    clearTimeout(tab.rerun);
+    tab.rerun = setTimeout(() => {
+      tab.rerun = null;
+      if (!tab.active) return;
+      if (tab.watcher != null) return;     // the watch runs again when it ends
+      startRun(tab.resume);
+    }, RERUN_SETTLE_MS);
+  }
+
+  // The pop-up's choice changed (by his hand, or by wires a motor): the
+  // answer greys, the line says so, and the run starts on its own.
+  function mechanismChanged(choices, byHand) {
+    renderMechanism();
+    renderWarnings();
+    renderAnswer();
+    const wanted = byHand || tab.again;
+    tab.again = false;
+    if (wanted && choices && outOfDate().includes("Run again: mechanism changed")) scheduleRerun(false);
+  }
 
   // The recording of the raise (studio.js recordAnimation): the player's
   // length and speed, a seek that draws the capture at a second, and what
@@ -464,18 +631,17 @@ export function mountFormwork({ studyName, studyOptions, machine, designPrestres
     },
     overlay(ctx, width, height) {
       const head = playhead(tab.times, tab.at);
-      if (!tab.sim || !head) return;
+      if (!tab.judged || !head) return;
       const now = settings();
       const rect = { left: 0, top: 0, width, height };
       const scale = height / 900;
-      const targets = formworkLabels(tab.sim, head.nearer, labelKindsInView(now.labels, now.show))
-        .slice(0, LABEL_MAX);
+      const targets = modelLabels(tab.judged, head.nearer, onModel(now, head.nearer)).slice(0, LABEL_MAX);
       const points = targets.map((target) => view.project(view.point(target), hooks.camera(), rect));
       const shown = spreadLabels(points, LABEL_GAP_X * scale, LABEL_GAP_Y * scale);
       const labels = targets.map((target, i) => (shown[i]
         ? { text: target.text, x: points[i][0], y: points[i][1] } : null)).filter(Boolean);
-      paintOverlay(ctx, { width, height, caption: recordingCaption(tab.sim, head.nearer),
-                          labels, key: colourKey(now.colour, tab.sim, now.tolerance) });
+      paintOverlay(ctx, { width, height, caption: recordingCaption(tab.judged, head.nearer),
+                          labels, key: colourKey(now.colour, tab.judged, limits()) });
     },
   };
 
@@ -486,14 +652,15 @@ export function mountFormwork({ studyName, studyOptions, machine, designPrestres
     document.body.classList.toggle("formwork-open", on);
     if (on) {
       hooks.enter();
-      renderMachine();
+      renderMechanism();
       if (!tab.sim) load();
       else draw(true);
       renderWarnings();
+      renderAnswer();
       return;
     }
     setPlaying(false);
-    setPopup(false);
+    mechanism.closePopup();
     el.labels.innerHTML = "";
     tab.items = [];
     el.pick.classList.add("hidden");
@@ -507,35 +674,42 @@ export function mountFormwork({ studyName, studyOptions, machine, designPrestres
   function clear() {
     tab.ticket += 1;
     stopWatching();
+    clearTimeout(tab.rerun);
+    tab.rerun = null;
     tab.sim = null;
+    tab.judged = null;
     tab.times = [];
-    tab.worst = null;
     tab.pickNode = null;
     tab.items = [];
     setPlaying(false);
     view.build(null);
+    mechanism.clear();
     el.labels.innerHTML = "";
     el.pick.classList.add("hidden");
     el.line.innerHTML = "";
-    el.holds.innerHTML = "";
+    el.answer.innerHTML = "";
+    el.costBody.innerHTML = "";
+    el.graphs.innerHTML = "";
+    setHolds(0);
     el.label.textContent = "";
     el.runStatus.textContent = "";
     el.run.disabled = false;
-    renderWorst();
   }
 
   function reload() {
     clear();
-    renderMachine();
+    mechanism.reload();
+    renderMechanism();
     renderWarnings();
     if (tab.active) load();
   }
 
   function refresh() {
-    renderMachine();
+    renderMechanism();
     renderWarnings();
+    renderAnswer();
   }
 
   return { active: () => tab.active, setActive, tick, place, pick, clear, reload, refresh,
-           closePopup: () => setPopup(false), recording };
+           closePopup: () => mechanism.closePopup(), recording, mechanismChanged };
 }

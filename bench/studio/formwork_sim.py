@@ -254,121 +254,6 @@ def rows_from(arrays, binding, plan, thickness, density):
     return rows
 
 
-def hold_bands(faces, heads):
-    """Each node's band (spec 2026-10-10 formwork holds, section 2): the quads
-    sorted into two families from the principal lines out, an edge joining two
-    head nodes running along, across a quad an opposite edge keeping its family
-    and a side edge taking the other; a node's band is its steps across, along
-    across edges only, to the nearest head node. Returns {node: band} for every
-    node the across edges reach. A net that does not sort is refused."""
-
-    message = ("the holds need a quad net in which every line runs parallel to a principal "
-               "line")
-    if any(len(face) != 4 for face in faces):
-        raise FormworkError(message + ": this net has faces that are not quads")
-    heads = {int(node) for node in heads}
-    key = lambda a, b: (a, b) if a < b else (b, a)
-    face_edges = [[key(int(f[i]), int(f[(i + 1) % 4])) for i in range(4)] for f in faces]
-    edge_faces = {}
-    for index, edges in enumerate(face_edges):
-        for k, edge in enumerate(edges):
-            edge_faces.setdefault(edge, []).append((index, k))
-    along = [edge for edge in edge_faces if edge[0] in heads and edge[1] in heads]
-    if not along:
-        raise FormworkError(message + ": no two head nodes are joined, so there is no "
-                                      "principal line")
-    family = {edge: "along" for edge in along}
-    queue = list(along)
-    while queue:
-        edge = queue.pop()
-        for index, k in edge_faces[edge]:
-            edges = face_edges[index]
-            other = "across" if family[edge] == "along" else "along"
-            for neighbour, wanted in ((edges[(k + 2) % 4], family[edge]),
-                                      (edges[(k + 1) % 4], other), (edges[(k + 3) % 4], other)):
-                if neighbour not in family:
-                    family[neighbour] = wanted
-                    queue.append(neighbour)
-                elif family[neighbour] != wanted:
-                    raise FormworkError(message + ": the lines cross themselves at nodes {} "
-                                                  "and {}".format(*neighbour))
-    across = {}
-    for (a, b), kind in family.items():
-        if kind == "across":
-            across.setdefault(a, []).append(b)
-            across.setdefault(b, []).append(a)
-    bands = {node: 0 for node in heads}
-    frontier = sorted(heads)
-    while frontier:
-        reached = []
-        for a in frontier:
-            for b in across.get(a, []):
-                if b not in bands:
-                    bands[b] = bands[a] + 1
-                    reached.append(b)
-        frontier = reached
-    return bands
-
-
-def hold_spacings(bands):
-    """The spacings the search tries, widest first: the divisors of the widest
-    band, so the held lines are evenly spaced from the principal line to the
-    open edge (10, 5, 2, 1 on the 5 sided form)."""
-
-    widest = max(bands.values(), default=0)
-    return [s for s in range(widest, 0, -1) if widest % s == 0]
-
-
-def holds_at(bands, spacing, exclude=()):
-    """The held nodes at a spacing: every node in a band that is a multiple of
-    it, never a head or a node in exclude (the rim's wire nodes)."""
-
-    exclude = set(int(node) for node in exclude)
-    return sorted(node for node, band in bands.items()
-                  if band > 0 and band % spacing == 0 and node not in exclude)
-
-
-def spacing_name(spacing, widest):
-    """A spacing as the tab says it: the open edges, every 5th line, every line."""
-
-    if spacing == widest:
-        return "the open edges"
-    if spacing == 1:
-        return "every line"
-    suffix = {1: "st", 2: "nd", 3: "rd"}.get(spacing % 10 if spacing % 100 not in (11, 12, 13)
-                                              else 0, "th")
-    return "every {}{} line".format(spacing, suffix)
-
-
-def search_holds(request, bands, exclude, tolerance_mm, runner, progress=None):
-    """The search (spec 2026-10-10 formwork holds, section 4): each spacing in
-    turn, widest first, one engine run each, stopping at the first whose worst
-    deviation from the jacking on is within the tolerance; with none, the
-    every-line run is kept. Returns the chosen run's document with its holds
-    block."""
-
-    widest = max(bands.values())
-    tried = []
-    for spacing in hold_spacings(bands):
-        nodes = holds_at(bands, spacing, exclude)
-        name = spacing_name(spacing, widest)
-
-        def told(done, total, what, name=name):
-            if progress is not None:
-                progress(done, total, "{}: {}".format(name, what))
-
-        document = runner({**request, "holds": nodes}, told)
-        worst = (document.get("summary") or {}).get("holds_deviation_max_mm")
-        tried.append({"spacing": spacing, "count": len(nodes), "deviation_max_mm": worst})
-        if worst is not None and worst <= tolerance_mm:
-            break
-    met = tried[-1]["deviation_max_mm"] is not None and tried[-1]["deviation_max_mm"] <= tolerance_mm
-    document["holds"] = {"spacing": spacing, "bands": list(range(spacing, widest + 1, spacing)),
-                         "count": len(nodes), "tolerance_mm": float(tolerance_mm), "met": met,
-                         "tried": tried}
-    return document
-
-
 def request_from(inputs, arrays, binding, plan, thickness, density, ea, mass_per_metre,
                  prestress, wires_per_motor, wall, study=None, options=None, note=None):
     """The engine's request, every length in millimetres and every force in
@@ -421,27 +306,131 @@ def _subprocess_runner(python_exe: Path) -> Callable:
     return run
 
 
+def sides_of(faces, edges, rim_nodes, node_count):
+    """Each node's side (spec 2026-10-11 one Cable net tab, section 6): the
+    rim's wire nodes chained along the net's boundary (its edges on one face)
+    split into runs, a side each, numbered in the rim's own order; every node
+    belongs to the side it is fewest net steps from, ties to the lower side.
+    None for a net with no faces to find its boundary by."""
+
+    if not faces:
+        return None
+    key = lambda a, b: (a, b) if a < b else (b, a)
+    on_faces = {}
+    for face in faces:
+        for i in range(len(face)):
+            edge = key(int(face[i]), int(face[(i + 1) % len(face)]))
+            on_faces[edge] = on_faces.get(edge, 0) + 1
+    rim = [int(node) for node in rim_nodes]
+    joined = {node: [] for node in rim}
+    for (a, b), count in on_faces.items():
+        if count == 1 and a in joined and b in joined:
+            joined[a].append(b)
+            joined[b].append(a)
+    side_of = {}
+    for start in rim:
+        if start in side_of:
+            continue
+        side = len(set(side_of.values()))
+        side_of[start] = side
+        stack = [start]
+        while stack:
+            for other in joined[stack.pop()]:
+                if other not in side_of:
+                    side_of[other] = side
+                    stack.append(other)
+    neighbours = [[] for _ in range(int(node_count))]
+    for u, v in edges:
+        neighbours[int(u)].append(int(v))
+        neighbours[int(v)].append(int(u))
+    sides = [None] * int(node_count)
+    for node, side in side_of.items():
+        sides[node] = side
+    frontier = sorted(side_of)
+    while frontier:
+        reached = {}
+        for node in frontier:
+            for other in neighbours[node]:
+                if sides[other] is None and (other not in reached
+                                             or sides[node] < reached[other]):
+                    reached[other] = sides[node]
+        for node, side in reached.items():
+            sides[node] = side
+        frontier = sorted(reached)
+    return sides
+
+
+def _floats(entry):
+    """One packed array of a capture document (solve_formwork.pack), read with
+    the standard library: the studio's server imports no numpy."""
+
+    import base64
+    import struct
+
+    raw = base64.b64decode(entry["f32"])
+    return list(struct.unpack("<%df" % (len(raw) // 4), raw))
+
+
+def travel_checks(parts, configuration, document, reeve_by_node, rim_nodes):
+    """The drum and the carriage of the run's mechanism (spec 2026-10-11
+    section 8.1), from the run's own take-up at each drum: each capture's reels,
+    in the engine's rim order (the rim's nodes ascending), each wire reeved as
+    the export draws it. The worst wire of each, its figure, its limit and
+    whether it fits; None for a run with no reels."""
+
+    import machine
+
+    order = sorted(int(node) for node in rim_nodes)
+    series = [[] for _ in order]
+    for capture in document.get("captures") or []:
+        if not isinstance(capture.get("reel"), dict):
+            continue
+        for w, value in enumerate(_floats(capture["reel"])[:len(order)]):
+            series[w].append(value)
+    if not any(series):
+        return None
+    reeves = [int(reeve_by_node.get(node, 1)) for node in order]
+    travel = machine.travel(parts, configuration, series, reeves)
+    drum, carriage = travel["worst_drum"], travel["worst_carriage"]
+    return {"drum": {"value_mm": drum["drum_rope_mm"], "limit_mm": drum["drum_capacity_mm"],
+                     "fits": drum["drum_fits"], "wire": drum["wire"]},
+            "carriage": {"value_mm": carriage["carriage_mm"], "limit_mm": carriage["stroke_mm"],
+                         "fits": carriage["rail_fits"], "wire": carriage["wire"]}}
+
+
 def run_formwork(inputs, arrays, binding, plan, thickness, density, out_path, ea,
                  mass_per_metre, prestress, wires_per_motor, wall, study=None, options=None,
-                 note=None, runner=None, python_exe=None, progress=None, holds="none",
-                 tolerance_mm=20.0):
+                 note=None, runner=None, python_exe=None, progress=None, holds_per_side=0,
+                 state_path=None, resume=False, annotate=None):
     """From a checked study and its cut to a written capture document. runner,
     when given, replaces the subprocess: it takes the request and progress and
     returns the document. progress, when given, is called with (captures done,
-    captures in all, what)."""
+    captures in all, what). The engine is told each node's side (sides_of) and
+    places holds_per_side rods on each; it keeps its state at the hold at
+    state_path, and with resume a state there is where it starts (spec
+    2026-10-11 one Cable net tab, sections 6 and 7). The document gains the
+    sides, and annotate, when given, adds what it returns from the finished
+    document."""
 
     request = request_from(inputs, arrays, binding, plan, thickness, density, ea,
                            mass_per_metre, prestress, wires_per_motor, wall, study, options, note)
+    vertices, edges = arrays.get("vertices"), arrays.get("edges")
+    sides = (None if vertices is None or edges is None else
+             sides_of(arrays.get("faces"), edges, [wire["node"] for wire in inputs.rim],
+                      len(vertices)))
+    if holds_per_side and sides is None:
+        raise FormworkError("rods a side need the net's sides, and this net's rim does not "
+                            "split into wired runs")
+    request.update(sides=sides, holds_per_side=int(holds_per_side))
+    if state_path is not None:
+        request["state_out"] = str(state_path)
+        if resume and Path(state_path).is_file():
+            request["state_in"] = str(state_path)
     if runner is None:
         runner = _subprocess_runner(python_exe or FORMWORK_PYTHON)
-    if holds == "search":
-        # the holds in whole bands from the principal lines, the wires' nodes
-        # never among them (spec 2026-10-10 formwork holds)
-        bands = hold_bands(arrays["faces"], [net for net, _ in inputs.heads])
-        document = search_holds(request, bands, {wire["node"] for wire in inputs.rim},
-                                tolerance_mm, runner, progress)
-    else:
-        document = runner(request, progress)
-        document["holds"] = None
+    document = runner(request, progress)
+    document.setdefault("net", {})["sides"] = sides
+    if annotate is not None:
+        document.update(annotate(document))
     bundle.write_json_atomically(Path(out_path), document)
     return {"path": str(out_path), "captures": len(document.get("captures") or [])}

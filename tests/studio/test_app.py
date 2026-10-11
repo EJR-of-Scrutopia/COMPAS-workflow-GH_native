@@ -15,8 +15,7 @@ from conftest_data import tiny_contract
 REPO = Path(__file__).resolve().parents[2]
 
 
-def make_client(tmp_path, monkeypatch, runner=None, cablenet_runner=None,
-                formwork_runner=None):
+def make_client(tmp_path, monkeypatch, runner=None, formwork_runner=None):
     import sys
 
     path = str(REPO / "bench" / "studio")
@@ -47,12 +46,16 @@ def make_client(tmp_path, monkeypatch, runner=None, cablenet_runner=None,
     # recordings_folder from the settings file, so patching only the
     # default would still send a take wherever he had last pointed it.
     monkeypatch.setattr(app_module, "RECORDINGS_DIR", tmp_path / "recordings")
+    # and the export folder, which until one is chosen IS his recordings
+    # folder, bound when the module loaded: a bill of materials written by a
+    # test lands here
+    monkeypatch.setattr(app_module, "CABLENET_EXPORTS_DIR", tmp_path / "exports")
     monkeypatch.setattr(app_module, "SETTINGS_PATH", tmp_path / "settings.json")
     app_module.RUNS.clear()
     if runner is None:
         runner = lambda request: {"converged": True, "message": ""}
     return TestClient(app_module.create_app(
-        runner=runner, cablenet_runner=cablenet_runner, formwork_runner=formwork_runner,
+        runner=runner, formwork_runner=formwork_runner,
         cra_runner=lambda request: {
             "stands": True, "status": "optimal", "message": "",
             "blocks": len(request["blocks"]), "interfaces": 1,
@@ -754,19 +757,15 @@ def test_reupload_with_changed_geometry_invalidates_bundle_and_staging_caches(tm
     assert fresh.json()["analysis_mesh"]["vertices"][0][2] == 9.0
 
 
-def test_reupload_invalidates_the_cable_net_demand_beside_the_bundle_and_staging(
+def test_reupload_drops_an_old_cable_net_document_beside_the_bundle_and_staging(
         tmp_path, monkeypatch):
-    """The cable net demand is filed by the cut's options, not by the geometry, so
-    a re-export with the same counts kept it under the same key and the lenses
-    drew the old analysis on the new net. Every upload drops it with the bundle
-    and the staging caches; the recording is untouched."""
-    import bundle
-
+    """The old cable net's documents are read by nothing now (spec 2026-10-11 one
+    Cable net tab, section 9), and one left in a study's folder goes with the
+    bundle and the staging caches on every upload; the recording is untouched."""
     client, studies = make_client(tmp_path, monkeypatch)
     studio_dir = studies / "tiny" / "studio"
     studio_dir.mkdir(parents=True)
-    demand = bundle.cablenet_path("tiny", "tile", "bonded-courses", 1.0, 0.02, None)
-    assert demand.parent == studio_dir and demand.name.startswith("cablenet-")
+    demand = studio_dir / "cablenet-tile-bonded-courses-s1000-t20.json"
     kept = studio_dir / "recording.mp4"
     kept.write_bytes(b"kept")
     for kind, document in (("contract", tiny_contract()), ("compas", {"thrustMesh": {}})):
@@ -778,11 +777,6 @@ def test_reupload_invalidates_the_cable_net_demand_beside_the_bundle_and_staging
         assert not demand.is_file(), kind
         assert not list(studio_dir.glob("bundle-*.json")), kind
         assert kept.is_file(), kind
-    # and the demand route then says there is none to read
-    missing = client.get("/api/studies/Tiny/cablenet", params={
-        "material": "tile", "pattern": "bonded-courses", "size": 1.0, "thickness": 0.02})
-    assert missing.status_code == 404
-    assert "no cable net demand yet" in missing.json()["detail"]
 
 
 def test_upload_during_a_live_run_is_409(tmp_path, monkeypatch):
@@ -1487,15 +1481,16 @@ def test_the_atmosphere_module_is_remapped_to_its_versioned_address(
         page), "atmosphere.js must be remapped to its versioned address"
 
 
-def test_the_cable_net_modules_are_remapped_to_their_versioned_addresses(
+def test_the_labels_module_is_remapped_and_the_old_cable_net_is_not(
         tmp_path, monkeypatch):
-    """The section's controller imports its model, so a stale model file would
-    put old sentences and old verdicts on a new page: the exact fault this
-    remap exists for. Both files are versioned like the rest."""
+    """The one Cable net tab's modules import labels.js, so a stale copy would
+    put old labels on a new page: the exact fault this remap exists for. The
+    old Cable net's two files are gone (spec 2026-10-11, section 9)."""
 
     client, _ = make_client(tmp_path, monkeypatch)
     page = client.get("/").text
-    for module in ("cablenet.js", "cablenet_model.js"):
+    assert "cablenet.js" not in page and "cablenet_model.js" not in page
+    for module in ("labels.js",):
         escaped = re.escape(module)
         assert re.search(
             r'"/static/' + escaped + r'": "/static/' + escaped + r'\?v=[0-9a-f]{6,}"',
@@ -1508,7 +1503,8 @@ def test_the_formwork_modules_are_remapped_to_their_versioned_addresses(
     # its own cache entry
     client, _ = make_client(tmp_path, monkeypatch)
     page = client.get("/").text
-    for module in ("formwork.js", "formwork_model.js", "formwork_view.js"):
+    for module in ("formwork.js", "formwork_model.js", "formwork_view.js", "mechanism_pick.js",
+                   "mechanism_pick_model.js"):
         escaped = re.escape(module)
         assert re.search(
             r'"/static/' + escaped + r'": "/static/' + escaped + r'\?v=[0-9a-f]{6,}"',

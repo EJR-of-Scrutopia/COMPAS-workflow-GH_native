@@ -1,11 +1,11 @@
-"""The seam between a Grasshopper study and the staged cable net engine.
+"""What the formwork engine reads from a Grasshopper study's net and mechanism:
+the placed weight at each node, the net's own weight, and the wires the
+mechanism document declares, carried into world millimetres through each
+machine instance's frame. formwork_sim.py is its one reader.
 
-This module needs no solver: the engine runs in solve_cablenet.py, a
-subprocess under the main .venv, and this file only builds its request and
-reads its answer back.
-
-Everything the engine sees is newtons and millimetres. Everything the contract
-carries is metres. The conversion happens in solve_cablenet.build_problem and nowhere else.
+The fixed-shape cable net solve this module once fed went on 11 October 2026
+(spec 2026-10-11 one Cable net tab, section 9): the formwork run is the one
+calculation the Cable net tab reads.
 
 The loads here are built from the MESH, never from the contract's own
 equilibrium.loads. In the exports that exist those are tributary AREAS with a
@@ -18,12 +18,8 @@ invariant in the tests checks.
 
 from __future__ import annotations
 
-import json
 import math
-import subprocess
-import tempfile
-from pathlib import Path
-from typing import Callable, NamedTuple
+from typing import NamedTuple
 
 import geometry
 import staging
@@ -31,34 +27,6 @@ import staging
 
 class CableNetError(RuntimeError):
     """Raised when a study cannot be turned into a cable net problem."""
-
-
-# The engine needs the array stack and compas_fd together, and only the main venv
-# has them: .venv-fea and .venv-cra lack compas_fd.
-CABLENET_PYTHON = staging.REPO / ".venv" / "Scripts" / "python.exe"
-SOLVE_CABLENET = Path(__file__).resolve().parent / "solve_cablenet.py"
-
-
-def _subprocess_runner(python_exe: Path) -> Callable[[dict], dict]:
-    def run(request: dict) -> dict:
-        with tempfile.TemporaryDirectory(prefix="ananke_cablenet_") as tmp:
-            request_path = Path(tmp) / "request.json"
-            out_path = Path(tmp) / "out.json"
-            request_path.write_text(json.dumps(request), encoding="utf-8")
-            completed = subprocess.run(
-                [str(python_exe), str(SOLVE_CABLENET), str(request_path),
-                 str(out_path)],
-                capture_output=True, text=True,
-            )
-            if completed.returncode != 0 or not out_path.is_file():
-                raise CableNetError(
-                    "solve_cablenet exited {}: {}".format(
-                        completed.returncode, completed.stderr.strip()[-2000:]
-                    )
-                )
-            return json.loads(out_path.read_text(encoding="utf-8"))
-
-    return run
 
 
 def stage_node_loads(vertices, faces, plan, thickness, density,
@@ -123,60 +91,6 @@ class Wire(NamedTuple):
     machine_wire: object = None       # index of the wire on its machine
     reeve_factor: object = None
     permanence: object = None
-
-
-# The machine times the analysis is computed at, on the writer's 0 to 100
-# clock (frames.py): mid raise, raise done, mid finish, finish done, hold.
-# Nothing before the raise: a net lying on the ground is held by the ground,
-# and a fit there would only report that it is flat.
-FRAME_SAMPLE_TIMES = (45.0, 60.0, 75.0, 90.0, 100.0)
-
-
-def _triple(value):
-    if isinstance(value, dict):
-        return [float(value["x"]), float(value["y"]), float(value["z"])]
-    return [float(value[0]), float(value[1]), float(value[2])]
-
-
-def sample_frames(document, times=FRAME_SAMPLE_TIMES):
-    """The net at the asked machine times, interpolated between exported frames.
-
-    Linear between the two frames that bracket each time, the way the studio
-    plays them (fields.js interpolateFormworkFrame), clamped to the first and
-    last frame beyond the ends. Vertices come back in metres, contract order.
-    An empty or missing frames list gives an empty sample.
-    """
-
-    frames = sorted(((document or {}).get("frames") or []),
-                    key=lambda frame: float(frame["time"]))
-    if not frames:
-        return []
-    out = []
-    for wanted in times:
-        wanted = float(wanted)
-        if wanted <= float(frames[0]["time"]):
-            a, b, u = frames[0], frames[0], 0.0
-        elif wanted >= float(frames[-1]["time"]):
-            a, b, u = frames[-1], frames[-1], 0.0
-        else:
-            a = [f for f in frames if float(f["time"]) <= wanted][-1]
-            b = [f for f in frames if float(f["time"]) > wanted][0]
-            span = float(b["time"]) - float(a["time"])
-            u = (wanted - float(a["time"])) / span if span > 0.0 else 0.0
-        vertices = []
-        for p, q in zip(a["vertices"], b["vertices"]):
-            p, q = _triple(p), _triple(q)
-            vertices.append([p[k] + (q[k] - p[k]) * u for k in range(3)])
-        out.append({"time": wanted, "phase": str(a.get("phase", "")),
-                    "vertices": vertices})
-    return out
-
-
-def column_heads_of(document):
-    """The net nodes the columns prop: columns.headNode, contract ids."""
-
-    columns = ((document or {}).get("columns") or {})
-    return [int(node) for node in (columns.get("headNode") or [])]
 
 
 def frame_to_world(frame, local):
@@ -323,155 +237,3 @@ def wires_from_mechanism(document, vertex_count, supports):
             permanence=entry.get("permanence"),
         ))
     return wires
-
-
-def tolerance_source(tolerance_mm):
-    """The acceptance line's source when it is a tolerance, in the words the
-    panel and the documents print, its millimetres in two decimals as every
-    length is written there (exports._millimetres)."""
-
-    return "a tolerance of {:.2f} mm from the designed form, set for this run".format(
-        float(tolerance_mm))
-
-
-def run_cablenet(contract, arrays, plan, thickness, density, out_path,
-                 mechanism_document, ea, prestress, acceptance,
-                 acceptance_source, mass_per_metre, runner=None, python_exe=None,
-                 tolerance_mm=None, study=None, ea_provenance=None,
-                 formwork_document=None, batch=20, steps=40, note=None,
-                 ceiling_newtons=None):
-    """Everything step A does, from a contract to a written demand document.
-
-    The engine runs in solve_cablenet.py under a solver interpreter, never in
-    this process. runner, when given, replaces the subprocess: it takes the
-    request dict and returns the demand document. python_exe overrides the
-    interpreter the default runner starts.
-
-    tolerance_mm, when given, is the acceptance line: the most the net may
-    stray from its designed form, in millimetres, handed to the engine as the
-    line itself with a source that says so in words (tolerance_source) and
-    recorded in the document as it was asked for. acceptance and
-    acceptance_source are then left as None: a tolerance and an explicit line
-    together are refused. With neither the run has no acceptance line: the
-    document's acceptance is null, every instant's reachable is unknown and
-    placement never reaches.
-    prestress None is worked out by the engine from the load: the least that
-    keeps the net within the line, under ceiling_newtons (the machine's, N)
-    when it is given (spec 2026-10-10 prestress and holds, section 4). A
-    prestress given is used as it is.
-
-    formwork_document, when given, is the study's formwork document as
-    frames.py reads it: its frames are sampled at FRAME_SAMPLE_TIMES and sent
-    as the frame instants, and its columns.headNode are the net nodes the
-    columns prop, which the analysis holds. No document means no frames and
-    no heads: the analysis runs on the courses alone, with the drum ends
-    alone held. batch and steps size the actuator walk: the nodes grabbed a
-    step, and the most steps tried.
-
-    note, when given, is a sentence the demand document carries as its own
-    "note": the caller's word on what the run did not have, such as a study
-    with no formwork document, so a reader of the document is told rather
-    than left to infer it. The engine copies it through and reads nothing
-    from it.
-    """
-
-    if tolerance_mm is not None:
-        if not (acceptance is None and acceptance_source is None):
-            raise CableNetError(
-                "This run names a tolerance of {!r} mm AND an explicit acceptance "
-                "line. The tolerance is the line, so the explicit one would be "
-                "discarded without saying so, and the figure on screen would not be "
-                "the figure that was asked for. Give one or the other.".format(
-                    tolerance_mm))
-        # a boolean is no number of millimetres, though float() would take it
-        if isinstance(tolerance_mm, bool):
-            raise CableNetError("The tolerance must be a number of millimetres, not "
-                                "{!r}.".format(tolerance_mm))
-        try:
-            tolerance_mm = float(tolerance_mm)
-        except (TypeError, ValueError, OverflowError) as error:
-            raise CableNetError("The tolerance must be a number of millimetres, not "
-                                "{!r}.".format(tolerance_mm)) from error
-        if not (math.isfinite(tolerance_mm) and tolerance_mm > 0.0):
-            raise CableNetError(
-                "The tolerance must be a finite number of millimetres greater than "
-                "zero, not {!r}: a line of nothing is one no net can meet.".format(
-                    tolerance_mm))
-        acceptance, acceptance_source = tolerance_mm, tolerance_source(tolerance_mm)
-
-    vertices = arrays["vertices"]
-    edges = [tuple(edge) for edge in arrays["edges"]]
-    anchors = geometry.support_ids(contract)
-    wires = wires_from_mechanism(mechanism_document, len(vertices), anchors)
-    heads = column_heads_of(formwork_document)
-    for head in heads:
-        if not 0 <= head < len(vertices):
-            raise CableNetError(
-                "The formwork document names column head {} but the net has "
-                "{} nodes; the two documents disagree about which nodes exist."
-                .format(head, len(vertices)))
-    frames = sample_frames(formwork_document) if formwork_document else []
-    for sample in frames:
-        if len(sample["vertices"]) != len(vertices):
-            raise CableNetError(
-                "A formwork frame carries {} vertices and the net has {}; the "
-                "frames belong to another net.".format(
-                    len(sample["vertices"]), len(vertices)))
-
-    loads_by_stage = stage_node_loads(
-        vertices, arrays["faces"], plan, thickness, density
-    )
-    net_weight = net_weight_loads(vertices, edges, mass_per_metre)
-    # The weight each stage places, summed straight from face areas and NOT from
-    # loads_by_stage, so the demand document can show the two agree (section
-    # 5.2) without the reader trusting the code that distributed the loads.
-    placed_weights = [
-        sum(geometry.face_area(vertices, arrays["faces"][i])
-            for i in entry["faces"]) * thickness * density * staging.GRAVITY
-        for entry in plan
-    ]
-    request = {
-        "study": None if study is None else str(study),
-        "ea_provenance": None if ea_provenance is None else str(ea_provenance),
-        "placed_weights": [float(w) for w in placed_weights],
-        "vertices": [[float(c) for c in point] for point in vertices],
-        "edges": [[int(u), int(v)] for u, v in edges],
-        "anchors": [int(a) for a in anchors],
-        "wires": [
-            {"name": w.name, "net_vertex": w.net_vertex,
-             "frame_point": list(w.frame_point),
-             "machine_wire": w.machine_wire, "reeve_factor": w.reeve_factor,
-             "permanence": w.permanence}
-            for w in wires
-        ],
-        "loads_by_stage": loads_by_stage,
-        "net_weight": net_weight,
-        "ea": float(ea),
-        "prestress": None if prestress is None else float(prestress),
-        "ceiling_newtons": None if ceiling_newtons is None else float(ceiling_newtons),
-        # None is no line at all: a tolerance is the line (its source says so
-        # in words), an explicit acceptance is one the caller gives, and a run
-        # with neither has no line to hold the net to, which the document says
-        # as null
-        "acceptance": None if acceptance is None else float(acceptance),
-        "acceptance_source": None if acceptance_source is None else str(acceptance_source),
-        "tolerance_mm": tolerance_mm,
-        "thickness": float(thickness),
-        "density": float(density),
-        "stage_names": {
-            str(i): "S{}".format(entry["stage"]) for i, entry in enumerate(plan)
-        },
-        "frames": frames,
-        "column_heads": heads,
-        "batch": int(batch),
-        "steps": int(steps),
-        "note": None if note is None else str(note),
-    }
-    if runner is None:
-        runner = _subprocess_runner(python_exe or CABLENET_PYTHON)
-    document = runner(request)
-
-    out_path = Path(out_path)
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    out_path.write_text(json.dumps(document, allow_nan=False), encoding="utf-8")
-    return {"path": str(out_path), "stages": len(document["stages"])}

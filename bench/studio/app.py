@@ -143,36 +143,20 @@ def _within(directory: Path, path: Path) -> bool:
 RUNS: dict = {}
 RUNS_LOCK = threading.Lock()
 
-# What a cable net run takes for each option its caller leaves out. One set for
-# both things that write cablenet-*.json, the staged run's cable net phase and
-# the cable net run of its own, so a default cannot differ between them and the
-# document change with the route that happened to write it.
-#
-# tolerance_mm is the acceptance line: the most the net may stray from its
-# designed form, in millimetres. 20 mm is the placement tolerance the T1 brief
-# sets at full scale (5 mm on the 1:4 rig). It replaced the falsework rib on the
-# owner's ruling of 9 October 2026: the mould the machine does away with is cut
-# to the vault's exact surface and propped, so it barely moves, and the net is
-# judged against a tolerance instead.
-CABLENET_DEFAULTS = {
-    "prestress": None, "ceiling_newtons": None, "rope": "rope-4mm", "tolerance_mm": 20.0,
-    "batch": 20, "steps": 40,
-}
-
-# A body written for the rib the tolerance replaced is refused with the reason,
-# rather than run against a line it did not ask for.
-NO_FALSEWORK = ("falsework is no longer taken: the net is judged against a tolerance "
-                "from the designed form, so send tolerance_mm, in millimetres")
-
 # What a formwork run takes for each option its caller leaves out (spec
-# 2026-10-09). The prestress is the cable net run's design prestress for the
-# same cut (the owner's answer of 10 October 2026), so None here. One wire a
+# 2026-10-09). The prestress is the chosen mechanism's pull a spool (the
+# owner's answer of 11 October 2026), so None here. One wire a
 # motor is the machine as it is built. The trees are CHS 60.3 steel tube, and a
 # 3.2 mm wall is where the owner chose to start, a run deciding whether it can
 # be thinner or must be thicker (his ruling of 9 October 2026).
 FORMWORK_DEFAULTS = {"prestress": None, "rope": "rope-4mm", "wires_per_motor": 1,
                      "wall": 3.2}
 FORMWORK_TUBE_MM = 60.3     # the trees' tube, the engine's trees.DIAMETER
+# The most rods a side a run takes (spec 2026-10-11 one Cable net tab, section 6).
+HOLDS_PER_SIDE_MAX = 20
+# The wire's angle to its eye bolt's axis, which the export does not record:
+# assumed, as the panel always has, and the conservative direction.
+MECHANISM_ANGLE_DEGREES = 10.0
 
 
 MATERIALS = sorted(staging.DENSITIES)
@@ -233,15 +217,14 @@ def _ffmpeg_present() -> bool:
 
 
 def _invalidate_studio_cache(slug: str) -> None:
-    """Drop every cached bundle, staging, cable net and formwork file for a study
-    after re-import.
+    """Drop every cached bundle, staging and formwork file for a study after
+    re-import, and any document the old cable net left, which nothing reads.
 
     A changed export must never keep serving a stale bundle built from the
-    old geometry, and the cable net demand is the same: it is keyed by the
-    cut's options, not by the geometry, so after a re-export with the same
-    counts the lenses would draw the old analysis on the new net. Frames and
-    recording.mp4 are untouched: they belong to a recording, not to a
-    geometry snapshot.
+    old geometry, and the formwork run is the same: it is keyed by the cut's
+    options, not by the geometry, so after a re-export with the same counts
+    the tab would draw the old run on the new net. Frames and recording.mp4
+    are untouched: they belong to a recording, not to a geometry snapshot.
     """
 
     bundle.clear_cut_memo(slug)
@@ -249,7 +232,7 @@ def _invalidate_studio_cache(slug: str) -> None:
     if not studio_dir.is_dir():
         return
     for pattern in ("bundle-*.json", "staging-*.json", "cablenet-*.json",
-                    "formwork-sim-*.json"):
+                    "formwork-sim-*.json", "formwork-state-*.json.gz"):
         for stale in studio_dir.glob(pattern):
             stale.unlink()
 
@@ -858,8 +841,7 @@ def _aligned(values, raw_count, kept):
     return out
 
 
-def create_app(runner=None, cra_runner=None, cablenet_runner=None,
-               formwork_runner=None) -> FastAPI:
+def create_app(runner=None, cra_runner=None, formwork_runner=None) -> FastAPI:
     app = FastAPI(title="Bench Studio")
 
     def _study_stamp(name: str) -> float:
@@ -1180,120 +1162,18 @@ def create_app(runner=None, cra_runner=None, cablenet_runner=None,
         parts["choices"] = machine.choice_options(parts)
         return parts
 
-    # ------------------------------------------------------------------
-    # The cable net demand, read once for everything that reads it: the panel's
-    # GET, the scoring and recommending POSTs and the three exports.
-    #
-    # The file is found by the key it was filed under. Both writers (the staged
-    # run and the cable net run) file it by the cut the run actually made, which
-    # is the study's own authored cut unless the caller asked for the generated
-    # one. So the readers resolve the cut exactly as the writers do, through
-    # staging.cut_slot, and do not key by the source as it was requested: a read
-    # that did looked for cablenet-<material>-<pattern>-... while the run had
-    # written cablenet-<material>-authored-..., and told the owner of an
-    # authored study that nothing had been run.
-    # ------------------------------------------------------------------
-
-    def _read_cablenet_demand(export, material, pattern, size, thickness, density,
-                              source) -> dict:
-        """The demand document the cable net run wrote for this study and these
-        options, or an HTTPException that says what is missing."""
-
-        pairs = geometry.available_exports(bundle.UPLOAD_DIR)
-        if export not in pairs:
-            raise HTTPException(
-                404, "There is no export named {!r}, so no cable net demand has "
-                "been written for it. Upload the export, then press Run cable net "
-                "analysis in the Cable net section and the engine will write "
-                "one.".format(export))
-        try:
-            slot = staging.cut_slot(pairs[export], pattern, source)
-        except ValueError as error:
-            # an unknown source, or the authored cut of a study that has none:
-            # the refusal the bundle route gives, carried through unchanged
-            raise HTTPException(400, str(error))
-        _known_material(material)
-        try:
-            path = bundle.cablenet_path(
-                geometry.slugify(export), material, slot.key_pattern, size,
-                thickness, density)
-        except (TypeError, ValueError, OverflowError) as error:
-            raise HTTPException(400, "the study options are unreadable: {}".format(error))
-        path = _in_study_folder(path, export)
-        if not path.is_file():
-            # the Cable net section's own Run is the way to one now; the staged
-            # run's cable net phase still writes the same document
-            raise HTTPException(
-                status_code=404,
-                detail=(
-                    "This study has no cable net demand yet. Press Run cable net "
-                    "analysis in the Cable net section and the engine will write one."
-                ),
-            )
-        return json.loads(path.read_text(encoding="utf-8"))
-
-    def _cablenet_demand(export: str, body: dict) -> dict:
-        # The study options as GET /api/studies/{export}/cablenet takes them,
-        # read from a request body, through the same reader.
-        try:
-            density = float(body["density"]) if body.get("density") else None
-            material = str(body.get("material", "tile"))
-            pattern = str(body.get("pattern", "herringbone"))
-            size = float(body.get("size", 1.0))
-            thickness = float(body.get("thickness", 0.02))
-        except (TypeError, ValueError) as error:
-            raise HTTPException(400, "the study options are unreadable: {}".format(error))
-        return _read_cablenet_demand(
-            export, material, pattern, size, thickness, density, body.get("source"))
-
-    def _rope_wound_mm(demand: dict):
-        """Per wire, the sum of |reel command| over every stage; the worst wire.
-
-        The same figure the panel works out (ropeWound in cablenet.js)."""
-
-        totals = []
-        for stage in demand.get("stages") or []:
-            for wire, command in enumerate(stage.get("wire_reel_commands") or []):
-                while len(totals) <= wire:
-                    totals.append(0.0)
-                totals[wire] += abs(float(command or 0.0))
-        return max(totals) if totals else None
-
-    def _demand_floor(demand: dict) -> float:
-        """The tension the net asks of a configuration's every wire: the larger of
-        the entered prestress and the greatest tension the fit found, as the
-        engine's sizing block carries it (catalogue.wire_floor, which reads an
-        older document by the same rule); 0.0 when the document gives neither."""
-
-        import catalogue
-
-        floor = catalogue.wire_floor(demand)["newtons"]
-        return 0.0 if floor is None else float(floor)
-
-    def _finite_angle(body: dict) -> float:
-        """The wire's angle to its eye bolt, a finite number of degrees, or the
-        400 that says what was sent instead."""
-
-        value = body.get("angle_degrees", 10.0)
-        try:
-            angle = float(value)
-        except (TypeError, ValueError) as error:
-            raise HTTPException(400, "angle_degrees must be a number: {}".format(error))
-        if not math.isfinite(angle):
-            raise HTTPException(400, "angle_degrees must be a number, not {!r}".format(value))
-        return angle
-
-    def _machine_inputs(export: str, options, parts) -> dict:
-        """Everything the five choices are judged with on a study (spec
-        2026-10-09 mechanism choices, sections 3 and 4): the cable net demand,
-        each wire's peak and take-up from it, and what the export says about
-        the machine. A study the choices cannot be judged on is a 400 that
+    def _machine_facts(export: str, parts, rope_key=None) -> dict:
+        """What the export says about the machine (machine.facts_from): the
+        spool's winding radius, each wire's node, reeving and route, which wires
+        each machine carries. Read from the study's mechanism document and its
+        contract alone; a study it cannot be read from is a 404 or a 400 that
         says why in one line."""
 
         import machine
 
-        demand = _cablenet_demand(export, options if isinstance(options, dict) else {})
         pairs = geometry.available_exports(bundle.UPLOAD_DIR)
+        if export not in pairs:
+            raise HTTPException(404, "There is no export named {!r}.".format(export))
         contract = geometry.load_contract(pairs[export]["contract"])
         design_mm = [[c * 1000.0 for c in point]
                      for point in geometry.mesh_arrays(contract)["vertices"]]
@@ -1303,7 +1183,7 @@ def create_app(runner=None, cra_runner=None, cablenet_runner=None,
             raise HTTPException(400, "mechanism: none for this study")
         if mechanism.cited_machine_id(document):
             document = _with_cited_machine(document, sidecar.parent)
-        rope = parts["rope"].get(str((options or {}).get("rope") or "rope-4mm"))
+        rope = parts["rope"].get(str(rope_key or "rope-4mm"))
         ea = float((rope or parts["rope"]["rope-4mm"])["ea_newtons"])
         try:
             facts = machine.facts_from(document, design_mm, geometry.support_ids(contract), ea)
@@ -1311,544 +1191,41 @@ def create_app(runner=None, cra_runner=None, cablenet_runner=None,
             raise HTTPException(400, str(error))
         if facts["winding_radius_mm"] is None:
             raise HTTPException(400, "machine: no winding radius")
-        demands, take_ups = machine.cable_net_demands(demand)
-        if not demand.get("stages"):
-            raise HTTPException(400, "demand: no stages; run the cable net again")
-        if len(demands) != len(facts["nodes"]):
-            def wires(count):
-                return "{} wire{}".format(count, "" if count == 1 else "s")
-            raise HTTPException(400, "demand: {}, machine: {}; run the cable net again".format(
-                wires(len(demands)), wires(len(facts["nodes"]))))
-        machines = facts["machines"] or [list(range(len(demands)))]
-        return {"demand": demand, "facts": facts, "demands": demands,
-                "take_ups": take_ups, "machines": machines}
+        return facts
 
-    def _choice_row(parts, inputs, choices, angle, speed=None) -> dict:
-        """One set of five choices judged on the study: the machine they make,
-        each wire's limit and verdict, the drum and carriage, the wire to buy,
-        every cabinet and the study's price."""
+    # the whole mechanisms of a machine, worked out once for its radius, its
+    # reeving, its spools, the wires a motor and the catalogue on disk
+    _mechanisms_cache = {}
 
-        import cabinet
-        import catalogue
-        import machine
-        import recommend
+    @app.get("/api/studies/{export}/mechanisms")
+    def study_mechanisms(export: str, wires_per_motor: int = 1):
+        """The whole spooling mechanisms the Cable net tab chooses from (spec
+        2026-10-11 one Cable net tab, section 8.1): one a motor the catalogue
+        builds on this study's machine, at these wires a motor, strongest
+        first, each with one spool's pull and the part that sets it."""
 
-        try:
-            built = machine.derive(parts, choices, inputs["facts"], angle)
-            paid = [max(0.0, -min([0.0] + list(series))) for series in inputs["take_ups"]]
-            reeves = inputs["facts"].get("reeves")
-            cuts = machine.cut_lengths(parts, built, inputs["facts"]["routes_mm"], paid, reeves)
-            row_speed = {"rope_speed_mm_s": catalogue.rope_speed(parts, built)}
-            if speed:
-                row_speed["motor_rpm_for_wanted_speed"] = catalogue.motor_rpm_for(
-                    parts, built, float(speed))
-            return {
-                **row_speed,
-                "choices": choices, "configuration": built,
-                "described": machine.describe(parts, built),
-                "terms": machine.limit_terms(parts, built, angle),
-                "verdict": machine.judge(parts, built, inputs["demands"], inputs["machines"],
-                                         angle, reeves=inputs["facts"]["reeves"]),
-                "travel": machine.travel(parts, built, inputs["take_ups"], reeves),
-                "cut_lengths": cuts,
-                "price": recommend.study_price(parts, built, inputs["demands"],
-                                               inputs["machines"],
-                                               inputs["facts"]["routes_mm"], paid,
-                                               reeves=reeves),
-                "refused": None,
-            }
-        except (machine.MachineError, catalogue.CatalogueError, cabinet.CabinetError) as error:
-            return {"choices": choices, "refused": str(error)}
-
-    def _refusal(configuration, error) -> dict:
-        # One malformed row must not sink the request; the type stays in the
-        # message so a real defect is still diagnosable.
-        return {"configuration": configuration,
-                "refused": "{}: {}".format(type(error).__name__, error)}
-
-    def _score_for_export(catalogue, parts, configuration, angle, floor, wound,
-                          demand=None, travel_inputs=None):
-        """One scored row of the exports' ladder, built in one place; a
-        configuration the catalogue refuses keeps its reason as `refused`.
-
-        travel_inputs, each wire's take-up and reeving, judge the drum and the
-        carriage as the panel does (machine.travel; spec 2026-10-10 prestress
-        and holds, section 9). Without them, a hand-built configuration or a
-        study with no machine, the one wound figure is judged as before."""
-
-        try:
-            ceiling, binding = catalogue.ceiling_for(parts, configuration, angle)
-            row = {
-                "configuration": configuration,
-                "ceiling": ceiling,
-                "binding": binding,
-                "passes": bool(ceiling >= floor) if floor > 0.0 else None,
-                "passes_note": (
-                    None if floor > 0.0 else
-                    "no prestress floor was given, so there is no demand "
-                    "to compare the ceiling against"),
-                "margin": (ceiling / floor) if floor > 0.0 else None,
-                "price": catalogue.price_of(parts, configuration),
-                "rope_speed_mm_s": catalogue.rope_speed(parts, configuration),
-                "refused": None,
-            }
-            row["drive"] = catalogue.drive_for(parts, configuration["motor"])
-            row["load_factor"] = (
-                catalogue.load_factor(parts, configuration, angle, demand)
-                if demand is not None else None)
-            if travel_inputs is not None:
-                import machine
-
-                travel = machine.travel(parts, configuration, *travel_inputs)
-                row["travel"] = travel
-                if not travel["fits"]:
-                    # the same hard checks: a second layer, a carriage past its stroke
-                    row["passes"] = False
-            elif wound is not None:
-                path = catalogue.drum_and_travel(parts, configuration, wound)
-                row["rope_path"] = path
-                if not (path["drum_fits"] and path["rail_fits"]):
-                    # hard checks: a second drum layer or a carriage past its
-                    # stroke is a rig that cannot be built as drawn
-                    row["passes"] = False
-            return row
-        except Exception as error:
-            return _refusal(configuration, error)
-
-    @app.get("/api/studies/{export}/cablenet")
-    def study_cablenet(export: str, material: str = "tile", pattern: str = "herringbone",
-                       size: float = 1.0, thickness: float = 0.02,
-                       density: Optional[float] = None,
-                       source: Optional[str] = None):
-        return _read_cablenet_demand(
-            export, material, pattern, size, thickness, density, source)
-
-    @app.post("/api/studies/{export}/cablenet/configurations")
-    def score_configurations(export: str, body: dict):
-        import catalogue
-
-        # the five choices (spec 2026-10-09 mechanism choices, section 7.4)
-        choices = body.get("choices")
-        if not isinstance(choices, list) or not choices:
-            raise HTTPException(400, "choices: none sent")
-        angle = _finite_angle(body)
-        speed = body.get("rope_speed_mm_s")
-        if speed is not None:
-            try:
-                speed = float(speed)
-            except (TypeError, ValueError):
-                speed = None
-            if speed is None or not math.isfinite(speed):
-                raise HTTPException(400, "rope_speed_mm_s: {!r}, not a number".format(
-                    body.get("rope_speed_mm_s")))
-        parts = catalogue.load_parts()
-        inputs = _machine_inputs(export, body.get("options"), parts)
-        return {"rows": [_choice_row(parts, inputs, item, angle, speed) for item in choices],
-                "angle_degrees": angle, "strongest": _strongest(parts, inputs["facts"], angle)}
-
-    # the most any machine makes, worked out once for a machine, an angle and
-    # the catalogue as it stands on disk
-    _strongest_cache = {}
-
-    def _strongest(parts, facts, angle):
         import catalogue
         import machine
 
-        key = (facts.get("winding_radius_mm"), facts.get("reeve_factor"), facts.get("spools"),
-               angle, catalogue.PARTS_PATH.stat().st_mtime_ns)
-        if key not in _strongest_cache:
-            _strongest_cache[key] = machine.strongest(parts, facts, angle)
-        return _strongest_cache[key]
-
-    # ------------------------------------------------------------------
-    # The cable net phase, assembled once. Two things write cablenet-*.json: the
-    # staged run (POST /api/runs with the phase switched on) and the cable net
-    # run of its own. Each used to assemble the phase for itself and they
-    # disagreed: the staged run read no formwork document and sent no batch,
-    # steps or note, so it overwrote the other's frame-aware document with a
-    # frame-less one. Both come here now.
-    # ------------------------------------------------------------------
-
-    def _tolerance_mm(value, name):
-        """A tolerance in millimetres, or the 400 that says why it is none: the
-        line the sag is judged against is a finite number greater than zero."""
-
-        # a JSON true is not one millimetre, though float() would take it
-        if isinstance(value, bool):
-            raise HTTPException(400, "{} must be a number of millimetres, not {!r}".format(
-                name, value))
-        try:
-            tolerance = float(value)
-        except (TypeError, ValueError, OverflowError):
-            raise HTTPException(400, "{} must be a number of millimetres, not {!r}".format(
-                name, value))
-        if not (math.isfinite(tolerance) and tolerance > 0.0):
+        if not 1 <= wires_per_motor <= machine.SPOOLS:
             raise HTTPException(
-                400, "{} must be a finite number of millimetres greater than zero, "
-                     "not {!r}".format(name, value))
-        return tolerance
-
-    def _positive_newtons(value, name):
-        """A force a body may give or leave out: None when left out, else a
-        finite number of newtons above zero, or a 400 that names it."""
-
-        if value is None:
-            return None
-        try:
-            newtons = float(value)
-        except (TypeError, ValueError):
-            raise HTTPException(400, "{} must be a number, not {!r}".format(name, value))
-        if not (math.isfinite(newtons) and newtons > 0.0):
-            raise HTTPException(400, "{} must be greater than zero newtons".format(name))
-        return newtons
-
-    def _cablenet_phase_options(export, contract, slug, material, key_pattern, size,
-                                thickness, density, prestress, rope_key,
-                                tolerance_mm, batch, steps, ceiling=None) -> dict:
-        """The keyword arguments of cablenet.run_cablenet that belong to the study
-        and to the caller's choices rather than to the cut: where the document is
-        written, the mechanism and formwork documents, the rope, the line the net
-        is held to, and how the actuators are searched for.
-
-        The mechanism document is read first and its absence raised here, and
-        both callers call this before the cut, so a study with no mechanism is
-        told before the slow part and not after it. A formwork document is never a
-        reason to refuse: missing, unreadable, or written for another solve than
-        the contract beside it, it costs the run its frames and its column heads
-        and leaves a sentence in the document saying so.
-
-        The acceptance line is the tolerance asked for, which run_cablenet
-        hands the engine as the line itself and says in words.
-        """
-
-        import catalogue
-
-        mechanism_document = bundle._read_optional(bundle.mechanism_sidecar(export))
-        if mechanism_document is None:
-            raise ValueError(
-                "the cable net analysis needs this study's mechanism "
-                "document, and it carries none")
-        formwork_document = bundle._read_optional(bundle.frames_sidecar(export))
-        note = None
-        if formwork_document is None:
-            note = ("no formwork document, so no frames and no column heads: "
-                    "the net is analysed at the finished shape held by its "
-                    "drum ends alone")
-        else:
-            # The studio's two gates for a frames document, in the order the
-            # formwork route applies them: its own checks, then that it belongs to
-            # THIS contract (R-004: an unpaired file is disclosed and skipped).
-            try:
-                formwork_document = frames.validate_frames_document(formwork_document)
-                unread = frames.pairing_error(formwork_document, contract)
-            except ValueError as error:
-                unread = str(error)
-            if unread is not None:
-                note = "the formwork document was not read: {}".format(unread)
-                formwork_document = None
+                400, "wires_per_motor must be a whole number of wires from 1 to {}, the "
+                     "spools a machine carries, not {!r}".format(machine.SPOOLS, wires_per_motor))
         parts = catalogue.load_parts()
-        rope = parts["rope"][rope_key]
-        options = {
-            "out_path": bundle.cablenet_path(
-                slug, material, key_pattern, size, thickness, density),
-            "mechanism_document": mechanism_document,
-            # EA and mass come from the chosen rope's catalogue entry; the
-            # acceptance line is the tolerance, which run_cablenet hands the
-            # engine as the line itself and says in words.
-            "ea": float(rope["ea_newtons"]),
-            "mass_per_metre": float(rope["mass_per_metre_kg"]),
-            "acceptance": None,
-            "acceptance_source": None,
-            "tolerance_mm": tolerance_mm,
-            "study": export,
-            "ea_provenance": "{}: EA {} N, {}".format(
-                rope_key, rope["ea_newtons"], rope.get("ea_confidence")),
-            # None unless asked for: the engine works it out from the load,
-            # under the machine's ceiling when the panel has one
-            "prestress": prestress,
-            "ceiling_newtons": ceiling,
-            "formwork_document": formwork_document,
-            "batch": batch,
-            "steps": steps,
-            "note": note,
-        }
-        if cablenet_runner is not None:
-            # the test seam, as for the other two runners: a run under a test
-            # never starts the real engine either
-            options["runner"] = cablenet_runner
-        return options
+        facts = _machine_facts(export, parts)
+        key = (facts["winding_radius_mm"], facts["reeve_factor"], facts["spools"],
+               wires_per_motor, MECHANISM_ANGLE_DEGREES, catalogue.PARTS_PATH.stat().st_mtime_ns)
+        if key not in _mechanisms_cache:
+            _mechanisms_cache[key] = machine.presets(parts, facts, MECHANISM_ANGLE_DEGREES,
+                                                     wires_per_motor)
+        return {"mechanisms": _mechanisms_cache[key], "wires_per_motor": wires_per_motor,
+                "angle_degrees": MECHANISM_ANGLE_DEGREES}
 
-    # ------------------------------------------------------------------
-    # The three cable net exports: one request writes the workbook, the
-    # diagram and the data sheet from one model, so they cannot disagree.
-    # ------------------------------------------------------------------
-
-    def _export_ladder(configuration: dict) -> list:
-        """THE definition of the upgrade rungs. The panel fetches them from
-        POST /api/cablenet/ladder and the exports use them directly, so the
-        screen and the documents cannot disagree. The chosen configuration is
-        NOT a rung: each caller prepends it itself. Rungs sit at the chosen
-        thread: eye-and-eye turnbuckle, then 5 mm rope, then the M16 eye bolt
-        and 6 mm rope, then the M20 eye bolt with eye-and-eye M12 and 8 mm.
-
-        A rung is an upgrade or it is not offered: the eye bolt, the rope and
-        the turnbuckle thread are each never weaker than the chosen set's, so
-        a sheet headed "what should I change next" cannot print a downgrade.
-        A rung that comes out equal to the chosen set (or to an earlier rung)
-        is dropped, so exactly one row is the chosen set."""
-
-        def size(key, prefix):
-            tail = str(key).rsplit("-", 1)[-1]
-            digits = tail[1:] if tail[:1] == "M" else ""
-            return int(digits) if digits.isdigit() and str(key).startswith(prefix) else None
-
-        def stronger(floor_key, proposed, prefix):
-            """The proposed key, unless the chosen one is already larger."""
-            return (floor_key if floor_key is not None
-                    and (size(floor_key, prefix) or 0) > (size(proposed, prefix) or 0)
-                    else proposed)
-
-        chain = [str(k) for k in configuration.get("chain") or []]
-        thread = "M10"
-        chosen_eye = None
-        for key in chain:
-            if key.startswith("turnbuckle-"):
-                thread = key.rsplit("-", 1)[-1]
-            elif key.startswith("eye-"):
-                chosen_eye = key
-
-        def eye(proposed):
-            return stronger(chosen_eye, proposed, "eye-")
-
-        def rope(proposed):
-            chosen = configuration.get("rope")
-            diameters = {"rope-4mm": 4, "rope-5mm": 5, "rope-6mm": 6, "rope-8mm": 8}
-            return (chosen if diameters.get(chosen, 0) > diameters[proposed]
-                    else proposed)
-
-        eye_and_eye = "turnbuckle-eye-eye-{}".format(thread)
-        last = stronger("turnbuckle-eye-eye-{}".format(thread),
-                        "turnbuckle-eye-eye-M12", "turnbuckle-eye-eye-")
-        rungs = [
-            {"chain": [eye("eye-M12"), eye_and_eye]},
-            {"chain": [eye("eye-M12"), eye_and_eye], "rope": rope("rope-5mm")},
-            {"chain": [eye("eye-M16"), eye_and_eye], "rope": rope("rope-6mm")},
-            {"chain": [eye("eye-M20"), last], "rope": rope("rope-8mm")},
-        ]
-        out = []
-        for rung in rungs:
-            candidate = {**configuration, **rung}
-            if candidate != configuration and candidate not in out:
-                out.append(candidate)
-        return out
-
-    @app.post("/api/cablenet/ladder")
-    def cablenet_ladder(body: dict):
-        configuration = body.get("configuration")
-        if not isinstance(configuration, dict) or not configuration:
-            raise HTTPException(400, "No configuration was sent to build rungs from.")
-        return {"rungs": _export_ladder(configuration)}
-
-    @app.post("/api/studies/{export}/cablenet/recommend")
-    def recommend_configuration(export: str, body: dict):
-        import catalogue
-
-        parts = catalogue.load_parts()
-        angle = _finite_angle(body)
-        # every combination of the five choices (spec 2026-10-09 mechanism
-        # choices, section 6)
-        import cabinet
-        import machine
-        import recommend
-
-        inputs = _machine_inputs(export, body.get("options"), parts)
-        try:
-            result = recommend.recommend(
-                parts, inputs["facts"], inputs["demands"], inputs["machines"],
-                inputs["facts"]["routes_mm"], inputs["take_ups"], angle,
-                run=machine.run_of(parts, inputs["demand"]))
-        except (machine.MachineError, catalogue.CatalogueError, cabinet.CabinetError) as error:
-            raise HTTPException(400, str(error))
-        if result["choices"] is not None:
-            result["row"] = _choice_row(parts, inputs, result["choices"], angle)
-        return result
-
+    # where Export BOM writes (spec 2026-10-11 one Cable net tab, section 8.2),
+    # chosen through the folder routes further down
     def _exports_folder() -> Path:
         return Path(read_settings().get("cablenet_exports_folder")
                     or CABLENET_EXPORTS_DIR)
-
-    def _newest_export(export: str, suffixes) -> Optional[Path]:
-        folder = _exports_folder()
-        prefix = "{}-cablenet-".format(geometry.slugify(export))
-        if not folder.is_dir():
-            return None
-        try:
-            found = [p for p in folder.iterdir()
-                     if p.is_file() and p.name.startswith(prefix)
-                     and p.suffix.lower() in suffixes]
-        except OSError:
-            return None          # unreadable folder: nothing to download
-        return max(found, key=lambda p: p.stat().st_mtime) if found else None
-
-    @app.post("/api/studies/{export}/cablenet/exports")
-    def write_cablenet_exports(export: str, body: dict):
-        import catalogue
-        import exports
-
-        configuration = body.get("configuration")
-        if not isinstance(configuration, dict) or not configuration:
-            raise HTTPException(400, "No configuration was sent to export.")
-        try:
-            angle = float(body.get("angle_degrees", 10.0))
-            wound_body = body.get("rope_wound_mm")
-            wound_body = None if wound_body is None else float(wound_body)
-            # the machine the holds file is for, and the most any makes, from
-            # the panel (spec 2026-10-10 prestress and holds, section 8)
-            ceiling_body = (None if body.get("ceiling_newtons") is None
-                            else float(body["ceiling_newtons"]))
-            most_body = None if body.get("most_newtons") is None else float(body["most_newtons"])
-        except (TypeError, ValueError) as error:
-            raise HTTPException(400, "a number was unreadable: {}".format(error))
-
-        demand = _cablenet_demand(export, body)
-        wound = wound_body if wound_body is not None else _rope_wound_mm(demand)
-        floor = _demand_floor(demand)
-        parts = catalogue.load_parts()
-        import machine
-
-        # each wire's own take-up and reeving, for a configuration the five
-        # choices derived on a study with a machine
-        travel_inputs = None
-        if configuration.get("winding_radius_mm") is not None:
-            try:
-                found = _machine_inputs(export, body, parts)
-                travel_inputs = (found["take_ups"], found["facts"].get("reeves"))
-            except (HTTPException, KeyError, ValueError, machine.MachineError):
-                travel_inputs = None
-        ladder_rows = [_score_for_export(catalogue, parts, dict(configuration), angle, floor,
-                                         wound, demand, travel_inputs)]
-        for rung in _export_ladder(configuration):
-            # a heavier wire is wound in a groove of its own pitch, and refused
-            # by a pulley that does not take it
-            if (rung.get("groove_pitch_mm") is not None
-                    and rung.get("rope") != configuration.get("rope")):
-                rung["groove_pitch_mm"] = (
-                    float(parts["rope"][rung["rope"]]["diameter_mm"])
-                    * float(parts["rules"]["groove_pitch_factor"]))
-            try:
-                refusal = machine.pulley_refusal(parts, rung.get("sheave"), rung["rope"])
-            except machine.MachineError as error:
-                refusal = str(error)
-            ladder_rows.append({"configuration": rung, "refused": refusal} if refusal else
-                               _score_for_export(catalogue, parts, rung, angle, floor, wound,
-                                                 demand, travel_inputs))
-        row = ladder_rows[0]
-
-        # Not deliver_output: that swallows an OSError and hands back the
-        # source, which would tell the caller a missing export succeeded.
-        folder = _exports_folder()
-        if not folder.is_dir():
-            raise HTTPException(
-                400, "The exports folder {} is not there; choose another "
-                "folder and run the export again.".format(folder))
-
-        stamp = time.strftime("%Y%m%d-%H%M%S")
-        base = "{}-cablenet-{}".format(geometry.slugify(export), stamp)
-        stem, again = base, 2
-        try:
-            while any(p.name.startswith(stem) for p in folder.iterdir()):
-                stem = "{}-{}".format(base, again)
-                again += 1
-        except OSError as error:
-            # a folder that exists but cannot be listed (PermissionError, a
-            # share that went away) is a refusal that names it, not a 500
-            raise HTTPException(
-                400, "The exports folder {} cannot be read: {}. Choose another "
-                "folder and run the export again.".format(folder, error))
-
-        # the machine named by its parts, and each machine's cabinet (spec
-        # 2026-10-09 mechanism choices, section 7.4); a study with no machine to
-        # count cabinets on is exported with the line that says why
-        import cabinet
-        import machine
-
-        described = None
-        if not row.get("refused"):
-            try:
-                described = machine.describe(parts, configuration)
-            except (machine.MachineError, KeyError) as error:
-                raise HTTPException(400, "configuration: {}".format(error))
-        boxes, boxes_note = None, None
-        if not row.get("refused"):
-            try:
-                inputs = _machine_inputs(export, body, parts)
-                boxes = cabinet.cabinets(parts, configuration, inputs["demands"],
-                                         inputs["machines"])
-            except HTTPException as error:
-                boxes_note = error.detail
-            except (cabinet.CabinetError, catalogue.CatalogueError, machine.MachineError,
-                    KeyError) as error:
-                boxes_note = str(error)
-        try:
-            model = exports.export_model(
-                parts, demand, row, configuration, angle,
-                datetime.now(timezone.utc).strftime("%Y-%m-%d"),
-                ladder_rows=ladder_rows, machine=described, cabinets=boxes,
-                cabinets_note=boxes_note)
-        except exports.ExportError as error:
-            raise HTTPException(400, str(error))
-        try:
-            written = list(exports.write_spreadsheet(model, folder, stem))
-            written.append(exports.write_diagram(model, folder, stem))
-            written.append(exports.write_datasheet(model, folder, stem))
-            # an older analysis has no prestress table, and no holds to write
-            if ceiling_body is not None and (demand.get("needs") or {}).get("steps"):
-                cut = {key: body[key] for key in
-                       ("material", "pattern", "size", "thickness", "density", "source")
-                       if body.get(key) is not None}
-                written.append(exports.write_holds(
-                    exports.holds_document(demand, ceiling_body, most_body, export, cut),
-                    folder, stem))
-        except OSError as error:
-            raise HTTPException(
-                500, "Could not write the exports into {}: {}".format(folder, error))
-        return {
-            "folder": str(folder),
-            "paths": [str(p) for p in written],
-            "note": exports.last_spreadsheet_note(),
-        }
-
-    @app.get("/api/studies/{export}/cablenet/exports/{kind}")
-    def download_cablenet_export(export: str, kind: str):
-        import io
-        import zipfile
-
-        if kind not in ("spreadsheet", "diagram", "datasheet", "holds"):
-            raise HTTPException(
-                400, "kind must be spreadsheet, diagram, datasheet or holds, not {!r}".format(kind))
-        suffixes = {"spreadsheet": (".xlsx", ".csv"), "diagram": (".svg",),
-                    "datasheet": (".md",), "holds": (".json",)}[kind]
-        newest = _newest_export(export, suffixes)
-        if newest is None:
-            raise HTTPException(
-                404, "No {} has been exported for this study yet.".format(kind))
-        if newest.suffix.lower() != ".csv":
-            return FileResponse(newest, filename=newest.name)
-        # The workbook fell back to one CSV per sheet: serve that run's
-        # sheets together as one zip, since a download is one file.
-        match = re.match(r"(.*-cablenet-\d{8}-\d{6}(?:-\d+)?)-[a-z-]+\.csv$", newest.name)
-        stem = match.group(1) if match else newest.stem
-        sheets = sorted(p for p in newest.parent.iterdir()
-                        if p.is_file() and p.suffix.lower() == ".csv"
-                        and p.name.startswith(stem + "-"))
-        buffer = io.BytesIO()
-        with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
-            for sheet in sheets:
-                archive.write(sheet, sheet.name)
-        return Response(
-            buffer.getvalue(), media_type="application/zip",
-            headers={"Content-Disposition":
-                     'attachment; filename="{}-spreadsheet.zip"'.format(stem)})
 
     @app.post("/api/runs", status_code=202)
     def start_run(body: dict):
@@ -1887,39 +1264,6 @@ def create_app(runner=None, cra_runner=None, cablenet_runner=None,
             raise HTTPException(
                 400, "source must be one of {} when given".format(
                     ", ".join(bundle.CUT_SOURCES)))
-        include_cablenet = bool(body.get("cablenet", False))
-        cablenet_options = body.get("cablenet_options") or {}
-        if not isinstance(cablenet_options, dict):
-            raise HTTPException(400, "cablenet_options must be an object")
-        for field in ("prestress", "ceiling_newtons"):
-            if cablenet_options.get(field) is not None:
-                try:
-                    float(cablenet_options[field])
-                except (TypeError, ValueError):
-                    raise HTTPException(
-                        400, "cablenet_options.{} must be a number, not {!r}".format(
-                            field, cablenet_options[field]))
-        if "falsework" in cablenet_options:
-            raise HTTPException(400, "cablenet_options: " + NO_FALSEWORK)
-        tolerance_mm = _tolerance_mm(
-            cablenet_options.get("tolerance_mm", CABLENET_DEFAULTS["tolerance_mm"]),
-            "cablenet_options.tolerance_mm")
-        rope_key = str(cablenet_options.get("rope", CABLENET_DEFAULTS["rope"]))
-        # no prestress unless one is asked for: the engine works it out from
-        # the load, under the machine's ceiling (spec 2026-10-10, section 4)
-        prestress = _positive_newtons(
-            cablenet_options.get("prestress", CABLENET_DEFAULTS["prestress"]),
-            "cablenet_options.prestress")
-        ceiling = _positive_newtons(
-            cablenet_options.get("ceiling_newtons", CABLENET_DEFAULTS["ceiling_newtons"]),
-            "cablenet_options.ceiling_newtons")
-        parts = None
-        if include_cablenet:
-            import catalogue
-
-            parts = catalogue.load_parts()
-            if rope_key not in parts["rope"]:
-                raise HTTPException(400, "no rope named {!r} in the catalogue".format(rope_key))
         _validate(export, material, pattern, size, thickness)
         slug = geometry.slugify(export)
         with RUNS_LOCK:
@@ -1932,7 +1276,7 @@ def create_app(runner=None, cra_runner=None, cablenet_runner=None,
                 "material": material, "pattern": pattern, "size": size,
                 "thickness": thickness, "source": source,
                 # what this run is, so a 409 on the study can be told apart: the
-                # run that staged it, or the cable net run of its own
+                # run that staged it, or the formwork run
                 "kind": "staged",
                 # "of" stays 0 until the cut is known: the number of stages
                 # is the number of courses the cut produced, so nothing can
@@ -1970,27 +1314,15 @@ def create_app(runner=None, cra_runner=None, cablenet_runner=None,
                 # all; the run solved the authored cut while the user
                 # watched the generated one, and reported done.
                 # The name of the cut, which is cheap, comes first and from the
-                # function the cable net run uses too, so the two key alike.
+                # function the formwork run uses too, so the two key alike.
                 slot = staging.cut_slot(pairs[export], pattern, source)
                 cut_source, key_pattern = slot.cut_source, slot.key_pattern
-                run_options = {}
-                if include_cablenet:
-                    # still before the cut, the slow part: a study with no
-                    # mechanism is told now
-                    run_options = {
-                        "include_cablenet": True,
-                        "cablenet_options": _cablenet_phase_options(
-                            export, slot.contract, slug, material, key_pattern,
-                            size, thickness, density, prestress, rope_key,
-                            tolerance_mm, CABLENET_DEFAULTS["batch"],
-                            CABLENET_DEFAULTS["steps"], ceiling=ceiling),
-                    }
                 staging.run_staging(
                     pairs[export], material, pattern, size,
                     bundle.staging_path(slug, material, key_pattern, size,
                                         thickness, density),
                     runner=runner, cra_runner=cra_runner, on_stage=on_stage, thickness=thickness,
-                    source=cut_source, density=density, **run_options,
+                    source=cut_source, density=density,
                 )
                 run["phase"] = "bundling"
                 run["message"] = "assembling the bundle"
@@ -2008,118 +1340,10 @@ def create_app(runner=None, cra_runner=None, cablenet_runner=None,
         threading.Thread(target=work, daemon=True).start()
         return {"run": run_id}
 
-    @app.post("/api/studies/{export}/cablenet/run", status_code=202)
-    def start_cablenet_run(export: str, body: dict):
-        """The cable net analysis alone: the cut, the fit at every instant, the
-        placement, written where GET /cablenet reads it. Not the staged FEA,
-        which is the Analysis section's run and takes minutes a stage; this is a
-        minute or two in all. Keyed exactly as a staged run with the cable net
-        phase keys it, and handed the engine by the same cut (staging.cut_and_plan)
-        and the same assembly (_cablenet_phase_options), so the two can never write
-        to different places or write different documents."""
-
-        import catalogue
-
-        material = str(body.get("material", "tile"))
-        pattern = str(body.get("pattern", "herringbone"))
-        try:
-            size = float(body.get("size", 1.0))
-            # the same default GET /cablenet reads with, so a run and a read
-            # that both omit it agree on the file; _validate allows 0.02
-            thickness = float(body.get("thickness", 0.02))
-            density = float(body["density"]) if body.get("density") else None
-            prestress = None if body.get("prestress") is None else float(body["prestress"])
-            ceiling = (None if body.get("ceiling_newtons") is None
-                       else float(body["ceiling_newtons"]))
-            batch = int(body.get("batch", CABLENET_DEFAULTS["batch"]))
-            steps = int(body.get("steps", CABLENET_DEFAULTS["steps"]))
-        except (TypeError, ValueError, OverflowError) as error:
-            raise HTTPException(400, "a number was unreadable: {}".format(error))
-        if prestress is not None and not (math.isfinite(prestress) and prestress > 0.0):
-            raise HTTPException(400, "prestress must be greater than zero newtons")
-        if ceiling is not None and not (math.isfinite(ceiling) and ceiling > 0.0):
-            raise HTTPException(400, "ceiling_newtons must be greater than zero newtons")
-        if batch < 1:
-            raise HTTPException(400, "batch must be at least one node")
-        if steps < 0:
-            raise HTTPException(400, "steps cannot be negative")
-        if "falsework" in body:
-            raise HTTPException(400, NO_FALSEWORK)
-        tolerance_mm = _tolerance_mm(
-            body.get("tolerance_mm", CABLENET_DEFAULTS["tolerance_mm"]), "tolerance_mm")
-        source = body.get("source")
-        if source is not None and source not in bundle.CUT_SOURCES:
-            raise HTTPException(400, "source must be one of {} when given".format(
-                ", ".join(bundle.CUT_SOURCES)))
-        rope_key = str(body.get("rope", CABLENET_DEFAULTS["rope"]))
-        parts = catalogue.load_parts()
-        if rope_key not in parts["rope"]:
-            raise HTTPException(400, "no rope named {!r} in the catalogue".format(rope_key))
-        _validate(export, material, pattern, size, thickness)
-        slug = geometry.slugify(export)
-        with RUNS_LOCK:
-            for run in RUNS.values():
-                if run["slug"] == slug and run["state"] in ("queued", "running"):
-                    return JSONResponse({"run": run["id"]}, status_code=409)
-            run_id = uuid.uuid4().hex[:12]
-            RUNS[run_id] = {
-                "id": run_id, "export": export, "slug": slug,
-                "material": material, "pattern": pattern, "size": size,
-                "thickness": thickness, "source": source,
-                "kind": "cable net",
-                "state": "queued", "stage": 0, "of": 0, "phase": "queued",
-                "message": "",
-            }
-
-        def work():
-            run = RUNS[run_id]
-            try:
-                # inside the try: an import that fails is a failed run with its
-                # reason, not a run left queued that locks the study with 409s
-                import cablenet
-
-                run["state"] = "running"
-                run["phase"] = "cutting"
-                run["message"] = "cutting the tessellation"
-                pairs = geometry.available_exports(bundle.UPLOAD_DIR)
-                if export not in pairs:
-                    raise ValueError("no export named {!r}".format(export))
-                # The cut is the one a staged run makes, from the same function,
-                # so the two key and cut alike. Its name is cheap and comes first,
-                # and the study's documents are read and checked against it before
-                # the slow part: a study with no mechanism is told now.
-                slot = staging.cut_slot(pairs[export], pattern, source)
-                options = _cablenet_phase_options(
-                    export, slot.contract, slug, material, slot.key_pattern, size,
-                    thickness, density, prestress, rope_key, tolerance_mm, batch,
-                    steps, ceiling=ceiling)
-                cut = staging.cut_and_plan(pairs[export], pattern, size, slot=slot)
-                run["phase"] = "cable net"
-                run["message"] = ("fitting the net at every instant, working out the "
-                                  "prestress it needs and where to hold it: two or "
-                                  "three minutes on a large study")
-                # the call run_staging makes for the same phase
-                out_path = options.pop("out_path")
-                cablenet.run_cablenet(
-                    contract=cut.contract, arrays=cut.arrays, plan=cut.plan,
-                    thickness=thickness,
-                    density=staging.resolve_density(material, density),
-                    out_path=out_path, **options)
-                run["state"] = "done"
-                run["phase"] = "done"
-                run["message"] = ""
-            except Exception as error:
-                run["state"] = "failed"
-                run["phase"] = "failed"
-                run["message"] = "{}: {}".format(type(error).__name__, error)
-
-        threading.Thread(target=work, daemon=True).start()
-        return {"run": run_id}
-
     # ------------------------------------------------------------------
     # The formwork engine (spec 2026-10-09): the raise and the tiling
     # simulated once in a run of its own and kept as captures for the studio
-    # to replay. Keyed and cut exactly as the cable net run is.
+    # to replay. Keyed and cut exactly as a staged run is.
     # ------------------------------------------------------------------
 
     @app.post("/api/studies/{export}/formwork/run", status_code=202)
@@ -2132,6 +1356,7 @@ def create_app(runner=None, cra_runner=None, cablenet_runner=None,
         before the slow part."""
 
         import catalogue
+        import machine
 
         material = str(body.get("material", "tile"))
         pattern = str(body.get("pattern", "herringbone"))
@@ -2162,46 +1387,78 @@ def create_app(runner=None, cra_runner=None, cablenet_runner=None,
         pulleys = body.get("pulleys", True)
         if not isinstance(pulleys, bool):
             raise HTTPException(400, "pulleys: true or false, not {!r}".format(pulleys))
-        # the holds (spec 2026-10-10 formwork holds, section 4): none, or a
-        # search of evenly spaced whole lines to the tolerance
-        holds = body.get("holds", "none")
-        if holds not in ("none", "search"):
-            raise HTTPException(400, "holds: none or search, not {!r}".format(holds))
-        tolerance_mm = body.get("tolerance_mm", 20.0)
-        if (isinstance(tolerance_mm, bool) or not isinstance(tolerance_mm, (int, float))
-                or not (math.isfinite(tolerance_mm) and tolerance_mm > 0.0)):
-            raise HTTPException(400, "tolerance_mm must be more than nought millimetres, not "
-                                     "{!r}".format(tolerance_mm))
-        tolerance_mm = float(tolerance_mm)
+        # the rods a side, which the studio places (spec 2026-10-11 one Cable net
+        # tab, section 6); the search of whole lines went with that
+        if "holds" in body:
+            raise HTTPException(400, "holds is no longer taken: send holds_per_side, a whole "
+                                     "number of rods a side from 0 to {}".format(HOLDS_PER_SIDE_MAX))
+        holds_per_side = body.get("holds_per_side", 0)
+        if (isinstance(holds_per_side, bool) or not isinstance(holds_per_side, int)
+                or not 0 <= holds_per_side <= HOLDS_PER_SIDE_MAX):
+            raise HTTPException(
+                400, "holds_per_side must be a whole number of rods a side from 0 to {}, not "
+                     "{!r}".format(HOLDS_PER_SIDE_MAX, holds_per_side))
+        # a run for other rods starts from the state at the hold when it is on
+        # disk (section 7); Run is always a full run
+        resume = body.get("resume", False)
+        if not isinstance(resume, bool):
+            raise HTTPException(400, "resume: true or false, not {!r}".format(resume))
         source = body.get("source")
         if source is not None and source not in bundle.CUT_SOURCES:
             raise HTTPException(400, "source must be one of {} when given".format(
                 ", ".join(bundle.CUT_SOURCES)))
-        rope_key = str(body.get("rope", FORMWORK_DEFAULTS["rope"]))
+        if export not in geometry.available_exports(bundle.UPLOAD_DIR):
+            raise HTTPException(404, "There is no export named {!r}.".format(export))
         parts = catalogue.load_parts()
+        # The mechanism (spec 2026-10-11 one Cable net tab, section 4.2): the net
+        # is cut for one spool's pull of it, and its rope, wires a motor and
+        # pulleys are the run's. The tab sends it and never a prestress; a body
+        # that names a prestress keeps it, as scripts and tests do, and with no
+        # mechanism one is the only way to run.
+        chosen = body.get("mechanism")
+        built = pull = facts = None
+        if chosen is not None:
+            if not isinstance(chosen, dict):
+                raise HTTPException(400, "mechanism: the five choices, not {!r}".format(chosen))
+            facts = _machine_facts(export, parts, chosen.get("rope"))
+            try:
+                built = machine.derive(parts, chosen, facts, MECHANISM_ANGLE_DEGREES)
+                pull = machine.have(parts, built, MECHANISM_ANGLE_DEGREES)
+            except (machine.MachineError, catalogue.CatalogueError) as error:
+                raise HTTPException(400, str(error))
+            rope_key = built["rope"]
+            wires_per_motor = built["wires_per_motor"]
+            pulleys = built["sheave"] is not None
+        elif prestress is None:
+            raise HTTPException(400, "Choose a mechanism")
+        else:
+            rope_key = str(body.get("rope", FORMWORK_DEFAULTS["rope"]))
         if rope_key not in parts["rope"]:
             raise HTTPException(400, "no rope named {!r} in the catalogue".format(rope_key))
         rope = parts["rope"][rope_key]
         _validate(export, material, pattern, size, thickness)
-        # The prestress the net is cut for: the cable net run's design prestress
-        # for the same cut (the owner's answer of 10 October 2026), unless the
-        # body names one, as scripts and tests do. The tab never sends one.
         prestress_from = "request"
         if prestress is None:
-            if export not in geometry.available_exports(bundle.UPLOAD_DIR):
-                raise HTTPException(404, "There is no export named {!r}.".format(export))
-            try:
-                demand = _read_cablenet_demand(export, material, pattern, size, thickness,
-                                               density, source)
-            except HTTPException as error:
-                if error.status_code != 404:
-                    raise
-                raise HTTPException(400, "Run the cable net analysis first")
-            designed = demand.get("prestress")
-            if (isinstance(designed, bool) or not isinstance(designed, (int, float))
-                    or not (math.isfinite(designed) and designed > 0.0)):
-                raise HTTPException(400, "Run the cable net analysis again: no prestress")
-            prestress, prestress_from = float(designed), "cable net"
+            prestress, prestress_from = float(pull["newtons"]), "mechanism"
+        mechanism_options = {
+            "mechanism": None if built is None else built["choices"],
+            "described": None if built is None else machine.describe(parts, built),
+            "have_newtons": None if pull is None else pull["newtons"],
+            "have_limit": None if pull is None else pull["limit"],
+            "have_part": None if pull is None else pull["part"],
+            "rope_working_newtons": catalogue.rope_working_load(parts, rope_key),
+        }
+
+        def annotate(document):
+            # the drum and the carriage, judged on the run's own reels
+            if built is None:
+                return {}
+            reeves = dict(zip(facts["nodes"], facts["reeves"]))
+            return {"checks": formwork_sim.travel_checks(parts, built, document, reeves,
+                                                         facts["nodes"])}
+
+        import formwork_sim
+
         slug = geometry.slugify(export)
         with RUNS_LOCK:
             for run in RUNS.values():
@@ -2241,6 +1498,8 @@ def create_app(runner=None, cra_runner=None, cablenet_runner=None,
                 run["phase"] = "formwork"
                 run["message"] = ("laying the net out, raising it and tiling it: several "
                                   "minutes on a large study")
+                state_path = bundle.formwork_state_path(slug, material, slot.key_pattern, size,
+                                                        thickness, density)
 
                 def progress(done, total, what):
                     run["stage"], run["of"], run["message"] = done, total, what
@@ -2259,9 +1518,10 @@ def create_app(runner=None, cra_runner=None, cablenet_runner=None,
                              "rope": rope_key, "prestress": prestress,
                              "prestress_from": prestress_from,
                              "wires_per_motor": wires_per_motor, "wall": wall,
-                             "pulleys": pulleys, "holds": holds, "tolerance_mm": tolerance_mm},
-                    runner=formwork_runner, progress=progress, holds=holds,
-                    tolerance_mm=tolerance_mm)
+                             "pulleys": pulleys, "holds_per_side": holds_per_side,
+                             **mechanism_options},
+                    runner=formwork_runner, progress=progress, holds_per_side=holds_per_side,
+                    state_path=state_path, resume=resume, annotate=annotate)
                 run["state"] = "done"
                 run["phase"] = "done"
                 run["message"] = ""
@@ -2273,14 +1533,10 @@ def create_app(runner=None, cra_runner=None, cablenet_runner=None,
         threading.Thread(target=work, daemon=True).start()
         return {"run": run_id}
 
-    @app.get("/api/studies/{export}/formwork/sim")
-    def study_formwork_sim(export: str, material: str = "tile", pattern: str = "herringbone",
-                           size: float = 1.0, thickness: float = 0.02,
-                           density: Optional[float] = None, source: Optional[str] = None):
+    def _formwork_sim_file(export, material, pattern, size, thickness, density, source):
         """The capture document the formwork run wrote for this study and these
-        options, served as it lies: several megabytes, never parsed here. Found
-        by the cut the run made, through staging.cut_slot, as the cable net
-        demand is."""
+        options, found by the cut the run made, through staging.cut_slot, as a
+        staged run's documents are; a 404 that says so when there is none."""
 
         pairs = geometry.available_exports(bundle.UPLOAD_DIR)
         if export not in pairs:
@@ -2297,7 +1553,72 @@ def create_app(runner=None, cra_runner=None, cablenet_runner=None,
         if not path.is_file():
             raise HTTPException(404, "This study has no formwork run for these options yet; "
                                      "a formwork run writes one.")
-        return FileResponse(path, media_type="application/json")
+        return path
+
+    @app.get("/api/studies/{export}/formwork/sim")
+    def study_formwork_sim(export: str, material: str = "tile", pattern: str = "herringbone",
+                           size: float = 1.0, thickness: float = 0.02,
+                           density: Optional[float] = None, source: Optional[str] = None):
+        """The capture document, served as it lies: several megabytes, never
+        parsed here."""
+
+        path = _formwork_sim_file(export, material, pattern, size, thickness, density, source)
+        # asked again every time: a rerun rewrites the file in place, and a
+        # browser left to guess kept the run before it on screen
+        return FileResponse(path, media_type="application/json",
+                            headers={"Cache-Control": "no-cache"})
+
+    def _run_cost(export, material, pattern, size, thickness, density, source):
+        """The run's mechanism priced on this study (spec 2026-10-11 one Cable
+        net tab, section 8.2), its demands the run's own peaks."""
+
+        import bom
+        import catalogue
+        import machine
+
+        path = _formwork_sim_file(export, material, pattern, size, thickness, density, source)
+        document = json.loads(path.read_text(encoding="utf-8"))
+        chosen = (document.get("options") or {}).get("mechanism")
+        if not isinstance(chosen, dict):
+            raise HTTPException(400, "This run has no mechanism: choose one and Run")
+        parts = catalogue.load_parts()
+        facts = _machine_facts(export, parts, chosen.get("rope"))
+        try:
+            built = machine.derive(parts, chosen, facts, MECHANISM_ANGLE_DEGREES)
+            return bom.run_cost(parts, built, facts, document)
+        except (machine.MachineError, catalogue.CatalogueError) as error:
+            raise HTTPException(400, str(error))
+
+    @app.get("/api/studies/{export}/formwork/cost")
+    def study_formwork_cost(export: str, material: str = "tile", pattern: str = "herringbone",
+                            size: float = 1.0, thickness: float = 0.02,
+                            density: Optional[float] = None, source: Optional[str] = None):
+        return _run_cost(export, material, pattern, size, thickness, density, source)
+
+    @app.post("/api/studies/{export}/formwork/bom")
+    def write_formwork_bom(export: str, body: dict):
+        """Export BOM: the run's bill of materials written to the export folder."""
+
+        import bom
+
+        try:
+            size = float(body.get("size", 1.0))
+            thickness = float(body.get("thickness", 0.02))
+            density = float(body["density"]) if body.get("density") else None
+        except (TypeError, ValueError, OverflowError) as error:
+            raise HTTPException(400, "a number was unreadable: {}".format(error))
+        cost = _run_cost(export, str(body.get("material", "tile")),
+                         str(body.get("pattern", "herringbone")), size, thickness, density,
+                         body.get("source"))
+        folder = _exports_folder()
+        name = "{}-bom-{}.xlsx".format(geometry.slugify(export),
+                                       time.strftime("%Y%m%d-%H%M%S"))
+        try:
+            path = bom.write_bom(folder / name, cost, export)
+        except OSError as error:
+            raise HTTPException(400, "the bill of materials could not be written to {}: "
+                                     "{}".format(folder, error))
+        return {"path": str(path), "name": name}
 
     @app.get("/api/runs/{run_id}")
     def run_state(run_id: str):
@@ -2309,7 +1630,7 @@ def create_app(runner=None, cra_runner=None, cablenet_runner=None,
             # phase says what is happening while "of" is still 0, which is
             # the whole duration of the cut.
             "phase": run.get("phase", ""),
-            # "staged", "cable net" or "formwork": which run a 409 is naming
+            # "staged" or "formwork": which run a 409 is naming
             "kind": run.get("kind", ""),
             "message": run["message"],
             "bundle_url": "/api/studies/{}/bundle?material={}&pattern={}&size={}&thickness={}{}".format(
@@ -3603,8 +2924,9 @@ def create_app(runner=None, cra_runner=None, cablenet_runner=None,
         # importing them by the plain path it always did.
         for module in ("panel.js", "pbr.js", "fields.js",
                        "data_analysis.js", "live_graphs.js", "atmosphere.js",
-                       "cablenet.js", "cablenet_model.js", "formwork.js",
-                       "formwork_model.js", "formwork_view.js"):
+                       "labels.js", "formwork.js",
+                       "formwork_model.js", "formwork_view.js", "mechanism_pick.js",
+                       "mechanism_pick_model.js", "run_popup_model.js"):
             page = page.replace(
                 '"three/addons/": "/static/vendor/addons/"',
                 '"three/addons/": "/static/vendor/addons/",\n'

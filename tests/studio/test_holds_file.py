@@ -1,18 +1,17 @@
 """The holds file for Grasshopper (spec 2026-10-10 prestress and holds, section
 8): the nodes the chosen machine needs held, at the finished shape, in metres,
-written beside the other exports and offered for download."""
+written beside the other exports. The page and the export route no longer
+offer it (spec 2026-10-11 one Cable net tab, section 9); the writer stays,
+unreached, until the file is rebuilt from the formwork run."""
 
 from __future__ import annotations
-
-import json
-from pathlib import Path
 
 import pytest
 
 pytest.importorskip("fastapi")
 
 # test_exports puts bench/studio on the path, so it comes first
-from test_exports import _configuration, _demand, _into, _plant_demand, client  # noqa: E402,F401
+from test_exports import _demand  # noqa: E402
 import exports  # noqa: E402
 
 NEEDS = {
@@ -62,31 +61,3 @@ def test_the_document_names_each_node_at_the_finished_shape_in_metres():
 def test_an_older_analysis_has_no_holds_to_write():
     with pytest.raises(exports.ExportError, match="prestress table"):
         exports.holds_document(_demand(), 200.0, 6660.0, "My Vault", {})
-
-
-def test_the_route_writes_the_holds_beside_the_rest_and_serves_them(client, monkeypatch, tmp_path):
-    _plant_demand(monkeypatch, tmp_path, demand=_held_demand())
-    folder = tmp_path / "out"
-    _into(monkeypatch, folder)
-    response = client.post("/api/studies/My Vault/cablenet/exports",
-                           json={"configuration": _configuration(), "ceiling_newtons": 200.0,
-                                 "most_newtons": 6660.0})
-    assert response.status_code == 200, response.text
-    written = [Path(p) for p in response.json()["paths"]]
-    holds = [p for p in written if p.name.endswith("-holds.json")]
-    assert len(holds) == 1 and holds[0].parent == folder
-    document = json.loads(holds[0].read_text(encoding="utf-8"))
-    assert document["schema"] == "bench.holds/1"
-    assert [n["node"] for n in document["nodes"]] == [2, 1]
-    served = client.get("/api/studies/My Vault/cablenet/exports/holds")
-    assert served.status_code == 200
-    assert json.loads(served.content)["nodes"] == document["nodes"]
-
-
-def test_an_older_analysis_exports_the_rest_without_a_holds_file(client, monkeypatch, tmp_path):
-    _plant_demand(monkeypatch, tmp_path)
-    _into(monkeypatch, tmp_path / "out")
-    response = client.post("/api/studies/My Vault/cablenet/exports",
-                           json={"configuration": _configuration(), "ceiling_newtons": 200.0})
-    assert response.status_code == 200, response.text
-    assert not any(p.endswith("-holds.json") for p in response.json()["paths"])

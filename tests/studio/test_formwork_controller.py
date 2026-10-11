@@ -1,8 +1,8 @@
-"""The Formwork tab's controller and the studio's side of it (spec 2026-10-10
-formwork tab, sections 5 to 9): what the run sends, what the player draws, and
-how the studio stands still for the tab. Every figure comes from the model,
-tested under node, and the drawing from the view, tested with three.js; this
-pins the wiring, as the Cable net tab's tests do."""
+"""The one Cable net tab's controller and the studio's side of it (spec
+2026-10-11 one Cable net tab, sections 4, 5 and 7): what the run sends, what
+the player draws, the answer, the reruns, and how the studio stands still for
+the tab. Every figure comes from the model, tested under node, and the drawing
+from the view, tested with three.js; this pins the wiring."""
 
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ import pytest
 STATIC = Path(__file__).resolve().parents[2] / "bench" / "studio" / "static"
 JS = (STATIC / "formwork.js").read_text(encoding="utf-8")
 STUDIO = (STATIC / "studio.js").read_text(encoding="utf-8")
-CABLENET = (STATIC / "cablenet.js").read_text(encoding="utf-8")
+PICK = (STATIC / "mechanism_pick.js").read_text(encoding="utf-8")
 CSS = (STATIC / "studio.css").read_text(encoding="utf-8")
 
 
@@ -46,29 +46,25 @@ def test_the_controller_loads_where_there_is_no_page(tmp_path):
     assert result.stdout.strip() == "mountFormwork"
 
 
-def test_the_run_sends_the_cut_the_machine_and_the_wall_and_never_a_prestress():
-    # the server takes the cable net run's design prestress (section 6)
+def test_the_run_sends_the_mechanism_the_wall_and_the_rods_and_never_a_prestress():
+    # spec section 4.2: the server cuts the net for one spool's pull; section
+    # 7: the tolerance is no run, and a run for other rods starts from the hold
     body = _inner(JS, "startRun")
-    assert "...sentOptions(options), wires_per_motor: c.wires_per_motor," in body
-    assert "pulleys: c.pulleys, wall: c.wall" in body and "body.rope = c.rope" in body
-    # the holds' choice, and the Cable net tab's tolerance the search meets
-    assert "holds: holdsChoice(), tolerance_mm: Number(tolerance())" in body
-    assert "/formwork/run" in body and "prestress" not in body
+    assert body.startswith("function startRun(resume = false) {")
+    assert "const choices = mechanism.chosen();" in body
+    assert 'if (!choices) { el.runStatus.textContent = "Choose a mechanism"; return; }' in body
+    assert ("const body = { ...sentOptions(options), mechanism: choices, wall: Number(el.wall.value),\n"
+            "                     holds_per_side: Number(el.holds.value), resume };") in body
+    assert "/formwork/run" in body and "prestress" not in body and "tolerance" not in body
+    # Run is always a full run: the click's event is not a resume
+    assert 'el.run.addEventListener("click", () => startRun(false));' in JS
+    assert 'el.runStatus.textContent = "starting: about two minutes";' in body
     watch = _inner(JS, "watch")
     assert "`capture ${run.stage} of ${run.of}`" in watch and "await load();" in watch
-    # a search says which try it is on, and that it takes longer (found by the
-    # final review: the counter climbed to 101 and dropped back with no word)
-    assert 'tab.searching = holdsChoice() === "search";' in body
-    assert ('el.runStatus.textContent = tab.searching ? "starting: a few minutes, one run a '
-            'spacing tried" : "starting: about two minutes";') in body
-    assert 'const named = tab.searching && typeof run.message === "string" && run.message.includes(": ");' in watch
-    assert 'named ? run.message.split(": ")[0] + ": " + counter : counter' in watch
 
 
 def test_no_run_is_said_only_once_the_document_has_been_looked_for():
-    # found on screen: opening the tab drew "No formwork run: Run formwork
-    # analysis" while the 6 MB document was still loading, an invitation to
-    # start a search of several minutes for nothing
+    # found on screen: "No formwork run" showed while the 6 MB document loaded
     load = _inner(JS, "load")
     assert load.index("tab.loading = true;") < load.index("await getJson(simUrl(")
     assert load.index("if (mine !== tab.ticket) return;") < load.index("tab.loading = false;")
@@ -77,93 +73,197 @@ def test_no_run_is_said_only_once_the_document_has_been_looked_for():
                                '    if (tab.loading) { el.warnings.innerHTML = ""; return; }')
 
 
-def test_the_machine_is_the_cable_net_tabs_one_a_study():
-    chosen = _inner(JS, "chosen")
-    assert "const choices = machine();" in chosen and "choices.pulley != null" in chosen
-    assert "wall: Number(el.wall.value), prestress: designPrestress()" in chosen
-    assert "machine: () => (cableNet.choices ? cableNet.choices() : null)," in STUDIO
-    assert "choices: () => panel.choices" in CABLENET
+def test_the_mechanism_is_the_pop_ups_and_a_change_reruns_once_it_settles():
+    # spec sections 4.4 and 7: a change of mechanism or of wires a motor greys
+    # the answer and starts a run one second after the last change
+    assert "mechanism: mechanismPick," in STUDIO
+    assert "const mechanismPick = mountMechanism({" in STUDIO
+    assert STUDIO.index("const mechanismPick = mountMechanism({") < STUDIO.index(
+        "formworkTab = mountFormwork({")
+    assert ("onChange: (choices, byHand) => { if (formworkTab) formworkTab.mechanismChanged("
+            "choices, byHand); },") in STUDIO
+    changed = _inner(JS, "mechanismChanged")
+    assert ('if (wanted && choices && outOfDate().includes("Run again: mechanism changed")) '
+            "scheduleRerun(false);") in changed
+    assert "const RERUN_SETTLE_MS = 1000;" in JS
+    rerun = _inner(JS, "scheduleRerun")
+    assert "}, RERUN_SETTLE_MS);" in rerun and "startRun(tab.resume);" in rerun
+    assert "mechanism.setWires(Number(el.wires.value));" in JS
+    # the pop-up says whether a change was his hand or a list read again
+    assert "onChange(chosen(), true);" in PICK and "onChange(chosen(), false);" in PICK
 
 
-def test_the_player_draws_blended_and_shows_the_nearer_capture():
+def test_rods_a_side_rerun_from_the_hold_once_they_settle():
+    # spec sections 6 and 7: Holds a side, 0 to 20; a change reruns from the
+    # state at the hold one second after the last change, and a full run
+    # waiting wins over one from the hold
+    rerun = _inner(JS, "scheduleRerun")
+    assert rerun.startswith("function scheduleRerun(resume = false) {")
+    assert "tab.resume = tab.rerun == null ? resume : tab.resume && resume;" in rerun
+    assert "tab.rerun = null;" in rerun and "startRun(tab.resume);" in rerun
+    assert ('if (tab.sim && outOfDate().includes("Run again: rods a side changed")) '
+            "scheduleRerun(true);") in JS
+    out_of_date = _inner(JS, "outOfDate")
+    assert ("formworkWarnings(tab.sim, { mechanism: mechanism.chosen(),\n"
+            "                                       holdsPerSide: Number(el.holds.value) })"
+            ) in out_of_date
+    watch = _inner(JS, "watch")
+    assert ('if (lines.includes("Run again: mechanism changed")) scheduleRerun(false);\n'
+            '          else if (lines.includes("Run again: rods a side changed")) '
+            "scheduleRerun(true);") in watch
+    # the slider shows the run's rods when a study's run is first read, and
+    # is his from then on
+    load = _inner(JS, "load")
+    assert "const first = !tab.sim;" in load
+    assert "if (sim && first) {\n      setHolds(sim.holdsPerSide);" in load
+
+
+def test_the_cost_and_the_graphs_follow_the_run_and_export_bom_writes_it():
+    # spec sections 8.2 and 8.3: read again with every run read, the graphs
+    # judged again for a new tolerance, Export BOM posted for the run shown
+    load = _inner(JS, "load")
+    assert "renderGraphs();" in load and "loadCost();" in load
+    cost = _inner(JS, "loadCost")
+    assert "/formwork/cost?" in cost and "el.costBody.innerHTML = costHtml(" in cost
+    # a run with no mechanism has no cost, and is not asked for one (found on
+    # screen: an older run's refusal reached the console)
+    assert cost.index("if (!(tab.sim.options || {}).mechanism) {") < cost.index("/formwork/cost?")
+    assert "Run again: no mechanism in this run" in cost
+    graphs = _inner(JS, "renderGraphs")
+    assert ("el.graphs.innerHTML = graphsHtml(tab.judged, have == null ? null : Number(have), "
+            "Number(el.tolerance.value));") in graphs
+    assert "/formwork/bom" in JS and 'el.costExport.addEventListener("click", exportBom);' in JS
+    # where it is written, on screen and chosen there (found by the final
+    # review: the folder could no longer be seen or changed from the page)
+    assert 'el.costStatus.textContent = "saved: " + written.path;' in JS
+    assert 'await getJson("/api/cablenet/exports/folder")' in _inner(JS, "loadFolder")
+    choose = JS[JS.index('el.costFolderChoose.addEventListener("click"'):]
+    assert choose.index('"/api/cablenet/exports/folder/browse"') < choose.index(
+        'showFolder(await getJson("/api/cablenet/exports/folder", {')
+    # a study going takes the cost and the graphs with it, and no rerun it
+    # had waiting is merged into the next
+    clear = _inner(JS, "clear")
+    assert 'el.costBody.innerHTML = "";' in clear and 'el.graphs.innerHTML = "";' in clear
+    assert "clearTimeout(tab.rerun);" in clear and "tab.rerun = null;" in clear
+    # and its rods a side, so the next study's Run is not given them unseen
+    # (found by the final review)
+    assert "setHolds(0);" in clear
+    # the pop-up switches between its three tabs
+    assert "function showTab(id) {" in PICK
+    assert 'el.popup.querySelectorAll("[data-mech-tab]")' in PICK
+
+
+def test_a_studys_run_read_first_gives_the_mechanism_its_wires_and_its_motor():
+    # found by the final review: a run made at 3 wires a motor, or chosen in
+    # another browser, opened greyed as "mechanism changed" though nothing had
+    # changed, and matching the slider to it ran it again
+    load = _inner(JS, "load")
+    assert "if (sim && first) {\n      setHolds(sim.holdsPerSide);\n      adoptMechanism(sim);" in load
+    adopt = _inner(JS, "adoptMechanism")
+    assert "el.wires.value = String(ran.wires_per_motor);" in adopt and "mechanism.adopt(ran);" in adopt
+    assert "tab.again" not in adopt                      # not his hand: no run follows
+    assert "adopt(choices) {" in PICK
+    assert "state.wires = Number(choices.wires_per_motor) || state.wires;" in PICK
+    assert "localStorage.setItem(REMEMBERED_PREFIX + studyName(), choices.motor);" in PICK
+
+
+def test_a_rerun_keeps_the_players_place_and_a_new_study_starts_at_the_raise():
+    # found by the final review: a Holds change made at the end of the tiling
+    # jumped back to the raise when its run landed
+    load = _inner(JS, "load")
+    assert "tab.at = first ? 0 : Math.min(tab.at, end());" in load
+    assert "tab.at = 0;" not in load
+
+
+def test_the_answer_greys_when_out_of_date_and_its_needed_goes_to_the_wire():
+    render = _inner(JS, "renderAnswer")
+    assert 'const stale = outOfDate().some((line) => line.startsWith("Run again"));' in render
+    assert ("el.answer.innerHTML = answerHtml(answer(tab.judged, Number(el.tolerance.value)), "
+            "{ stale });") in render
+    assert "goTo(Number(row.dataset.capture));" in JS
+    assert 'hooks.aim(view.point({ kind: "wire", index: Number(row.dataset.wire) }));' in JS
+    aim = _top(STUDIO, "aimFormworkAt")
+    assert "camera.position.add(target.clone().sub(controls.target));" in aim
+
+
+def test_the_player_draws_blended_values_the_weakest_and_its_key():
     draw = _inner(JS, "draw")
     assert "const head = playhead(tab.times, tab.at);" in draw
-    assert "view.show(head, now);" in draw and "hooks.showMachine(!!now.show.wires);" in draw
-    assert "el.label.textContent = captureLabel(capture);" in draw
-    assert "el.line.innerHTML = frameLineHtml(frameLine(tab.sim, head.nearer));" in draw
-    assert "rebuildLabels(head.nearer, labelKindsInView(now.labels, now.show));" in draw
-    assert "hooks.legend(colourKey(now.colour, tab.sim, now.tolerance));" in draw
+    assert ("const weakest = now.weakestOn ? weakestAt(tab.judged, head.nearer, limits()) : [];"
+            in draw)
+    assert "view.show(head, { ...now, weakest });" in draw
+    assert "hooks.legend(colourKey(now.colour, tab.judged, limits()));" in draw
+    assert "rebuildLabels(head.nearer, now);" in draw
+    # the values on the model: the Colour by's, the weakest's and Compare's
+    # offsets, on the page and in the recording alike
+    labels = _inner(JS, "rebuildLabels")
+    assert "modelLabels(tab.judged, index, onModel(now, index))" in labels
+    assert "modelLabels(tab.judged, head.nearer, onModel(now, head.nearer))" in JS
+    assert "el.line.innerHTML = frameLineHtml(frameLine(tab.judged, head.nearer));" in draw
+    # play and pause in the studio's own symbols
+    assert 'const PLAY = "▶";' in JS and 'const PAUSE = "❚❚";' in JS
+    assert "el.play.textContent = tab.playing ? PAUSE : PLAY;" in _inner(JS, "setPlaying")
     tick = _inner(JS, "tick")
     assert "tab.at = Math.min(tab.at + seconds * tab.speed, end());" in tick
     load = _inner(JS, "load")
-    assert "tab.times = sim ? captureTimes(sim.captures) : [];" in load
-    assert "tab.worst = sim ? worstTables(sim) : null;" in load and "view.build(sim);" in load
-    assert 'el.holds.innerHTML = sim ? holdsHtml(sim) : "";' in load
-    assert 'el.holds.innerHTML = "";' in _inner(JS, "clear")
+    assert "tab.times = sim ? captureTimes(sim.captures) : [];" in load and "view.build(sim);" in load
+    assert "mechanism.setChecks(sim ? sim.checks : null);" in load
 
 
-def test_a_worst_header_sorts_and_a_row_moves_the_player_and_the_camera():
-    assert ('tab.sort = key === tab.sort.key ? { key, descending: !tab.sort.descending }'
-            in JS)
-    assert "goTo(Number(row.dataset.capture));" in JS
-    assert ("hooks.aim(view.point({ kind: row.dataset.kind, index: Number(row.dataset.index) }));"
-            in JS)
-    aim = _top(STUDIO, "aimFormworkAt")
-    assert "camera.position.add(target.clone().sub(controls.target));" in aim
-    assert "controls.target.copy(target);" in aim
+def test_a_new_wall_is_judged_without_a_run():
+    judge = _inner(JS, "judge")
+    assert ("tab.judged = tab.sim && tab.sim.trees.wall !== wall ? withWall(tab.sim, wall) : tab.sim;"
+            in judge)
+
+
+def test_compare_and_weakest_are_buttons_that_stay_lit():
+    assert 'el.compare.classList.toggle("active", tab.compare);' in JS
+    assert 'el.weakest.classList.toggle("active", tab.weakest);' in JS
+    assert "el.mechanismToggle.addEventListener(\"click\", () => mechanism.toggle());" in JS
 
 
 def test_the_studio_stands_still_while_the_tab_is_open():
     assert "let formworkTab = null;" in STUDIO
-    # declared above renderView, which a render during boot calls
     assert STUDIO.index("let formworkTab = null;") < STUDIO.index("function renderView()")
     frame = _top(STUDIO, "frame")
     assert "if (formworkTab && formworkTab.active()) {" in frame
     assert "holdStudioForFormwork();" in frame and "formworkTab.tick(delta);" in frame
-    assert frame.index("formworkTab.tick(delta);") < frame.index(
-        "applyTimeline(Math.min(state.timeline.t + delta * state.timeline.speed")
     assert ('if (formworkTab) formworkTab.setActive(sectionId === "formwork-section");'
             in _top(STUDIO, "activateTab"))
     assert "if (formworkTab) formworkTab.place();" in _top(STUDIO, "renderView")
-    hold = _top(STUDIO, "studioFormworkObjects")
-    for name in ("shell", "falsework", "wires", "nodes", "principal", "columns", "holdMarkers"):
-        assert "state.objects." + name in hold, name
-    assert 'key.endsWith("Arrows")' in hold
     leave = _top(STUDIO, "leaveFormworkTab")
     for line in ("formworkView.group.visible = false;",
                  "for (const object of formworkHidden) object.visible = true;",
-                 "applySceneAtTime(formworkTakeT);", "applyShowMode();",
-                 "if (cableNetLensUp()) paintCableNetLenses(true);"):
+                 "applySceneAtTime(formworkTakeT);", "applyShowMode();"):
         assert line in leave, line
     assert "formworkView.group.visible = true;" in _top(STUDIO, "enterFormworkTab")
-    assert "formworkTab.setActive(!document.getElementById(\"formwork-section\").classList.contains(\"hidden\"));" in STUDIO
+    boot = 'formworkTab.setActive(!document.getElementById("formwork-section").classList.contains("hidden"));'
+    assert STUDIO.count(boot) == 1
+    assert STUDIO.index(boot) > STUDIO.index("window.__studioReady = true;")
 
 
-def test_a_click_goes_to_the_formwork_card_while_the_tab_is_open():
-    up = _top(STUDIO, "releaseCableNetPress")
-    assert "if (formworkTab && formworkTab.active()) formworkTab.pick(event);" in up
-    assert "else pickCableNetNode(event);" in up
-    pick = _inner(JS, "pick")
-    assert "view.nearestNode(hooks.camera(), hooks.canvasRect(), event.clientX, event.clientY)" in pick
-    assert "formworkPickHtml(tab.sim, head.nearer, node)" in pick
+def test_a_tab_remembered_as_the_old_cable_net_opens_the_one_tab():
+    assert 'if (remembered === "cablenet-section") remembered = "formwork-section";' in STUDIO
 
 
-def test_a_new_study_clears_the_tab_and_reloads_it():
-    assert STUDIO.count("if (formworkTab) formworkTab.clear();") == 2
-    assert STUDIO.count("formworkTab.reload();") == 2
-    # a change of machine or of the cable net run reaches the warnings
-    assert STUDIO.count("if (formworkTab) formworkTab.refresh();") == 2
+def test_the_key_is_the_ramp_with_its_limit_at_its_place():
+    legend = _top(STUDIO, "paintFormworkLegend")
+    assert "paintRampLegend(key);" in legend
+    ramp = _top(STUDIO, "paintRampLegend")
+    assert 'mark.style.left = (100 * key.fraction).toFixed(1) + "%";' in ramp
+    assert 'document.getElementById("legend-limit-text").textContent = key.limitText || "";' in ramp
+
+
+def test_the_old_machine_models_are_not_drawn_for_now():
+    # spec section 5.5: "they are the old ones"; the permanent works stay
+    assert "const MACHINE_PLANT_SHOWN = false;" in STUDIO
+    assert "if (!MACHINE_PLANT_SHOWN) temporary.visible = false;" in STUDIO
 
 
 def test_the_pop_ups_and_the_data_sheet_take_turns_on_the_left():
-    mount = STUDIO[STUDIO.index("const cableNet = mountCableNet({"):]
-    hand = mount[mount.index("onPopup: () => {"):]
-    hand = hand[:hand.index("\n  },")]
-    assert "if (formworkTab) formworkTab.closePopup();" in hand
-    mine = STUDIO[STUDIO.index("formworkTab = mountFormwork({"):]
+    mine = STUDIO[STUDIO.index("const mechanismPick = mountMechanism({"):]
     mine = mine[mine.index("onPopup: () => {"):]
-    mine = mine[:mine.index("\n    },")]
-    assert "cableNet.closePopup();" in mine
+    mine = mine[:mine.index("\n  },")]
     assert 'document.getElementById("data-panel").classList.add("hidden");' in mine
     data = STUDIO[STUDIO.index('document.getElementById("data-button").addEventListener("click"'):]
     data = data[:data.index("});")]
@@ -171,54 +271,28 @@ def test_the_pop_ups_and_the_data_sheet_take_turns_on_the_left():
 
 
 def test_the_check_on_screen_reaches_the_drawing_and_never_his_studio():
-    # spec section 12: the check finds the Formwork drawing through the probe
-    # hook, and runs against a spare port, never Param's 8600
     hook = STUDIO[STUDIO.index("window.__studio = {"):]
     hook = hook[:hook.index("};") + 2]
-    assert "formworkView" in hook
-    # and the props, which the check puts out of view: a forest streaming in
-    # under SwiftShader makes a frame take a quarter of an hour
     assert "formworkView, propsGroup" in hook
     script = (STATIC.parents[1] / "scripts" / "formwork_screens.mjs").read_text(encoding="utf-8")
     assert 'process.env.STUDIO_URL || "http://127.0.0.1:8601"' in script
+    # its pictures go to this plan's folder, never over the old tab's record
+    # (found by the final review)
+    assert '"2026-10-11-one-cable-net-tab", "screens"' in script
+    assert "2026-10-10-formwork-tab" not in script
     assert "8600" not in script.replace("never Param's 8600", "")
     for step in ("03-raise", "04-finish", "05-hold", "06-tiling", "-colour-", "-show-",
-                 "-labels", "-worst-", "-fly-to", "-card", "-left"):
+                 "-values", "-compare", "-weakest", "-skin-", "-mechanism", "-card", "-left"):
         assert step in script, step
+    assert "-worst-" not in script
 
 
 def test_the_capture_label_keeps_to_one_line():
-    # found on screen: "t 100 hold" wrapped onto three lines beside the buttons
     assert ("#panel #formwork-label { color: var(--ink); font-size: var(--t-2); "
             "margin-left: var(--s2);\n  white-space: nowrap; }") in CSS
 
 
-def test_the_studio_s_own_act_is_hidden_and_the_take_comes_back_as_it_was():
-    # final review 1 and 5: the act's net and columns are the studio's own;
-    # the machine stands at its working place (the act's end) while the tab is
-    # open; leaving puts the take's clock back and repaints the Forces key
-    hold = _top(STUDIO, "studioFormworkObjects")
-    assert "formworkObjects && formworkObjects.group" in hold
-    enter = _top(STUDIO, "enterFormworkTab")
-    assert "formworkTakeT = state.timeline ? state.timeline.t : null;" in enter
-    assert ("if (state.bundle && state.timeline && formworkSeconds() > 0) "
-            "applySceneAtTime(formworkSeconds());") in enter
-    leave = _top(STUDIO, "leaveFormworkTab")
-    assert "if (state.bundle && formworkTakeT != null) applySceneAtTime(formworkTakeT);" in leave
-    assert "applySceneAtTime(state.timeline.t);" not in leave
-    assert "if (state.bundle) applyWireForces();" in leave
-    assert leave.index("applyShowMode();") < leave.index("applyWireForces();")
-    # the tab opened at boot (the remembered tab) is entered only once the whole
-    # module has run: the hook reads the act's objects, declared further down
-    boot = 'formworkTab.setActive(!document.getElementById("formwork-section").classList.contains("hidden"));'
-    assert STUDIO.count(boot) == 1
-    assert STUDIO.index("let formworkObjects = null;") < STUDIO.index(boot)
-    assert STUDIO.index(boot) > STUDIO.index("window.__studioReady = true;")
-
-
 def test_the_take_stands_still_while_the_tab_is_open():
-    # final review 2: the shelf's Play and Restart and the space bar would
-    # switch the studio into the take's view under the tab
     for name in ("togglePlay", "restartTake", "rewindTake"):
         body = _top(STUDIO, name)
         first = body.split("{", 1)[1].strip().splitlines()[0]
@@ -226,7 +300,6 @@ def test_the_take_stands_still_while_the_tab_is_open():
 
 
 def test_a_throw_in_the_player_stops_the_player_and_not_the_studio():
-    # final review 9: frame() reschedules itself only on a normal exit
     tick = _inner(JS, "tick")
     assert "try {" in tick and "} catch (error) {" in tick
     assert "setPlaying(false);" in tick[tick.index("} catch (error) {"):]
@@ -234,8 +307,6 @@ def test_a_throw_in_the_player_stops_the_player_and_not_the_studio():
 
 
 def test_the_tab_records_the_raise_through_the_studio_s_recorder():
-    # the owner's choice of 10 October 2026: Record in the Formwork tab plays
-    # the captures through the studio's recorder, with the tab's labels and key
     assert 'el.record.addEventListener("click", () => hooks.record());' in JS
     assert "record: toggleRecording," in STUDIO
     seek = JS[JS.index("    seek(seconds) {"):]
@@ -243,26 +314,14 @@ def test_the_tab_records_the_raise_through_the_studio_s_recorder():
     assert "tab.at = Math.min(Math.max(seconds, 0), end());" in seek and "draw();" in seek
     overlay = JS[JS.index("    overlay(ctx, width, height) {"):]
     overlay = overlay[:overlay.index("\n    },")]
-    assert "const rect = { left: 0, top: 0, width, height };" in overlay
-    assert "labelKindsInView(now.labels, now.show)" in overlay
-    assert "paintOverlay(ctx, { width, height, caption: recordingCaption(tab.sim, head.nearer)," in overlay
+    assert "modelLabels(tab.judged, head.nearer, onModel(now, head.nearer))" in overlay
+    assert "paintOverlay(ctx, { width, height, caption: recordingCaption(tab.judged, head.nearer)," in overlay
     take = _top(STUDIO, "recordAnimation")
     assert "const formwork = !!(formworkTab && formworkTab.active());" in take
-    assert ('const status = document.getElementById(formwork ? "formwork-record-status" '
-            ': "record-status");') in take
-    assert "const speed = formwork ? formworkTab.recording.speed() : state.timeline.speed;" in take
-    assert "Math.ceil(formworkTab.recording.duration() / speed * fps)" in take
-    # the camera stays where he put it: no turntable, no take view
-    assert "if (!formwork) captureOrbitBase(0);" in take
     assert "if (formwork) formworkTab.recording.seek(frameIndex * speed / fps);" in take
-    assert "if (formwork) blob = await formworkFrame(canvas);" in take
-    assert '(formwork ? "&kind=formwork" : "")' in take
     frame = _top(STUDIO, "formworkFrame")
-    assert "ctx.drawImage(source, 0, 0);" in frame
     assert "formworkTab.recording.overlay(ctx, source.width, source.height);" in frame
 
 
-def test_the_cable_net_labels_and_card_stand_down_while_the_tab_is_open():
-    assert ("body.formwork-open #model-labels, body.formwork-open #cablenet-pick "
-            "{ display: none; }") in CSS
+def test_the_studio_labels_and_card_stand_down_while_the_tab_is_open():
     assert 'document.body.classList.toggle("formwork-open", on);' in _inner(JS, "setActive")

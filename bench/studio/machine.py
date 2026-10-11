@@ -373,20 +373,79 @@ def strongest(parts, facts, angle_degrees):
             "limit": best[2]["name"], "part": best[2]["part"]}
 
 
-def take_ups_from_commands(stage_commands):
-    """Each wire's rope taken in at its anchor, stage by stage, from the cable
-    net run's reel commands (changes of each wire's rest length, negative
-    reeling in): the running total, sign turned so taking in is positive."""
+def have(parts, configuration, angle_degrees):
+    """One spool's pull, N (spec 2026-10-11 one Cable net tab, section 4.1):
+    the binding (lowest) of the configuration's limits a wire, the motor's or
+    the gearbox's torque shared across the wires on a motor. Never a total."""
 
-    totals, series = None, None
-    for commands in stage_commands:
-        if totals is None:
-            totals = [0.0] * len(commands)
-            series = [[] for _ in commands]
-        for w, command in enumerate(commands):
-            totals[w] -= float(command or 0.0)
-            series[w].append(totals[w])
-    return series or []
+    top = next(term for term in limit_terms(parts, configuration, angle_degrees)
+               if term["binds"])
+    return {"newtons": top["newtons"], "limit": top["name"], "part": top["part"]}
+
+
+def part_name(parts, key):
+    """A part as it is bought: a rope by its size and construction, a pulley by
+    its name, anything else by its catalogue key, which is its model."""
+
+    rope = parts.get("rope", {}).get(key)
+    if rope is not None:
+        return "{:g} mm {}".format(float(rope["diameter_mm"]),
+                                   rope.get("construction", "").strip()).strip()
+    for kind in ("sheave",):
+        named = parts.get(kind, {}).get(key)
+        if named is not None and named.get("name"):
+            return str(named["name"])
+    return key
+
+
+def preset_label(parts, configuration, newtons):
+    """A whole mechanism by its real names and its pull: "ES-MH342200, 50:1,
+    190 mm pulleys, 8 mm 7x19: 3,411 N a spool"."""
+
+    gearbox = configuration["gearbox"]
+    ratio = ("direct" if gearbox == "direct" else
+             "{:g}:1".format(float(_part(parts, "gearbox", gearbox)["gear_ratio"])))
+    pulley = configuration.get("sheave")
+    pulleys = ("no pulleys" if pulley is None else
+               "{:g} mm pulleys".format(float(_part(parts, "sheave", pulley)["diameter_mm"])))
+    rope = _part(parts, "rope", configuration["rope"])
+    return "{}, {}, {}, {:g} mm {}: {:,.0f} N a spool".format(
+        configuration["motor"], ratio, pulleys, float(rope["diameter_mm"]),
+        rope.get("construction", "").strip(), float(newtons))
+
+
+def presets(parts, facts, angle_degrees, wires_per_motor=1):
+    """The dropdown's whole spooling mechanisms (spec 2026-10-11 one Cable net
+    tab, section 8.1): for each motor the catalogue builds on this machine, the
+    ratio, rope and pulley that give it the most pull a spool at these wires a
+    motor, strongest first; among equals the catalogue's order. Motors the
+    catalogue cannot build are left out."""
+
+    found = []
+    for motor in offered_motors(parts):
+        best = None
+        for option in ratio_options(parts, motor):
+            for rope in parts["rope"]:
+                for pulley in [None] + pulleys_for(parts, rope):
+                    choices = {"motor": motor, "ratio": option["ratio"], "pulley": pulley,
+                               "rope": rope, "wires_per_motor": int(wires_per_motor)}
+                    try:
+                        built = derive(parts, choices, facts, angle_degrees)
+                        pull = have(parts, built, angle_degrees)
+                    except (MachineError, catalogue.CatalogueError):
+                        continue
+                    if best is None or pull["newtons"] > best[0]["newtons"]:
+                        best = (pull, built, choices)
+        if best is None:
+            continue
+        pull, built, choices = best
+        found.append({"choices": choices, "have_newtons": pull["newtons"],
+                      "limit": pull["limit"], "part": pull["part"],
+                      "part_name": part_name(parts, pull["part"]),
+                      "described": describe(parts, built),
+                      "label": preset_label(parts, built, pull["newtons"])})
+    found.sort(key=lambda entry: -entry["have_newtons"])
+    return found
 
 
 def travel(parts, configuration, take_ups, reeves=None):
@@ -547,33 +606,3 @@ def facts_from(document, design_mm, supports, ea):
             "nodes": [wire["node"] for wire in rim],
             "reeves": reeves, "routes_mm": [wire["route_mm"] for wire in rim],
             "machines": machines, "spools": int(cited.get("wireCount") or SPOOLS)}
-
-
-def run_of(parts, demand):
-    """What the cable net run was made with, from its demand document: the
-    wire's stiffness, and whether its wires were reeved. The run does not use
-    wires a motor. None where the document does not say."""
-
-    demand = demand or {}
-    ea = demand.get("ea_newtons")
-    reeves = [wire.get("reeve_factor") for wire in demand.get("wires") or []
-              if isinstance(wire, dict) and wire.get("reeve_factor") is not None]
-    return {"ea_newtons": None if ea is None else float(ea),
-            "pulleys": None if not reeves else any(int(r) > 1 for r in reeves),
-            "wires_per_motor": None}
-
-
-def cable_net_demands(demand):
-    """Each wire's peak tension over the cable net run's stages, never below the
-    prestress it was cut at, and each wire's take-up from its reel commands."""
-
-    stages = (demand or {}).get("stages") or []
-    prestress = float((demand or {}).get("prestress") or 0.0)
-    count = max((len(stage.get("wire_tensions") or []) for stage in stages), default=0)
-    peaks = [prestress] * count
-    for stage in stages:
-        for w, tension in enumerate(stage.get("wire_tensions") or []):
-            peaks[w] = max(peaks[w], float(tension or 0.0))
-    take_ups = take_ups_from_commands(
-        [stage.get("wire_reel_commands") or [0.0] * count for stage in stages])
-    return peaks, (take_ups or [[0.0] for _ in range(count)])

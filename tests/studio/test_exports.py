@@ -556,26 +556,6 @@ def test_the_load_path_uses_one_decimal_convention():
 # The routes
 # ---------------------------------------------------------------------------
 
-def _plant_demand(monkeypatch, tmp_path, name="My Vault", demand=None):
-    import json
-    import bundle
-    import geometry
-    from conftest_data import tiny_contract
-
-    # The demand is found by the cut the study would be run with, which is read
-    # from the study's own contract, so the study has to be there.
-    upload = tmp_path / "upload"
-    upload.mkdir(exist_ok=True)
-    (upload / "{}-contract.json".format(name)).write_text(
-        json.dumps(tiny_contract()), encoding="utf-8")
-    monkeypatch.setattr(bundle, "UPLOAD_DIR", upload)
-    monkeypatch.setattr(bundle, "STUDIES_DIR", tmp_path / "studies")
-    path = bundle.cablenet_path(geometry.slugify(name), "tile", "herringbone",
-                                1.0, 0.02, None)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(demand or _demand()), encoding="utf-8")
-
-
 def _into(monkeypatch, folder):
     folder.mkdir(exist_ok=True)
     monkeypatch.setattr(studio_app, "read_settings",
@@ -672,196 +652,6 @@ def test_a_force_assumption_prints_ungrouped_with_one_decimal_and_a_unit():
     assert "**uniform prestress.** Value: 300.0 N." in text
     assert "450,000" not in text
 
-
-def test_the_route_writes_all_three_and_they_agree(client, monkeypatch, tmp_path):
-    _plant_demand(monkeypatch, tmp_path)
-    folder = tmp_path / "out"
-    _into(monkeypatch, folder)
-    response = client.post("/api/studies/My Vault/cablenet/exports",
-                           json={"configuration": _configuration()})
-    assert response.status_code == 200, response.text
-    written = [Path(p) for p in response.json()["paths"]]
-    assert {p.suffix for p in written} >= {".svg", ".md"}
-    assert all(p.is_file() and p.parent == folder for p in written)
-    svg = next(p for p in written if p.suffix == ".svg").read_text(encoding="utf-8")
-    md = next(p for p in written if p.suffix == ".md").read_text(encoding="utf-8")
-    assert "turnbuckle-hook-hook-M10" in svg and "turnbuckle-hook-hook-M10" in md
-    assert "1471.0 N" in svg and "1471.0 N" in md
-
-
-def test_the_route_scores_the_panels_ladder(client, monkeypatch, tmp_path):
-    _plant_demand(monkeypatch, tmp_path)
-    _into(monkeypatch, tmp_path / "out")
-    seen = _spy_on_export_model(monkeypatch)
-    response = client.post("/api/studies/My Vault/cablenet/exports",
-                           json={"configuration": _configuration()})
-    assert response.status_code == 200, response.text
-    ladder = seen["ladder"]
-    assert len(ladder) == 5
-    assert ladder[0]["configuration"] == _configuration()
-    assert ladder[1]["configuration"]["chain"] == ["eye-M12", "turnbuckle-eye-eye-M10"]
-    assert ladder[2]["configuration"]["rope"] == "rope-5mm"
-    assert ladder[3]["configuration"]["chain"] == ["eye-M16", "turnbuckle-eye-eye-M10"]
-    assert ladder[3]["configuration"]["rope"] == "rope-6mm"
-    assert ladder[4]["configuration"]["chain"] == ["eye-M20", "turnbuckle-eye-eye-M12"]
-    assert ladder[4]["configuration"]["rope"] == "rope-8mm"
-    assert all(rung["refused"] is None and rung["ceiling"] > 0 for rung in ladder)
-
-
-def test_the_scored_rows_carry_the_drive_and_the_load_factor(client, monkeypatch, tmp_path):
-    # the documents read the row, so the exports score with the demand in hand
-    sizing = {"stage": "S7", "worst_wire_tension_newtons": 900.0,
-              "worst_actuator_newtons": 0.0, "worst_sag_mm": 1.4, "load_newtons": 12000.0}
-    _plant_demand(monkeypatch, tmp_path, demand=_demand(sizing=sizing))
-    _into(monkeypatch, tmp_path / "out")
-    seen = _spy_on_export_model(monkeypatch)
-    response = client.post("/api/studies/My Vault/cablenet/exports",
-                           json={"configuration": _configuration()})
-    assert response.status_code == 200, response.text
-    for row in [seen["row"]] + seen["ladder"]:
-        assert row["drive"] == "CL86T-V41"
-        assert row["load_factor"]["stage"] == "S7"
-    # 1471 N against 900 N per unit skin: 1.6 passes, 1.7 breaches
-    assert seen["row"]["load_factor"]["limit_factor"] == pytest.approx(1.6)
-    assert seen["row"]["load_factor"]["binding"] == "anchor"
-
-
-
-
-def test_a_rung_the_catalogue_refuses_is_passed_through_with_its_text(
-        client, monkeypatch, tmp_path):
-    _plant_demand(monkeypatch, tmp_path)
-    _into(monkeypatch, tmp_path / "out")
-    seen = _spy_on_export_model(monkeypatch)
-    # no eye-and-eye turnbuckle exists at M20, so the first rung is refused
-    configuration = _configuration(chain=["eye-M20", "turnbuckle-hook-eye-M20"])
-    response = client.post("/api/studies/My Vault/cablenet/exports",
-                           json={"configuration": configuration})
-    assert response.status_code == 200, response.text
-    assert len(seen["ladder"]) == 5
-    assert seen["ladder"][1]["refused"]
-
-
-def test_the_rope_wound_is_the_worst_wires_summed_reel_commands(
-        client, monkeypatch, tmp_path):
-    stages = _demand()["stages"]
-    stages[0]["wire_reel_commands"] = [5.0, -3.0]
-    stages[1]["wire_reel_commands"] = [-10.0, -20.0]
-    _plant_demand(monkeypatch, tmp_path, demand=_demand(stages=stages))
-    _into(monkeypatch, tmp_path / "out")
-    seen = _spy_on_export_model(monkeypatch)
-    client.post("/api/studies/My Vault/cablenet/exports",
-                json={"configuration": _configuration()})
-    assert seen["row"]["rope_path"]["rope_wound_mm"] == 23.0
-
-
-def test_a_body_rope_wound_wins_over_the_demand(client, monkeypatch, tmp_path):
-    _plant_demand(monkeypatch, tmp_path)
-    _into(monkeypatch, tmp_path / "out")
-    seen = _spy_on_export_model(monkeypatch)
-    client.post("/api/studies/My Vault/cablenet/exports",
-                json={"configuration": _configuration(), "rope_wound_mm": 123.0})
-    assert seen["row"]["rope_path"]["rope_wound_mm"] == 123.0
-
-
-def test_a_failing_configuration_is_still_exported(client, monkeypatch, tmp_path):
-    stages = _demand()["stages"]
-    stages[1]["wire_tensions"] = [90000.0]       # far over any ceiling
-    _plant_demand(monkeypatch, tmp_path, demand=_demand(stages=stages))
-    _into(monkeypatch, tmp_path / "out")
-    seen = _spy_on_export_model(monkeypatch)
-    response = client.post("/api/studies/My Vault/cablenet/exports",
-                           json={"configuration": _configuration()})
-    assert response.status_code == 200, response.text
-    assert seen["row"]["passes"] is False
-
-
-def test_a_refused_configuration_is_a_400_not_a_500(client, monkeypatch, tmp_path):
-    _plant_demand(monkeypatch, tmp_path)
-    _into(monkeypatch, tmp_path / "out")
-    response = client.post(
-        "/api/studies/My Vault/cablenet/exports",
-        json={"configuration": _configuration(motor="no-such-motor")})
-    assert response.status_code == 400
-    assert "cannot be built" in response.json()["detail"]
-
-
-def test_a_study_with_no_demand_document_cannot_export(client):
-    response = client.post("/api/studies/nothing-here/cablenet/exports",
-                           json={"configuration": _configuration()})
-    assert response.status_code == 404
-    assert ("Upload the export, then press Run cable net analysis in the Cable net "
-            "section and the engine will write one.") in response.json()["detail"]
-
-
-def test_an_unwritable_folder_is_reported_and_not_swallowed(client, monkeypatch, tmp_path):
-    _plant_demand(monkeypatch, tmp_path)
-    gone = tmp_path / "gone"
-    monkeypatch.setattr(studio_app, "read_settings",
-                        lambda: {"cablenet_exports_folder": str(gone)})
-    # the folder is missing, so the export must say so rather than silently
-    # landing somewhere else, which is what deliver_output would do
-    response = client.post("/api/studies/My Vault/cablenet/exports",
-                           json={"configuration": _configuration()})
-    assert response.status_code != 200
-    assert str(gone) in response.json()["detail"]
-    assert not gone.exists()
-
-
-def test_an_os_error_while_writing_names_the_folder_and_the_reason(
-        client, monkeypatch, tmp_path):
-    _plant_demand(monkeypatch, tmp_path)
-    folder = tmp_path / "out"
-    _into(monkeypatch, folder)
-
-    def refuse(*args, **kwargs):
-        raise PermissionError(13, "Access is denied")
-
-    monkeypatch.setattr(exports, "write_diagram", refuse)
-    response = client.post("/api/studies/My Vault/cablenet/exports",
-                           json={"configuration": _configuration()})
-    assert response.status_code != 200
-    detail = response.json()["detail"]
-    assert str(folder) in detail and "Access is denied" in detail
-
-
-def test_each_kind_can_be_downloaded_after_a_run(client, monkeypatch, tmp_path):
-    _plant_demand(monkeypatch, tmp_path)
-    _into(monkeypatch, tmp_path / "out")
-    client.post("/api/studies/My Vault/cablenet/exports",
-                json={"configuration": _configuration()})
-    for kind, suffix in (("spreadsheet", ".xlsx"), ("diagram", ".svg"),
-                         ("datasheet", ".md")):
-        response = client.get("/api/studies/My Vault/cablenet/exports/" + kind)
-        assert response.status_code == 200, kind
-        assert suffix in response.headers["content-disposition"]
-    assert client.get("/api/studies/My Vault/cablenet/exports/other").status_code == 400
-
-
-def test_a_csv_fallback_is_served_as_one_zip(client, monkeypatch, tmp_path):
-    import io
-    import zipfile
-    monkeypatch.setattr(exports, "_openpyxl", None)
-    _plant_demand(monkeypatch, tmp_path)
-    _into(monkeypatch, tmp_path / "out")
-    posted = client.post("/api/studies/My Vault/cablenet/exports",
-                         json={"configuration": _configuration()}).json()
-    assert posted["note"]
-    response = client.get("/api/studies/My Vault/cablenet/exports/spreadsheet")
-    assert response.status_code == 200
-    names = zipfile.ZipFile(io.BytesIO(response.content)).namelist()
-    assert len(names) == len(exports.SHEETS) and all(n.endswith(".csv") for n in names)
-
-
-def test_downloading_before_any_run_is_a_404(client, monkeypatch, tmp_path):
-    _into(monkeypatch, tmp_path / "out")
-    response = client.get("/api/studies/My Vault/cablenet/exports/diagram")
-    assert response.status_code == 404
-
-
-# ---------------------------------------------------------------------------
-# The shape verdict has three states. Nothing to judge is NOT a pass.
-# ---------------------------------------------------------------------------
 
 def _degenerate_demands():
     no_stages = _demand(stages=[])
@@ -961,20 +751,6 @@ def test_the_diagram_says_not_established_and_never_that_it_holds():
     assert "does not hold" in failing and "not established" not in failing
 
 
-def test_the_panel_and_the_documents_agree_on_what_is_unknown():
-    import re
-    js = (Path(__file__).resolve().parents[2] / "bench" / "studio" / "static"
-          / "cablenet_model.js").read_text(encoding="utf-8")
-    for demand in _degenerate_demands().values():
-        why = _model(demand=demand)["verdict"]["shape"]["why_unknown"]
-        assert why in js          # the panel carries the documents' wording
-    assert re.search(r"acceptance === null", js)
-
-
-# ---------------------------------------------------------------------------
-# Review fixes: one truth test for `reachable`, one rounding for lengths
-# ---------------------------------------------------------------------------
-
 @pytest.mark.parametrize("missing", ["absent", "null"])
 def test_a_stage_with_no_reachable_is_told_the_same_way_everywhere(
         tmp_path, monkeypatch, missing):
@@ -1005,13 +781,6 @@ def test_a_stage_that_is_false_is_unreachable_in_every_document():
     rows = exports._sheet_rows(model)["Stages"]
     assert {r[1]: r[5] for r in rows if len(r) == 7}["S7"] == "no"
     assert "does not hold" in exports.diagram_svg(model)
-
-
-def test_the_panel_tests_reachable_against_false_only():
-    js = (Path(__file__).resolve().parents[2] / "bench" / "studio" / "static"
-          / "cablenet_model.js").read_text(encoding="utf-8")
-    assert "stage.reachable === false" in js
-    assert "stage.reachable ===" not in js.replace("stage.reachable === false", "")
 
 
 def test_workbook_lengths_use_the_data_sheets_rounding(tmp_path, monkeypatch):
@@ -1100,73 +869,6 @@ def test_an_unnamed_analysed_rope_is_found_by_its_stiffness():
     assert model["rope_mismatch"]["analysed_rope"] == "rope-4mm"
 
 
-def test_the_route_exports_a_different_rope_and_says_so(client, monkeypatch, tmp_path):
-    _plant_demand(monkeypatch, tmp_path)
-    folder = tmp_path / "out"
-    _into(monkeypatch, folder)
-    response = client.post("/api/studies/My Vault/cablenet/exports",
-                           json={"configuration": _configuration(rope="rope-8mm")})
-    assert response.status_code == 200, response.text
-    md = next(Path(p) for p in response.json()["paths"]
-              if p.endswith(".md")).read_text(encoding="utf-8")
-    assert "not the rope that was analysed" in md
-
-
-# ---------------------------------------------------------------------------
-# The panel writes a force the way the documents do
-# ---------------------------------------------------------------------------
-
-# newtons() lives in the model, where the panel's sentences are made; the
-# controller beside it writes the rest and is held to the same rule.
-_CABLENET_JS = (Path(__file__).resolve().parents[2] / "bench" / "studio"
-                / "static" / "cablenet_model.js")
-_CABLENET_CONTROLLER_JS = _CABLENET_JS.with_name("cablenet.js")
-
-
-def test_the_panel_never_rounds_a_force_to_whole_newtons():
-    import re
-    model = _CABLENET_JS.read_text(encoding="utf-8")
-    controller = _CABLENET_CONTROLLER_JS.read_text(encoding="utf-8")
-    # a number followed by " N" must come out of newtons(), not toFixed
-    for js in (model, controller):
-        assert not re.search(r"toFixed\(\d\)\}? N\b", js)
-    # the calls, across both files (not the definition, nor kilonewtons)
-    assert len(re.findall(r"(?<![A-Za-z])(?<!function )newtons\(", model + controller)) >= 4
-
-
-def test_the_panels_formatter_renders_what_exports_newtons_renders():
-    import json
-    import re
-    import shutil
-    import subprocess
-    node = shutil.which("node")
-    if node is None:
-        pytest.skip("needs node")
-    js = _CABLENET_JS.read_text(encoding="utf-8")
-    source = re.search(r"function newtons\(value\) \{.*?\n\}", js, re.S).group(0)
-    values = [1471.0, 1471, 1470.96, 1470.94, 1500, 1471.4, 0, 450000, 0.04, None]
-    out = subprocess.run(
-        [node, "-e", source + "console.log(JSON.stringify({}.map(newtons)))".format(
-            json.dumps(values))],
-        capture_output=True, text=True, check=True).stdout
-    assert json.loads(out) == [exports._newtons(v) for v in values]
-    # the case that made this more than cosmetic: a fractional ceiling just
-    # under the floor must not read as "1471 N against 1471 N"
-    assert exports._newtons(1470.94) != exports._newtons(1471.0)
-
-
-def test_with_eye_m20_chosen_no_rung_drops_to_a_weaker_eye_bolt(
-        client, monkeypatch, tmp_path):
-    _plant_demand(monkeypatch, tmp_path)
-    _into(monkeypatch, tmp_path / "out")
-    seen = _spy_on_export_model(monkeypatch)
-    chosen = _configuration(chain=["eye-M20", "turnbuckle-eye-eye-M10"])
-    response = client.post("/api/studies/My Vault/cablenet/exports",
-                           json={"configuration": chosen})
-    assert response.status_code == 200, response.text
-    assert all(r["configuration"]["chain"][0] == "eye-M20" for r in seen["ladder"])
-
-
 def test_exactly_one_ladder_row_is_the_chosen_set_even_if_a_rung_equals_it():
     import catalogue
     parts = catalogue.load_parts()
@@ -1181,31 +883,6 @@ def test_exactly_one_ladder_row_is_the_chosen_set_even_if_a_rung_equals_it():
     assert [r["label"] for r in model["ladder"]].count("Chosen") == 1
     assert len(model["ladder"]) == 2
 
-
-def test_a_folder_that_cannot_be_listed_is_a_400_naming_it_not_a_500(
-        client, monkeypatch, tmp_path):
-    _plant_demand(monkeypatch, tmp_path)
-    folder = tmp_path / "out"
-    _into(monkeypatch, folder)
-    real = Path.iterdir
-
-    def refuse(self):
-        if self == folder:
-            raise PermissionError(13, "Access is denied")
-        return real(self)
-
-    monkeypatch.setattr(Path, "iterdir", refuse)
-    response = client.post("/api/studies/My Vault/cablenet/exports",
-                           json={"configuration": _configuration()})
-    assert response.status_code == 400, response.text
-    assert str(folder) in response.json()["detail"]
-    assert "Access is denied" in response.json()["detail"]
-
-
-# ---------------------------------------------------------------------------
-# The weight, the columns, the sag and the grab: one model, said the same way
-# in all three documents
-# ---------------------------------------------------------------------------
 
 def _v2_demand(**kwargs):
     demand = _demand()
@@ -1812,33 +1489,6 @@ def test_a_column_with_no_force_in_it_leaves_its_cells_blank():
 
 # ---------------------------------------------------------------------------
 # The route: one request, three documents, one sentence
-# ---------------------------------------------------------------------------
-
-def test_the_route_writes_the_weight_and_the_grab_into_all_three(client, monkeypatch, tmp_path):
-    _plant_demand(monkeypatch, tmp_path, demand=_v2_demand())
-    folder = tmp_path / "out"
-    _into(monkeypatch, folder)
-    response = client.post("/api/studies/My Vault/cablenet/exports",
-                           json={"configuration": _configuration()})
-    assert response.status_code == 200, response.text
-    written = [Path(p) for p in response.json()["paths"]]
-    md = next(p for p in written if p.suffix == ".md").read_text(encoding="utf-8")
-    svg = next(p for p in written if p.suffix == ".svg").read_text(encoding="utf-8")
-    weight = "Carries 1.6 times the 12.0 kN skin before turnbuckle-hook-hook-M10 binds."
-    grab = "Grab 2 nodes (2 batches of 1) to bring the net inside the 2.18 mm line"
-    assert weight in md and weight in svg
-    assert grab in md
-    assert "## Can it hold the weight" in md and "## Where to grab the net" in md
-    if exports._openpyxl is not None:
-        import openpyxl
-        book = openpyxl.load_workbook(next(p for p in written if p.suffix == ".xlsx"))
-        assert book.sheetnames[-1] == "Hold"
-        hold = [[c.value for c in row] for row in book["Hold"].iter_rows()]
-        assert hold[1][0] == weight and hold[2][0].startswith(grab)
-
-
-# ---------------------------------------------------------------------------
-# A held set that is not there is not an empty one
 # ---------------------------------------------------------------------------
 
 def test_a_missing_held_set_is_not_read_as_an_empty_one():
@@ -2482,52 +2132,3 @@ def test_prices_are_pounds_without_vat_whatever_the_supplier_quoted():
     assert rows[0][5] == "Unit price, GBP exc VAT"
     motor = next(row for row in rows if row[1] == "ES-MH342200")
     assert motor[5] == pytest.approx(150.46, abs=0.01)
-
-
-def test_the_route_names_a_hand_built_machine_and_says_why_it_has_no_cabinet(
-        client, monkeypatch, tmp_path):
-    _plant_demand(monkeypatch, tmp_path)
-    _into(monkeypatch, tmp_path / "out")
-    seen = _spy_on_export_model(monkeypatch)
-    response = client.post("/api/studies/My Vault/cablenet/exports",
-                           json={"configuration": _configuration()})
-    assert response.status_code == 200, response.text
-    assert seen["machine"].startswith(_configuration()["motor"] + " on ")
-    assert seen["cabinets"] is None
-    assert seen["cabinets_note"] == "mechanism: none for this study"
-
-
-def test_the_drum_and_rail_checks_are_hard_in_the_exported_row(client, monkeypatch, tmp_path):
-    # a second layer on the drum, or a carriage past its stroke, is a machine
-    # that cannot be built as drawn, so the row does not pass
-    _plant_demand(monkeypatch, tmp_path)
-    _into(monkeypatch, tmp_path / "out")
-    seen = _spy_on_export_model(monkeypatch)
-    for wound, fits in ((250.0, True), (9000.0, False)):
-        response = client.post("/api/studies/My Vault/cablenet/exports",
-                               json={"configuration": _configuration(), "rope_wound_mm": wound})
-        assert response.status_code == 200, response.text
-        path = seen["row"]["rope_path"]
-        assert path["drum_fits"] is fits, wound
-        assert seen["row"]["passes"] is fits, wound
-
-
-def test_a_ladder_rung_the_chosen_pulley_does_not_take_is_refused(client, monkeypatch, tmp_path):
-    _plant_demand(monkeypatch, tmp_path)
-    _into(monkeypatch, tmp_path / "out")
-    seen = _spy_on_export_model(monkeypatch)
-    configuration = _configuration(sheave="Pfaff-DSRB-90-4", reeve_factor=2,
-                                   groove_pitch_mm=4.4)
-    response = client.post("/api/studies/My Vault/cablenet/exports",
-                           json={"configuration": configuration})
-    assert response.status_code == 200, response.text
-    by_rope = {rung["configuration"]["rope"]: rung for rung in seen["ladder"][1:]}
-    assert by_rope["rope-4mm"]["refused"] is None
-    assert by_rope["rope-5mm"]["refused"] == "Pfaff DSRB 90/4: 3 to 4 mm wire, not 5 mm"
-    assert by_rope["rope-8mm"]["refused"] == "Pfaff DSRB 90/4: 3 to 4 mm wire, not 8 mm"
-    # without pulleys a heavier rung is scored, on a drum grooved for its own wire
-    plain = _configuration(groove_pitch_mm=4.4)
-    client.post("/api/studies/My Vault/cablenet/exports", json={"configuration": plain})
-    heavy = next(rung for rung in seen["ladder"] if rung["configuration"]["rope"] == "rope-8mm")
-    assert heavy["refused"] is None
-    assert heavy["configuration"]["groove_pitch_mm"] == pytest.approx(8.8)

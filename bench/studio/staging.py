@@ -388,7 +388,7 @@ def cut_and_plan(export_pair: Dict[str, Path], pattern: str, size: float,
     """Make the study's one cut and the stage plan that comes of it.
 
     This sequence is defined here and nowhere else. run_staging solves every
-    stage of the plan it returns, and the cable net run hands the engine a plan
+    stage of the plan it returns, and the formwork run hands its engine a plan
     from the same call, so the two can never be given different cuts. A stage
     plan that names cells the pieces do not have is the kind of mismatch that
     only shows up as a crash mid animation, and a second copy of these lines is
@@ -439,8 +439,6 @@ def run_staging(
     include_cra: bool = False,
     source: Optional[str] = None,
     density: Optional[float] = None,
-    include_cablenet: bool = False,
-    cablenet_options: Optional[dict] = None,
 ) -> Dict:
     """Orchestrate per-stage solves and bookkeeping.
 
@@ -465,7 +463,7 @@ def run_staging(
             )
         )
     # The cut and its stage plan come from cut_and_plan, the one place that makes
-    # them: the cable net run is handed a plan from the same function, and a
+    # them: the formwork run is handed a plan from the same function, and a
     # second copy of the sequence would be a second cut.
     cut = cut_and_plan(export_pair, pattern, size, source)
     contract, arrays, tess, binding, plan = (
@@ -654,16 +652,6 @@ def run_staging(
         "cra_mu": FRICTION[material] if include_cra else None,
         "cra_skipped": skipped,
     }
-    if include_cablenet:
-        # imported here, not at module scope: staging must stay importable
-        # without the solver stack, and the guard test holds it to that.
-        import cablenet
-
-        options = dict(cablenet_options or {})
-        document["cablenet"] = cablenet.run_cablenet(
-            contract=contract, arrays=arrays, plan=plan, thickness=thickness,
-            density=density, out_path=options.pop("out_path"), **options
-        )
 
     out_path = Path(out_path)
     out_path.parent.mkdir(parents=True, exist_ok=True)

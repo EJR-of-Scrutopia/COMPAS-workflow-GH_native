@@ -1,8 +1,9 @@
-// The Formwork tab on screen (spec 2026-10-10 formwork tab, section 12):
-// drives a studio in headless Chromium and photographs the tab at a raise
-// capture, a finish capture, the hold and a tiling quarter; each Colour by;
-// each show tick alone; the labels; the card; each worst table and a row's
-// fly-to. Writes the pictures and a report of what each one carries.
+// The one Cable net tab on screen (spec 2026-10-11 one Cable net tab,
+// section 10): drives a studio in headless Chromium and photographs the tab
+// at a raise capture, a finish capture, the hold, the jacking and a tiling
+// quarter; each Colour by; each Show chip alone; the values; Compare;
+// Weakest; the skin at nought and at half; the mechanism pop-up; the card.
+// Writes the pictures and a report of what each one carries.
 // Needs puppeteer-core next to studio_probe.mjs (bench/scripts/probe-env).
 // Run against a studio on a spare port, never Param's 8600:
 //   cd bench/studio && ../../.venv/Scripts/python.exe serve.py --port 8601
@@ -25,14 +26,13 @@ const STUDIO_URL = process.env.STUDIO_URL || "http://127.0.0.1:8601";
 const BROWSER_EXE = process.env.BROWSER_EXE || path.join(process.env.LOCALAPPDATA || "",
   "ms-playwright", "chromium-1237", "chrome-win64", "chrome.exe");
 const OUT = process.env.SCREENS_OUT ||
-  path.join(REPO_ROOT, ".superpowers", "sdd", "2026-10-10-formwork-tab", "screens");
+  path.join(REPO_ROOT, ".superpowers", "sdd", "2026-10-11-one-cable-net-tab", "screens");
 const STUDY = process.env.STUDY || "5 sided form";
 const CUT = JSON.parse(process.env.CUT ||
   '{"material": "tile", "pattern": "bonded-courses", "source": "authored", "size": 1.0, "thickness": 0.02}');
 const RUN = process.env.RUN === "1";
-const TICKS = ["net", "trees", "heads", "wires", "anchors", "ground", "skin", "design", "holds"];
-const COLOURS = ["tension", "deviation", "utilisation", "wire", "off"];
-const PARTS = ["ropes", "wires", "trees", "nodes", "machines"];
+const TICKS = ["net", "trees", "heads", "wires", "anchors", "ground", "holds"];
+const COLOURS = ["wire", "tension", "deviation", "utilisation", "off"];
 
 mkdirSync(OUT, { recursive: true });
 const report = { study: STUDY, cut: CUT, shots: [], errors: [], requests: [] };
@@ -94,17 +94,18 @@ async function shot(page, name) {
       .filter((el) => el.style.display !== "none");
     const legend = document.getElementById("legend");
     const card = document.getElementById("formwork-pick");
-    const popup = document.getElementById("formwork-popup");
+    const popup = document.getElementById("mechanism-popup");
     const group = window.__studio.formworkView.group;
     return {
-      label: text("formwork-label"), line: text("formwork-line"), machine: text("formwork-machine"),
+      label: text("formwork-label"), line: text("formwork-line"), answer: text("formwork-answer"),
+      mechanism: text("formwork-mechanism-name"),
       warnings: text("formwork-warnings"), status: text("formwork-run-status"),
       labels: labels.length, someLabels: labels.slice(0, 5).map((el) => el.textContent),
       legend: visible(legend) ? legend.innerText.replace(/\s+/g, " ").trim() : "",
       card: visible(card) ? card.innerText.replace(/\s+/g, " ").trim() : "",
       popup: visible(popup) ? popup.innerText.replace(/\s+/g, " ").trim().slice(0, 300) : "",
       drawn: group.visible ? group.children.filter((c) => c.visible).map((c) => c.type) : [],
-      paragraphs: document.querySelectorAll("#formwork-section p, #formwork-popup p").length,
+      paragraphs: document.querySelectorAll("#formwork-section p, #mechanism-popup p").length,
     };
   });
   seen.settled = settled;
@@ -137,13 +138,20 @@ async function setColour(page, value) {
   }, value);
 }
 
-async function setLabels(page, on) {
+async function setValues(page, on) {
   await page.evaluate((wanted) => {
-    for (const box of document.querySelectorAll("#formwork-label-ticks input[data-label]")) {
-      box.checked = wanted.includes(box.dataset.label);
-    }
-    document.getElementById("formwork-label-ticks").dispatchEvent(new Event("change", { bubbles: true }));
+    const box = document.getElementById("formwork-values");
+    box.checked = wanted;
+    box.dispatchEvent(new Event("change", { bubbles: true }));
   }, on);
+}
+
+async function setSkin(page, value) {
+  await page.evaluate((v) => {
+    const slider = document.getElementById("formwork-skin");
+    slider.value = String(v);
+    slider.dispatchEvent(new Event("input", { bubbles: true }));
+  }, value);
 }
 
 const browser = await puppeteer.launch({
@@ -176,9 +184,9 @@ try {
   });
   await page.evaluate((study, cut) => window.__studio.applyScene({ study, state: { cut } }), STUDY, CUT);
   note("scene applied");
-  // the formwork run takes the cable net run's design prestress
-  if (!await waitFor(page, () => !!window.__studio.state.cablenet, 180000)) {
-    report.errors.push("no cable net demand for this cut");
+  // the study's bundle first: the view is framed from its mesh
+  if (!await waitFor(page, () => !!window.__studio.state.bundle, 180000)) {
+    report.errors.push("the study's bundle did not load");
   }
   // The net in clear view: the study's props put away, the camera three
   // quarters on to the net from its own extent.
@@ -204,10 +212,10 @@ try {
 
   await clickOn(page, '#tab-rail button[data-section="formwork-section"]');
   await waitFor(page, () => !!document.getElementById("formwork-line").innerHTML
-    || /No formwork run/.test(document.getElementById("formwork-warnings").innerText), 180000);
+    || /No run yet/.test(document.getElementById("formwork-warnings").innerText), 180000);
   await shot(page, "01-tab");
   const stale = await page.evaluate(() =>
-    /No formwork run|Run again/.test(document.getElementById("formwork-warnings").innerText));
+    /No run yet|Run again/.test(document.getElementById("formwork-warnings").innerText));
   if (RUN || stale) {
     const before = Date.now();
     await clickOn(page, "#formwork-run");
@@ -222,9 +230,27 @@ try {
     note("run " + JSON.stringify(report.run));
     await shot(page, "02-after-run");
   }
+  // HOLDS=N: the rods a side moved to N, and the run from the hold waited for
+  if (process.env.HOLDS != null) {
+    const before = Date.now();
+    await page.evaluate((n) => {
+      const slider = document.getElementById("formwork-holds");
+      slider.value = String(n);
+      slider.dispatchEvent(new Event("input", { bubbles: true }));
+      slider.dispatchEvent(new Event("change", { bubbles: true }));
+    }, Number(process.env.HOLDS));
+    await waitFor(page, () => /running|capture/.test(
+      document.getElementById("formwork-run-status").textContent), 30000);
+    const done = await waitFor(page, () => !document.getElementById("formwork-run").disabled
+      && !/Run again/.test(document.getElementById("formwork-warnings").innerText)
+      && !document.getElementById("formwork-run-status").textContent, 1800000);
+    report.holdsRun = { seconds: Math.round((Date.now() - before) / 1000), done };
+    note("holds run " + JSON.stringify(report.holdsRun));
+  }
   report.holds = await page.evaluate(() => {
-    const el = document.getElementById("formwork-holds");
-    return el ? el.innerText : null;
+    const row = [...document.querySelectorAll("#formwork-answer tr")]
+      .find((tr) => tr.querySelector("th") && tr.querySelector("th").textContent === "Holds");
+    return row ? row.innerText.replace(/\s+/g, " ").trim() : null;
   });
   note("holds " + JSON.stringify(report.holds));
 
@@ -268,23 +294,42 @@ try {
   }
   await setTicks(page, TICKS);
 
-  // the labels at the hold, where the heads push
+  // the values at the hold, then none
   await toCapture(page, moments[2][1]);
-  await setLabels(page, ["rope", "deviation", "contact"]);
-  await shot(page, String(n++).padStart(2, "0") + "-labels");
-  await setLabels(page, ["deviation"]);
+  await setValues(page, true);
+  await shot(page, String(n++).padStart(2, "0") + "-values");
+  await setValues(page, false);
+  await shot(page, String(n++).padStart(2, "0") + "-values-off");
+  await setValues(page, true);
 
-  // the worst tables, then the worst node's row: the player goes to its
-  // capture and the camera onto it, and a click there opens its card
-  await clickOn(page, "#formwork-worst-toggle");
-  for (const part of PARTS) {
-    await clickOn(page, `#formwork-tabs button[data-fw-tab="${part}"]`);
-    await shot(page, String(n++).padStart(2, "0") + "-worst-" + part);
+  // Compare and Weakest at the end of the tiling, each alone
+  await toCapture(page, captures.length - 1);
+  await clickOn(page, "#formwork-compare");
+  await shot(page, String(n++).padStart(2, "0") + "-compare");
+  await clickOn(page, "#formwork-compare");
+  await clickOn(page, "#formwork-weakest");
+  await shot(page, String(n++).padStart(2, "0") + "-weakest");
+  await clickOn(page, "#formwork-weakest");
+
+  // the skin hidden, then half opaque
+  for (const value of [0, 50]) {
+    await setSkin(page, value);
+    await shot(page, String(n++).padStart(2, "0") + "-skin-" + value);
   }
-  await clickOn(page, '#formwork-tabs button[data-fw-tab="nodes"]');
-  await clickOn(page, "#formwork-worst tr[data-capture]");
-  await shot(page, String(n++).padStart(2, "0") + "-fly-to");
-  await clickOn(page, "#formwork-popup-close");
+  await setSkin(page, 30);
+
+  // the mechanism pop-up, its Cost and its Graphs
+  await clickOn(page, "#mechanism-toggle");
+  await shot(page, String(n++).padStart(2, "0") + "-mechanism");
+  await clickOn(page, '#mechanism-tabs button[data-mech-tab="mech-cost"]');
+  await waitFor(page, () => !!document.getElementById("cost-body").innerHTML, 30000);
+  await shot(page, String(n++).padStart(2, "0") + "-cost");
+  await clickOn(page, '#mechanism-tabs button[data-mech-tab="mech-graphs"]');
+  await shot(page, String(n++).padStart(2, "0") + "-graphs");
+  await clickOn(page, '#mechanism-tabs button[data-mech-tab="mech-choose"]');
+  await clickOn(page, "#mechanism-popup-close");
+
+  // a click on the view opens the card of the node there
   const centre = await page.evaluate(() => {
     const rect = document.getElementById("view").getBoundingClientRect();
     return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
@@ -295,7 +340,7 @@ try {
   await page.mouse.move(1450, 760);
 
   // and leaving gives the studio back
-  await clickOn(page, '#tab-rail button[data-section="cablenet-section"]');
+  await clickOn(page, '#tab-rail button[data-section="animation-section"]');
   await shot(page, String(n++).padStart(2, "0") + "-left");
 } finally {
   writeFileSync(path.join(OUT, "report.json"), JSON.stringify(report, null, 2));

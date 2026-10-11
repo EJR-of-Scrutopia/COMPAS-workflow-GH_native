@@ -256,25 +256,25 @@ body { overflow: hidden;
 #panel #props-row button, #panel #props-row select,
 #panel #mode-row .mode, #panel #day-cycle-row button {
   width: auto; margin: 0; }
-#layer-toggles, #cablenet-lenses {
+#layer-toggles {
   display: flex; flex-direction: column; gap: var(--s1); }
-#layer-toggles .layer-btn, #cablenet-lenses .layer-btn {
+#layer-toggles .layer-btn {
   text-align: left; margin: 0; }
-#layer-toggles .layer-btn.active, #cablenet-lenses .layer-btn.active {
+#layer-toggles .layer-btn.active.active {
   background: var(--accent-bg);
   color: var(--accent-ink); border-color: var(--accent); }
 /* A lens's own dial sits directly under its button, indented, and only
    while the lens is on. The Cable net section's lens list wears the same
    rules, so its lenses read as the Analysis lenses do. */
-#layer-toggles .layer-slider, #cablenet-lenses .layer-slider {
+#layer-toggles .layer-slider {
   display: flex; gap: var(--s2);
   align-items: center; margin: 0 0 var(--s1) var(--s3);
   color: var(--ink-2); font-size: var(--t-2); }
-#layer-toggles .layer-slider input, #cablenet-lenses .layer-slider input {
+#layer-toggles .layer-slider input input {
   flex: 1; width: auto; }
-#layer-toggles .layer-slider.hidden, #cablenet-lenses .layer-slider.hidden {
+#layer-toggles .layer-slider.hidden.hidden {
   display: none; }
-#layer-toggles .layer-note, #cablenet-section .layer-note {
+#layer-toggles .layer-note {
   margin: 0 0 var(--s1) var(--s3);
   color: var(--ink-3); font-size: var(--t-meta); line-height: 1.4; }
 #overlays-tuck { display: flex; gap: var(--s2); align-items: center;
@@ -319,6 +319,16 @@ body.panel-collapsed #legend { right: var(--s4); }
   background: linear-gradient(to right, #f2efe8, #cc2211);
 }
 #legend-labels { display: flex; justify-content: space-between; }
+/* The one Cable net tab's key (spec 2026-10-11 section 5.1): the full ramp
+   from nought to the run's largest, its limit marked at its place and named. */
+#legend.ramp #legend-bar { position: relative;
+  background: linear-gradient(to right, #3a6fc4, #3fa6a0, #e8c547, #cc2211); }
+#legend-limit { position: absolute; top: -3px; bottom: -3px; width: 2px; margin-left: -1px;
+  background: var(--ink); }
+#legend-limit.hidden, #legend:not(.ramp) #legend-limit,
+#legend:not(.ramp) #legend-limit-text { display: none; }
+#legend-limit-text { color: var(--ink-2); font-size: 11px; }
+#legend-limit-text:empty { display: none; }
 /* A banded lens keys its bands, not a ramp (Prestress, Reel). */
 #legend-bands { display: none; gap: 2px; }
 #legend.bands #legend-bar { display: none; }
@@ -1603,14 +1613,8 @@ body.stilling #fixture-panel { display: none; }
   line-height: 1.5; margin: var(--s2) 0; }
 #panel .cablenet-readout b { color: var(--ink); }
 #panel .cablenet-readout:empty { display: none; }
-#panel #cablenet-run-status { color: var(--ink-2); min-height: 1.2em; }
 /* The walk: grabbed nodes along the bottom, worst sag up the side, the
    acceptance line dashed in the one red. Inline SVG, no library. */
-#panel .cablenet-curve { display: block; width: 100%; height: 72px; margin: var(--s1) 0; }
-#panel .cablenet-curve .walk { fill: none; stroke: var(--accent); stroke-width: 1.5; }
-#panel .cablenet-curve .line { stroke: var(--danger); stroke-width: 1; stroke-dasharray: 3 3; }
-#panel .cablenet-curve .axis { stroke: var(--line); stroke-width: 1; }
-#panel .cablenet-curve text { fill: var(--ink-3); font-size: 9px; }
 
 /* The Cable net tab (spec 2026-10-09 Cable net display). The menu's answers,
    one-line warnings, and the pop-up on the left in the data sheet's place and
@@ -1622,70 +1626,9 @@ body.stilling #fixture-panel { display: none; }
 #panel .cablenet-answers td { color: var(--ink); }
 .cablenet-warning { color: #d6bd7f; font-size: var(--t-2); margin: var(--s1) 0; }
 :root[data-theme="light"] .cablenet-warning { color: #7a5f18; }
-#panel #cablenet-popup-toggle.active { background: var(--accent-bg); color: var(--accent-ink);
-  border-color: var(--accent); }
-#cablenet-popup { position: fixed; left: 16px; top: 58px; width: 440px; max-height: 80vh;
-  overflow: auto; background: var(--scrim); -webkit-backdrop-filter: blur(10px);
-  backdrop-filter: blur(10px); padding: var(--s4); border: 1px solid var(--line);
-  border-radius: var(--radius); z-index: 20; color: var(--ink-2); font-size: var(--t-2); }
-#cablenet-popup.hidden { display: none; }
-#cablenet-popup-head { display: flex; justify-content: space-between; align-items: center;
-  gap: var(--s2); margin-bottom: var(--s3); }
-#cablenet-tabs { display: flex; gap: var(--s1); }
-#cablenet-popup button { height: var(--h-small); padding: 0 var(--s2); background: var(--raised);
-  color: var(--ink); border: 1px solid var(--line); border-radius: var(--radius);
-  font: inherit; font-size: var(--t-2); cursor: pointer; }
-#cablenet-popup button:hover { border-color: var(--line-lit); }
-#cablenet-tabs button { padding: 4px 14px; }
-#cablenet-tabs button.active { background: var(--accent-bg); color: var(--accent-ink);
-  border-color: var(--accent); }
-#cablenet-popup .cn-tab.hidden { display: none; }
-#cablenet-popup .named { display: grid; grid-template-columns: 80px 1fr; gap: 8px;
-  align-items: center; margin-bottom: var(--s1); }
-#cablenet-popup select { width: 100%; height: var(--h-small); background: var(--raised);
-  color: var(--ink); border: 1px solid var(--line); border-radius: var(--radius);
-  font: inherit; font-size: var(--t-2); }
-#cablenet-popup .cablenet-readout { margin: var(--s2) 0; }
-#cablenet-popup .cablenet-readout:empty { display: none; }
-#cablenet-popup table { width: 100%; border-collapse: collapse; margin: 0 0 var(--s2); }
-#cablenet-popup th, #cablenet-popup td { text-align: left; padding: 2px 6px 2px 0;
-  border-bottom: 1px solid var(--line); font-weight: 400; }
-#cablenet-popup th { color: var(--ink-3); }
-#cablenet-popup td { color: var(--ink); }
-#cablenet-motors tr[data-motor] { cursor: pointer; }
-#cablenet-motors tr[data-motor]:hover td { background: var(--raised); }
-#cablenet-motors tr.chosen td { background: var(--raised); color: var(--accent-ink); font-weight: 600; }
-.cablenet-graph { margin-bottom: var(--s3); }
-.cablenet-graph-title { color: var(--ink-3); font-size: var(--t-meta); }
-#cablenet-popup .cablenet-graph-svg, #cablenet-popup .cablenet-curve { display: block;
-  width: 100%; height: 72px; margin: var(--s1) 0; }
-#cablenet-popup .cablenet-graph-svg .series, #cablenet-popup .cablenet-curve .walk {
-  fill: none; stroke: var(--accent); stroke-width: 1.5; }
-#cablenet-popup .cablenet-graph-svg .line, #cablenet-popup .cablenet-curve .line {
-  stroke: var(--danger); stroke-width: 1; stroke-dasharray: 3 3; }
-#cablenet-popup .cablenet-graph-svg .axis, #cablenet-popup .cablenet-curve .axis {
-  stroke: var(--line); stroke-width: 1; }
-#cablenet-popup .cablenet-graph-svg text, #cablenet-popup .cablenet-curve text {
-  fill: var(--ink-3); font-size: 9px; }
 
 /* Numbers on the model, and the card a click on a node opens. */
-#model-labels { position: fixed; inset: 0; pointer-events: none; z-index: 14; }
-#model-labels .model-label { position: absolute; transform: translate(-50%, calc(-100% - 6px));
-  padding: 1px 4px; border-radius: 3px; background: var(--scrim-thin); color: var(--ink);
-  font-size: 10px; line-height: 1.3; white-space: nowrap; }
-#model-labels .model-label.within { color: #7fd695; }
-#model-labels .model-label.near, #model-labels .model-label.out { color: #d6bd7f; }
-#model-labels .model-label.over { color: #d68f7f; }
-#model-labels .model-label.in { color: #66aaff; }
-body.stilling #model-labels, body.stilling #cablenet-pick { display: none; }
-#cablenet-pick { position: fixed; z-index: 27; min-width: 180px; padding: var(--s2) var(--s3);
-  background: var(--scrim); -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px);
-  border: 1px solid var(--line); border-radius: var(--radius); font-size: var(--t-2); }
-#cablenet-pick.hidden { display: none; }
-#cablenet-pick table { border-collapse: collapse; }
-#cablenet-pick th { color: var(--ink-3); font-weight: 400; text-align: left; padding: 1px 8px 1px 0; }
-#cablenet-pick td { color: var(--ink); text-align: right; }
-
+body.stilling 
 /* The Formwork tab (spec 2026-10-10 formwork tab): the player, the ticks, the
    worst tables in the Cable net pop-up's place and dress, and the labels and
    the card as the Cable net tab draws them. */
@@ -1693,43 +1636,82 @@ body.stilling #model-labels, body.stilling #cablenet-pick { display: none; }
 #panel #formwork-player { display: flex; align-items: center; gap: var(--s1); margin: var(--s2) 0; }
 #panel #formwork-label { color: var(--ink); font-size: var(--t-2); margin-left: var(--s2);
   white-space: nowrap; }
-#panel .formwork-ticks { display: flex; flex-wrap: wrap; gap: var(--s1) var(--s3);
-  margin: var(--s2) 0; color: var(--ink-2); font-size: var(--t-2); }
-#panel .formwork-ticks > span { width: 100%; color: var(--ink-3); }
-#panel .formwork-ticks label { display: inline-flex; align-items: center; gap: var(--s1);
-  cursor: pointer; }
-#panel #formwork-worst-toggle.active { background: var(--accent-bg); color: var(--accent-ink);
+/* The one Cable net tab (spec 2026-10-11 section 5.5): Show as chips, Compare
+   and Weakest as two buttons that stay lit, Colour by as one segmented bar, the
+   player in the studio's icon tiles. */
+#panel .chips { display: flex; flex-wrap: wrap; gap: var(--s1); margin: var(--s2) 0; }
+#panel .chips > span, #panel .segmented > span { width: 100%; color: var(--ink-3);
+  font-size: var(--t-2); margin-bottom: 2px; }
+#panel .chip { display: inline-flex; align-items: center; margin: 0; cursor: pointer; }
+#panel .chip input, #panel .segmented input { position: absolute; opacity: 0; width: 0; height: 0;
+  margin: 0; }
+#panel .chip span { padding: 2px var(--s2); border: 1px solid var(--line); border-radius: 999px;
+  color: var(--ink-2); font-size: var(--t-2); }
+#panel .chip input:checked + span { background: var(--accent-bg); color: var(--accent-ink);
   border-color: var(--accent); }
+#panel .chip input:focus-visible + span, #panel .segmented input:focus-visible + span {
+  outline: 2px solid var(--accent); }
+#panel .segmented { display: flex; flex-wrap: wrap; margin: var(--s2) 0; }
+#panel .segmented label { flex: 1; margin: 0; cursor: pointer; }
+#panel .segmented label span { display: block; text-align: center; padding: 3px 0;
+  border: 1px solid var(--line); margin-left: -1px; color: var(--ink-2); font-size: var(--t-2); }
+#panel .segmented label:first-of-type span { margin-left: 0;
+  border-radius: var(--radius) 0 0 var(--radius); }
+#panel .segmented label:last-of-type span { border-radius: 0 var(--radius) var(--radius) 0; }
+#panel .segmented input:checked + span { position: relative; background: var(--accent-bg);
+  color: var(--accent-ink); border-color: var(--accent); }
+#panel #formwork-views { display: flex; gap: var(--s2); margin: var(--s2) 0; }
+#panel #formwork-views button { flex: 1; margin: 0; }
+#panel #formwork-views button.active { background: var(--accent-bg); color: var(--accent-ink);
+  border-color: var(--accent); }
+#panel .icon-act { width: 34px; margin: 0; padding: 5px 0; text-align: center; font-size: 13px;
+  line-height: 1.2; }
+#panel .mechanism-line { display: flex; align-items: center; gap: var(--s2); margin: var(--s2) 0; }
+#panel .mechanism-line button { width: auto; margin: 0; }
+#panel #formwork-mechanism-name { color: var(--ink-2); font-size: var(--t-2); }
+#panel #formwork-answer table.stale { opacity: 0.45; }
+/* a figure and its mark stay on one line */
+#panel #formwork-answer td:nth-child(2) { white-space: nowrap; }
+#panel #formwork-answer tr[data-capture] { cursor: pointer; }
 #panel #formwork-record-status { color: var(--ink-2); font-size: var(--t-2); min-height: 1.2em; }
-#formwork-popup { position: fixed; left: 16px; top: 58px; width: 440px; max-height: 80vh;
-  overflow: auto; background: var(--scrim); -webkit-backdrop-filter: blur(10px);
-  backdrop-filter: blur(10px); padding: var(--s4); border: 1px solid var(--line);
-  border-radius: var(--radius); z-index: 20; color: var(--ink-2); font-size: var(--t-2); }
-#formwork-popup.hidden { display: none; }
-#formwork-popup-head { display: flex; justify-content: space-between; align-items: center;
-  gap: var(--s2); margin-bottom: var(--s3); }
-#formwork-tabs { display: flex; flex-wrap: wrap; gap: var(--s1); }
-#formwork-popup button { height: var(--h-small); padding: 0 var(--s2); background: var(--raised);
-  color: var(--ink); border: 1px solid var(--line); border-radius: var(--radius);
-  font: inherit; font-size: var(--t-2); cursor: pointer; }
-#formwork-popup button:hover { border-color: var(--line-lit); }
-#formwork-tabs button.active { background: var(--accent-bg); color: var(--accent-ink);
+/* The one Cable net tab's mechanism pop-up (spec 2026-10-11 section 8.1), on
+   the left as the other pop-ups are. */
+#mechanism-popup { position: fixed; left: 16px; top: 58px; width: 520px; max-height: 80vh;
+  overflow: auto; z-index: 27; padding: var(--s2) var(--s3); background: var(--scrim);
+  border: 1px solid var(--line); border-radius: var(--radius);
+  -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px); }
+#mechanism-popup.hidden { display: none; }
+#mechanism-popup-head { display: flex; justify-content: space-between; align-items: center;
+  margin-bottom: var(--s2); }
+#mechanism-tabs { display: flex; gap: var(--s1); }
+#mechanism-popup button { height: var(--h-small); padding: 0 var(--s2); background: var(--raised);
+  border: 1px solid var(--line); border-radius: var(--radius); color: var(--ink); width: auto; }
+#mechanism-tabs button.active { background: var(--accent-bg); color: var(--accent-ink);
   border-color: var(--accent); }
-#formwork-popup table { width: 100%; border-collapse: collapse; margin: 0 0 var(--s2); }
-#formwork-popup th, #formwork-popup td { text-align: left; padding: 2px 6px 2px 0;
-  border-bottom: 1px solid var(--line); font-weight: 400; }
-#formwork-popup th { color: var(--ink-3); cursor: pointer; }
-#formwork-popup th.sorted { color: var(--ink); }
-#formwork-popup td { color: var(--ink); }
-#formwork-popup tr[data-capture] { cursor: pointer; }
-#formwork-popup tr[data-capture]:hover td { background: var(--raised); }
+#mechanism-preset { width: 100%; margin-bottom: var(--s2); }
+#mechanism-popup table { width: 100%; border-collapse: collapse; }
+#mechanism-popup th, #mechanism-popup td { text-align: left; padding: 2px 6px 2px 0;
+  font-size: var(--t-2); }
+#mechanism-popup th { color: var(--ink-3); font-weight: 400; }
+#mechanism-popup .mech-tab.hidden { display: none; }
+#mechanism-popup td:nth-child(2) { white-space: nowrap; }
+#cost-export { margin-top: var(--s2); }
+#mech-cost .folder-line { display: flex; align-items: center; gap: var(--s2); margin-top: var(--s1); }
+#mech-cost .folder-line span { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap; color: var(--ink-3); font-size: var(--t-2); }
+#cost-export-status { font-size: var(--t-2); color: var(--ink-3); margin-top: var(--s1); }
+.run-graph { display: block; margin-bottom: var(--s2); }
+.run-graph .graph-title, .run-graph .graph-scale, .run-graph .graph-limit-text {
+  fill: var(--ink-3); font-size: 11px; }
+.run-graph .graph-axis { stroke: var(--line); }
+.run-graph .graph-limit { stroke: #cc2211; }
+.run-graph .graph-line { stroke: var(--accent); stroke-width: 1.5; }
 #formwork-labels { position: fixed; inset: 0; pointer-events: none; z-index: 14; }
 #formwork-labels .model-label { position: absolute; transform: translate(-50%, calc(-100% - 6px));
   padding: 1px 4px; border-radius: 3px; background: var(--scrim-thin); color: var(--ink);
   font-size: 10px; line-height: 1.3; white-space: nowrap; }
 body.stilling #formwork-labels, body.stilling #formwork-pick { display: none; }
-body.formwork-open #model-labels, body.formwork-open #cablenet-pick { display: none; }
-#formwork-pick { position: fixed; z-index: 27; min-width: 180px; padding: var(--s2) var(--s3);
+body.formwork-open #formwork-pick { position: fixed; z-index: 27; min-width: 180px; padding: var(--s2) var(--s3);
   background: var(--scrim); -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px);
   border: 1px solid var(--line); border-radius: var(--radius); font-size: var(--t-2); }
 #formwork-pick.hidden { display: none; }

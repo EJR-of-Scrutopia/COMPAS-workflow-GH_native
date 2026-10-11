@@ -91,17 +91,6 @@ def test_a_combination_with_an_unpriced_chosen_part_ranks_after_every_priced_one
     assert second["choices"]["motor"] != first["choices"]["motor"]
 
 
-def test_the_run_is_read_from_its_demand_document(parts):
-    ea = parts["rope"]["rope-5mm"]["ea_newtons"]
-    reeved = {"ea_newtons": ea, "wires": [{"reeve_factor": 4}, {"reeve_factor": 4}]}
-    assert machine.run_of(parts, reeved) == {"ea_newtons": ea, "pulleys": True,
-                                             "wires_per_motor": None}
-    straight = {"ea_newtons": ea, "wires": [{"reeve_factor": 1}]}
-    assert machine.run_of(parts, straight)["pulleys"] is False
-    assert machine.run_of(parts, {}) == {"ea_newtons": None, "pulleys": None,
-                                         "wires_per_motor": None}
-
-
 def test_only_what_the_run_recorded_can_differ_from_it(parts):
     built = _built(parts)                        # 4 mm wire, pulleys, two wires a motor
     ea4 = parts["rope"]["rope-4mm"]["ea_newtons"]

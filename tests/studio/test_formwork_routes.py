@@ -10,19 +10,31 @@ pytest.importorskip("fastapi")
 
 from conftest_data import tiny_contract  # noqa: E402
 from test_app import make_client, wait_for  # noqa: E402
-from test_cablenet_routes import _tiny_formwork, _tiny_mechanism  # noqa: E402
+from conftest_data import tiny_formwork, tiny_mechanism  # noqa: E402
 
 # a body that names its prestress, as scripts and these tests do; the tab
-# never sends one, and then the cable net run's is taken (spec 2026-10-10
-# formwork tab, section 6)
+# never sends one: it sends the mechanism, whose one spool's pull the net is
+# cut for (spec 2026-10-11 one Cable net tab, section 4.2)
 RUN = {"material": "concrete", "pattern": "bonded-courses", "size": 0.9, "prestress": 300.0}
+# one wire a motor: the Tiny study's older mechanism document names no
+# machine instances, so its spools cannot share a motor
+MECHANISM = {"motor": "23HS45-4204D-E1000", "ratio": 20, "pulley": "Pfaff-DSRB-90-4",
+             "rope": "rope-4mm", "wires_per_motor": 1}
+
+
+def _machine_document():
+    # the Tiny study's wires on a machine whose spool winds at 33.9 mm
+    document = tiny_mechanism()
+    document["mechanism"]["spoolRadius"] = 0.0339
+    return document
 
 
 def _plant(tmp_path, formwork=True):
     upload = tmp_path / "upload"
-    (upload / "Tiny-mechanism.json").write_text(json.dumps(_tiny_mechanism()), encoding="utf-8")
+    (upload / "Tiny-mechanism.json").write_text(json.dumps(_machine_document()),
+                                                 encoding="utf-8")
     if formwork:
-        (upload / "Tiny-formwork.json").write_text(json.dumps(_tiny_formwork()),
+        (upload / "Tiny-formwork.json").write_text(json.dumps(tiny_formwork()),
                                                    encoding="utf-8")
 
 
@@ -56,26 +68,24 @@ def test_the_formwork_run_writes_the_captures_where_the_studio_reads_them(tmp_pa
     got = client.get("/api/studies/Tiny/formwork/sim", params=RUN)
     assert got.status_code == 200, got.text
     assert got.json()["schema"] == "bench.formwork-sim/1"
+    # never kept by the browser past a rerun: found on screen, a finished run
+    # left the tab drawing the run before it (spec 2026-10-11, section 10)
+    assert got.headers["cache-control"] == "no-cache"
 
 
-def _plant_demand(prestress):
-    import bundle
-    import geometry
-    import staging
+def _have(choices):
+    import catalogue
+    import machine
 
-    pairs = geometry.available_exports(bundle.UPLOAD_DIR)
-    slot = staging.cut_slot(pairs["Tiny"], RUN["pattern"], None)
-    path = bundle.cablenet_path("tiny", RUN["material"], slot.key_pattern, RUN["size"], 0.02,
-                                None)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps({"schema": "bench.cablenet/2", "prestress": prestress}),
-                    encoding="utf-8")
+    parts = catalogue.load_parts()
+    facts = {"winding_radius_mm": 33.9, "reeve_factor": 1, "spools": 7}
+    return machine.have(parts, machine.derive(parts, choices, facts, 10.0), 10.0)
 
 
-def test_the_run_takes_the_cable_net_runs_design_prestress(tmp_path, monkeypatch):
-    # the owner's answer of 2026-10-10: the net is cut for the prestress the
-    # cable net run designed for the chosen machine, and the run's options say
-    # where it came from
+def test_the_run_cuts_the_net_for_one_spools_pull_of_the_mechanism(tmp_path, monkeypatch):
+    # spec 2026-10-11 one Cable net tab, section 4.2: the tab sends the
+    # mechanism; the net is cut for what one spool of it pulls, its rope, wires
+    # a motor and pulleys are the mechanism's, and the run's options say so
     seen = {}
 
     def fake(request, progress=None):
@@ -84,63 +94,135 @@ def test_the_run_takes_the_cable_net_runs_design_prestress(tmp_path, monkeypatch
 
     client, _ = make_client(tmp_path, monkeypatch, formwork_runner=fake)
     _plant(tmp_path)
-    _plant_demand(723.4)
     body = {key: value for key, value in RUN.items() if key != "prestress"}
-    started = client.post("/api/studies/Tiny/formwork/run", json=body)
+    started = client.post("/api/studies/Tiny/formwork/run", json={**body, "mechanism": MECHANISM})
     assert started.status_code == 202, started.text
     assert wait_for(client, started.json()["run"])["state"] == "done"
-    assert seen["prestress"] == 723.4
-    assert seen["options"]["prestress"] == 723.4
-    assert seen["options"]["prestress_from"] == "cable net"
-    # a body that names one keeps it, and says so
+    have = _have(MECHANISM)
+    assert seen["prestress"] == pytest.approx(have["newtons"])
+    assert seen["wires_per_motor"] == 1
+    options = seen["options"]
+    assert options["prestress_from"] == "mechanism" and options["rope"] == "rope-4mm"
+    assert options["mechanism"] == MECHANISM and options["pulleys"] is True
+    assert options["have_newtons"] == pytest.approx(have["newtons"])
+    assert (options["have_limit"], options["have_part"]) == (have["limit"], have["part"])
+    assert options["described"].startswith("23HS45-4204D-E1000 on EG23 20:1")
+    # the rope's working load, the Ropes key's limit: its breaking load over 5
+    import catalogue
+
+    mbl = float(catalogue.load_parts()["rope"]["rope-4mm"]["rope_mbl"])
+    assert options["rope_working_newtons"] == pytest.approx(mbl / catalogue.SAFETY_FACTOR)
+    # a body that names a prestress keeps it, and says so
     seen.clear()
-    started = client.post("/api/studies/Tiny/formwork/run", json=RUN)
+    started = client.post("/api/studies/Tiny/formwork/run", json={**RUN, "mechanism": MECHANISM})
     assert wait_for(client, started.json()["run"])["state"] == "done"
     assert seen["prestress"] == 300.0 and seen["options"]["prestress_from"] == "request"
 
 
-def test_with_no_cable_net_run_the_formwork_run_is_refused_in_one_line(tmp_path, monkeypatch):
+def test_with_no_mechanism_the_run_is_refused_in_one_line(tmp_path, monkeypatch):
     client, _ = make_client(tmp_path, monkeypatch, formwork_runner=_idle)
     _plant(tmp_path)
     body = {key: value for key, value in RUN.items() if key != "prestress"}
     response = client.post("/api/studies/Tiny/formwork/run", json=body)
-    assert response.status_code == 400
-    assert response.json()["detail"] == "Run the cable net analysis first"
-    # a cable net document that names no prestress is no better
-    _plant_demand(None)
-    response = client.post("/api/studies/Tiny/formwork/run", json=body)
-    assert response.status_code == 400
-    assert response.json()["detail"] == "Run the cable net analysis again: no prestress"
+    assert response.status_code == 400 and response.json()["detail"] == "Choose a mechanism"
+    # a mechanism the catalogue cannot build is told so in one line
+    response = client.post("/api/studies/Tiny/formwork/run",
+                           json={**body, "mechanism": dict(MECHANISM, ratio=30)})
+    assert response.status_code == 400 and response.json()["detail"] == "NEMA 23: no 30:1"
+    response = client.post("/api/studies/Tiny/formwork/run", json={**body, "mechanism": "fast"})
+    assert response.status_code == 400 and "mechanism" in response.json()["detail"]
     # and a study that is not there is still a 404 that says so
-    response = client.post("/api/studies/Nowhere/formwork/run", json=body)
+    response = client.post("/api/studies/Nowhere/formwork/run",
+                           json={**body, "mechanism": MECHANISM})
     assert response.status_code == 404 and "Nowhere" in response.json()["detail"]
 
 
-def test_the_run_takes_its_holds_choice_and_tolerance(tmp_path, monkeypatch):
-    # spec 2026-10-10 formwork holds, section 4: none by default; a search on
-    # a net with no principal line fails with the reason
-    seen = {}
+def test_the_runs_drum_and_carriage_are_checked_from_its_own_reels(tmp_path, monkeypatch):
+    # spec 2026-10-11 section 8.1: Checks, from the run's take-up at each drum
+    import base64
+    import struct
+
+    def pack(values):
+        return {"f32": base64.b64encode(struct.pack("<%df" % len(values), *values)).decode()}
 
     def fake(request, progress=None):
-        seen.update(request)
-        return {"schema": "bench.formwork-sim/1", "captures": [],
-                "summary": {"holds_deviation_max_mm": None}}
+        return {"schema": "bench.formwork-sim/1", "net": {},
+                "captures": [{"phase": "raise", "reel": pack([0.0, 0.0, 0.0, 0.0])},
+                             {"phase": "hold", "reel": pack([12.0, 3.0, 0.0, 400.0])}]}
 
     client, _ = make_client(tmp_path, monkeypatch, formwork_runner=fake)
     _plant(tmp_path)
-    started = client.post("/api/studies/Tiny/formwork/run", json=RUN)
+    body = {key: value for key, value in RUN.items() if key != "prestress"}
+    started = client.post("/api/studies/Tiny/formwork/run", json={**body, "mechanism": MECHANISM})
     assert wait_for(client, started.json()["run"])["state"] == "done"
-    assert "holds" not in seen or not seen["holds"]
-    assert seen["options"]["holds"] == "none" and seen["options"]["tolerance_mm"] == 20.0
+    document = client.get("/api/studies/Tiny/formwork/sim", params=RUN).json()
+    checks = document["checks"]
+    # the carriage moves as far as the most rope taken in: 400 mm, past its 300 mm rail
+    assert checks["carriage"] == {"value_mm": 400.0, "limit_mm": 300.0, "fits": False, "wire": 3}
+    assert checks["drum"]["wire"] == 3 and checks["drum"]["limit_mm"] > 0.0
+    assert checks["drum"]["fits"] == (checks["drum"]["value_mm"] <= checks["drum"]["limit_mm"])
+    # each node's side: the Tiny net's four corners are on wires, one side each
+    assert len(document["net"]["sides"]) == 9
+    assert [document["net"]["sides"][n] for n in (0, 2, 6, 8)] == [0, 1, 2, 3]
+
+
+def test_the_run_takes_rods_a_side_and_tells_the_engine_the_sides_and_its_state(
+        tmp_path, monkeypatch):
+    # spec 2026-10-11 one Cable net tab, sections 6 and 7: N rods a side, the
+    # studio placing them; the engine keeps its state at the hold beside the
+    # captures, and a rerun for other rods starts there when it is on disk
+    from pathlib import Path
+
+    seen = []
+
+    def fake(request, progress=None):
+        seen.append(request)
+        if request.get("state_out"):
+            # as the engine writes it, its folder made
+            Path(request["state_out"]).parent.mkdir(parents=True, exist_ok=True)
+            Path(request["state_out"]).write_bytes(b"state")
+        return {"schema": "bench.formwork-sim/1", "captures": []}
+
+    client, studies = make_client(tmp_path, monkeypatch, formwork_runner=fake)
+    _plant(tmp_path)
+    started = client.post("/api/studies/Tiny/formwork/run", json={**RUN, "resume": True})
+    assert wait_for(client, started.json()["run"])["state"] == "done"
+    first = seen[-1]
+    assert first["holds_per_side"] == 0 and first["options"]["holds_per_side"] == 0
+    # the Tiny net's four corners are on wires, a side each
+    assert first["sides"] == [0, 0, 1, 0, 0, 1, 2, 2, 3]
+    state = first["state_out"]
+    assert Path(state).parent == studies / "tiny" / "studio"
+    assert Path(state).name.startswith("formwork-state-concrete-") and state.endswith(
+        "-s900-t20.json.gz")
+    assert "state_in" not in first                                          # none on disk yet
     started = client.post("/api/studies/Tiny/formwork/run",
-                          json={**RUN, "holds": "search", "tolerance_mm": 15})
-    state = wait_for(client, started.json()["run"])
-    assert state["state"] == "failed" and "principal line" in state["message"]
-    for bad, word in (({"holds": "some"}, "holds"), ({"tolerance_mm": 0}, "tolerance_mm"),
-                      ({"tolerance_mm": True}, "tolerance_mm")):
-        response = client.post("/api/studies/Tiny/formwork/run", json={**RUN, **bad})
+                          json={**RUN, "holds_per_side": 3, "resume": True})
+    assert wait_for(client, started.json()["run"])["state"] == "done"
+    again = seen[-1]
+    assert again["holds_per_side"] == 3 and again["options"]["holds_per_side"] == 3
+    assert again["state_in"] == state
+    # Run (no resume) is always a full run
+    started = client.post("/api/studies/Tiny/formwork/run", json={**RUN, "holds_per_side": 3})
+    assert wait_for(client, started.json()["run"])["state"] == "done"
+    assert "state_in" not in seen[-1]
+
+
+def test_rods_a_side_are_a_whole_number_from_nought_to_twenty(tmp_path, monkeypatch):
+    client, _ = make_client(tmp_path, monkeypatch, formwork_runner=_idle)
+    _plant(tmp_path)
+    for bad in (21, -1, True, 2.5, "3"):
+        response = client.post("/api/studies/Tiny/formwork/run",
+                               json={**RUN, "holds_per_side": bad})
         assert response.status_code == 400, bad
-        assert word in response.json()["detail"], bad
+        assert "holds_per_side must be a whole number of rods a side from 0 to 20" in \
+            response.json()["detail"], bad
+    response = client.post("/api/studies/Tiny/formwork/run", json={**RUN, "resume": "yes"})
+    assert response.status_code == 400 and "resume" in response.json()["detail"]
+    # the search of whole lines is gone, and a body asking for it is told so
+    response = client.post("/api/studies/Tiny/formwork/run", json={**RUN, "holds": "search"})
+    assert response.status_code == 400
+    assert "send holds_per_side" in response.json()["detail"]
 
 
 def test_a_study_with_no_formwork_document_is_refused_before_the_cut(tmp_path, monkeypatch):
@@ -187,10 +269,13 @@ def test_an_upload_clears_the_formwork_captures(tmp_path, monkeypatch):
     path = bundle.formwork_sim_path("tiny", "tile", "bonded-courses", 1.0, 0.02, None)
     path.parent.mkdir(parents=True)
     path.write_text("{}", encoding="utf-8")
+    # and the state at the hold beside it
+    state = bundle.formwork_state_path("tiny", "tile", "bonded-courses", 1.0, 0.02, None)
+    state.write_bytes(b"state")
     response = client.put("/api/uploads/exports/Tiny/contract",
                           content=json.dumps(tiny_contract()).encode())
     assert response.status_code == 200, response.text
-    assert not path.is_file()
+    assert not path.is_file() and not state.is_file()
 
 
 def test_a_second_run_on_a_live_study_is_409(tmp_path, monkeypatch):

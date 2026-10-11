@@ -53,10 +53,8 @@
      coordinates over whatever the pointer is on and following it as
      the camera moves. -->
 <div id="hover-badge" class="hidden"></div>
-<!-- The Cable net lenses' numbers on the model and the card a click on a node
-     opens (spec 2026-10-09 Cable net display, section 5.3). -->
-<div id="model-labels"></div>
-<div id="cablenet-pick" class="hidden"></div>
+<!-- The one Cable net tab's values on the model and the card a click on a
+     node opens (spec 2026-10-11 one Cable net tab, section 5.2). -->
 <div id="formwork-labels"></div>
 <div id="formwork-pick" class="hidden"></div>
 <div id="event-log"></div>
@@ -347,9 +345,10 @@
 </div>
 <div id="legend" class="hidden">
   <div id="legend-title"></div>
-  <div id="legend-bar"></div>
+  <div id="legend-bar"><span id="legend-limit" class="hidden"></span></div>
   <div id="legend-bands"></div>
   <div id="legend-labels"><span id="legend-min"></span><span id="legend-zero"></span><span id="legend-max"></span></div>
+  <div id="legend-limit-text"></div>
 </div>
 <!-- One button per panel section, on the viewport beside the panel.
      Param: "at the top right of the viewport besides the menu we should
@@ -361,8 +360,7 @@
   <button data-section="import-section" type="button">Import</button>
   <button data-section="study-section" type="button">Skin</button>
   <button data-section="analysis-section" type="button">Analysis</button>
-  <button data-section="cablenet-section" type="button">Cable net</button>
-  <button data-section="formwork-section" type="button">Formwork</button>
+  <button data-section="formwork-section" type="button">Cable net</button>
   <button data-section="animation-section" type="button">Animation</button>
   <button data-section="camera-section" type="button">Camera</button>
   <button data-section="scene-section" type="button">Scene</button>
@@ -509,46 +507,36 @@
     <!-- Not one of the lenses: an annotation, tucked at the bottom. -->
     <label id="overlays-tuck"><input id="overlays-box" type="checkbox"> Text overlays</label>
   </details>
-  <details id="cablenet-section">
-    <summary>Cable net</summary>
-    <!-- The cable net as a view (spec 2026-10-09 Cable net display): a short
-         menu of values; the mechanism, its cost and the graphs in the pop-up
-         on the left (#cablenet-popup), opened by the Mechanism button. Every
-         readout is filled by cablenet.js; the lenses by studio.js. -->
-    <button id="cablenet-run" class="primary" title="Run the cable net analysis">Run cable net analysis</button>
-    <div id="cablenet-run-status"></div>
-    <div class="dial-block" id="cablenet-dials">
-    <label title="Tolerance, mm"><span>Tolerance</span>
-      <input id="cablenet-tolerance" type="range" min="1" max="100" step="1" value="20">
-      <b id="cablenet-tolerance-value">20</b><em>mm</em></label>
-    <label title="Wires a motor"><span>Wires a motor</span>
-      <input id="cablenet-wires" type="range" min="1" max="7" step="1" value="1">
-      <b id="cablenet-wires-value">1</b><em></em></label>
-    </div>
-    <div id="cablenet-demand" class="cablenet-readout"></div>
-    <button id="cablenet-popup-toggle" title="Mechanism, cost and graphs">Mechanism</button>
-    <div id="cablenet-lenses" class="lens-list"></div>
-    <div id="cablenet-stage" class="layer-note"></div>
-  </details>
   <details id="formwork-section">
-    <summary>Formwork</summary>
-    <!-- The raise played from the physics engine (spec 2026-10-10 formwork
-         tab): the run, the machine the Cable net tab chose, a player over
-         the captures, what to show, colour and label, and the worst tables
-         in the pop-up on the left (#formwork-popup). Filled by formwork.js;
-         the model is drawn by formwork_view.js. -->
-    <button id="formwork-run" class="primary" title="Run the formwork analysis">Run formwork analysis</button>
+    <summary>Cable net</summary>
+    <!-- The one Cable net tab (spec 2026-10-11 one Cable net tab): one
+         physics run of the chosen mechanism, its answer, and the run played
+         on the model. Filled by formwork.js; the mechanism pop-up
+         (#mechanism-popup) by mechanism_pick.js; the model drawn by
+         formwork_view.js. -->
+    <button id="formwork-run" class="primary" title="Run the physics engine with the chosen mechanism">Run</button>
     <div id="formwork-run-status"></div>
-    <div id="formwork-machine" class="cablenet-readout"></div>
-    <div id="formwork-holds-choice" class="formwork-ticks"><span>Holds</span>
-      <label title="Search evenly spaced whole lines, the open edges first, to the tolerance"><input type="radio" name="formwork-holds" value="search" checked> Search to the tolerance</label>
-      <label title="No holds"><input type="radio" name="formwork-holds" value="none"> None</label>
+    <div id="formwork-answer" class="cablenet-readout"></div>
+    <div id="formwork-mechanism" class="mechanism-line">
+      <button id="mechanism-toggle" type="button" title="Choose the spooling mechanism">Mechanism</button>
+      <span id="formwork-mechanism-name"></span>
     </div>
-    <div id="formwork-holds" class="cablenet-readout"></div>
     <div class="dial-block" id="formwork-dials">
+    <label title="Tolerance, mm"><span>Tolerance</span>
+      <input id="formwork-tolerance" type="range" min="1" max="100" step="1" value="20">
+      <b id="formwork-tolerance-value">20</b><em>mm</em></label>
+    <label title="Wires a motor"><span>Wires a motor</span>
+      <input id="formwork-wires" type="range" min="1" max="7" step="1" value="1">
+      <b id="formwork-wires-value">1</b><em></em></label>
+    <label title="Rods a side, placed where the net sags most; 0 for none"><span>Holds a side</span>
+      <input id="formwork-holds" type="range" data-unit="1" min="0" max="20" step="1" value="0">
+      <b id="formwork-holds-value">0</b><em></em></label>
     <label title="The tree tube's wall, mm"><span>Wall</span>
       <input id="formwork-wall" type="range" min="2" max="8" step="0.1" value="3.2">
       <b id="formwork-wall-value">3.2</b><em>mm</em></label>
+    <label title="How opaque the skin is: 0 hides it"><span>Skin</span>
+      <input id="formwork-skin" type="range" min="0" max="50" step="1" value="30">
+      <b id="formwork-skin-value">30</b><em>%</em></label>
     <label title="Capture"><span>Capture</span>
       <input id="formwork-scrub" type="range" min="1" max="1" step="1" value="1">
       <b id="formwork-scrub-value">1</b><em>of 1</em></label>
@@ -557,37 +545,34 @@
       <b id="formwork-speed-value">1.00</b><em>x</em></label>
     </div>
     <div id="formwork-player">
-      <button id="formwork-back" type="button" title="Step back a capture">Back</button>
-      <button id="formwork-play" type="button" title="Play or pause">Play</button>
-      <button id="formwork-on" type="button" title="Step on a capture">On</button>
+      <button id="formwork-back" class="icon-act" type="button" title="Step back a capture">&#10074;&#9664;</button>
+      <button id="formwork-play" class="icon-act" type="button" title="Play">&#9654;</button>
+      <button id="formwork-on" class="icon-act" type="button" title="Step on a capture">&#9654;&#10074;</button>
       <span id="formwork-label"></span>
     </div>
     <div id="formwork-line" class="cablenet-readout"></div>
-    <div id="formwork-show" class="formwork-ticks"><span>Show</span>
-      <label title="The net"><input type="checkbox" data-show="net" checked> Net</label>
-      <label title="The trees"><input type="checkbox" data-show="trees" checked> Trees</label>
-      <label title="The heads and their push"><input type="checkbox" data-show="heads" checked> Heads</label>
-      <label title="The wires and the machine"><input type="checkbox" data-show="wires" checked> Wires</label>
-      <label title="The anchors"><input type="checkbox" data-show="anchors" checked> Anchors</label>
-      <label title="The nodes on the ground"><input type="checkbox" data-show="ground" checked> Ground</label>
-      <label title="The skin placed"><input type="checkbox" data-show="skin" checked> Skin</label>
-      <label title="The designed form"><input type="checkbox" data-show="design" checked> Design</label>
-      <label title="The holds' rods: green a strut, blue a tie"><input type="checkbox" data-show="holds" checked> Holds</label>
+    <div id="formwork-show" class="chips"><span>Show</span>
+      <label class="chip" title="The net"><input type="checkbox" data-show="net" checked><span>Net</span></label>
+      <label class="chip" title="The trees"><input type="checkbox" data-show="trees" checked><span>Trees</span></label>
+      <label class="chip" title="The column heads, green while they push"><input type="checkbox" data-show="heads" checked><span>Heads</span></label>
+      <label class="chip" title="The wires"><input type="checkbox" data-show="wires" checked><span>Wires</span></label>
+      <label class="chip" title="The anchors"><input type="checkbox" data-show="anchors" checked><span>Anchors</span></label>
+      <label class="chip" title="The nodes on the ground"><input type="checkbox" data-show="ground" checked><span>Ground</span></label>
+      <label class="chip" title="The holds' rods: green a strut, blue a tie"><input type="checkbox" data-show="holds" checked><span>Holds</span></label>
     </div>
-    <div id="formwork-colour" class="formwork-ticks"><span>Colour by</span>
-      <label title="Rope tension, kN"><input type="radio" name="formwork-colour" value="tension"> Rope</label>
-      <label title="Deviation, mm"><input type="radio" name="formwork-colour" value="deviation" checked> Deviation</label>
-      <label title="Tree utilisation"><input type="radio" name="formwork-colour" value="utilisation"> Trees</label>
-      <label title="Wire tension, N"><input type="radio" name="formwork-colour" value="wire"> Wires</label>
-      <label title="No colour"><input type="radio" name="formwork-colour" value="off"> Off</label>
+    <div id="formwork-views">
+      <button id="formwork-compare" type="button" title="The design as formwork against where the net is, each node's offset against the tolerance">Compare</button>
+      <button id="formwork-weakest" type="button" title="The parts over their limits, or the five closest">Weakest</button>
     </div>
-    <div id="formwork-label-ticks" class="formwork-ticks"><span>Labels</span>
-      <label title="Rope tension, kN"><input type="checkbox" data-label="rope"> Rope</label>
-      <label title="Deviation, mm"><input type="checkbox" data-label="deviation" checked> Deviation</label>
-      <label title="Head contact, N"><input type="checkbox" data-label="contact"> Contact</label>
+    <div id="formwork-colour" class="segmented"><span>Colour by</span>
+      <label title="Wire tension, N"><input type="radio" name="formwork-colour" value="wire" checked><span>Wires</span></label>
+      <label title="Rope tension, kN"><input type="radio" name="formwork-colour" value="tension"><span>Ropes</span></label>
+      <label title="Offset from the design, mm"><input type="radio" name="formwork-colour" value="deviation"><span>Offset</span></label>
+      <label title="Tree utilisation"><input type="radio" name="formwork-colour" value="utilisation"><span>Trees</span></label>
+      <label title="No colour; the heads' pushes as values"><input type="radio" name="formwork-colour" value="off"><span>Off</span></label>
     </div>
-    <button id="formwork-worst-toggle" type="button" title="The worst of each part over the run">Worst</button>
-    <button id="formwork-record" type="button" title="Record the raise as a video, with its labels and key, at the Output section's size">Record</button>
+    <label class="chip" title="The values of the colour shown, on the model"><input id="formwork-values" type="checkbox" checked><span>Values</span></label>
+    <button id="formwork-record" type="button" title="Record the raise as a video, with its values and key, at the Output section's size">Record</button>
     <div id="formwork-record-status"></div>
     <div id="formwork-warnings" class="cablenet-readout"></div>
   </details>
@@ -995,68 +980,37 @@
   <div id="data-content" class="data-tab hidden"></div>
   <div id="data-graphs" class="data-tab hidden"></div>
 </div>
-<div id="cablenet-popup" class="hidden">
-  <!-- The Cable net tab's pop-up (spec 2026-10-09 Cable net display, section
-       4): the mechanism, its cost and the graphs. Filled by cablenet.js. -->
-  <div id="cablenet-popup-head">
-    <div id="cablenet-tabs">
-      <button data-cn-tab="cn-mechanism" class="active" type="button" title="Mechanism">Mechanism</button>
-      <button data-cn-tab="cn-cost" type="button" title="Cost">Cost</button>
-      <button data-cn-tab="cn-graphs" type="button" title="Graphs">Graphs</button>
+<div id="mechanism-popup" class="hidden">
+  <!-- The one Cable net tab's mechanism (spec 2026-10-11 one Cable net tab,
+       section 8.1): one dropdown of whole spooling mechanisms, strongest
+       first, and under it one spool's pull, the part that sets it and the
+       run's drum and carriage. Filled by mechanism_pick.js; its Cost and
+       Graphs (sections 8.2 and 8.3) by formwork.js. -->
+  <div id="mechanism-popup-head">
+    <div id="mechanism-tabs">
+      <button data-mech-tab="mech-choose" class="active" type="button" title="Mechanism">Mechanism</button>
+      <button data-mech-tab="mech-cost" type="button" title="What the run's mechanism costs on this study">Cost</button>
+      <button data-mech-tab="mech-graphs" type="button" title="The run's worst wire and worst offset at every capture">Graphs</button>
     </div>
-    <button id="cablenet-popup-close" type="button" title="Close">Close</button>
+    <button id="mechanism-popup-close" type="button" title="Close">Close</button>
   </div>
-  <div id="cn-mechanism" class="cn-tab">
-    <div id="cablenet-choices">
-      <div class="named"><span>Motor</span><select id="cablenet-motor" title="Motor"></select></div>
-      <div class="named"><span>Ratio</span><select id="cablenet-ratio" title="Planetary ratio"></select></div>
-      <div class="named"><span>Pulleys</span><select id="cablenet-pulley" title="Pulley, or none"></select></div>
-      <div class="named"><span>Wire</span><select id="cablenet-rope" title="Wire"></select></div>
-    </div>
-    <button id="cablenet-recommend" title="Cheapest combination that holds">Recommend</button>
-    <div id="cablenet-recommend-note" class="cablenet-readout"></div>
-    <div id="cablenet-limits" class="cablenet-readout"></div>
-    <div id="cablenet-motors" class="cablenet-readout"></div>
-    <div id="cablenet-machine" class="cablenet-readout"></div>
-    <div id="cablenet-holds" class="cablenet-readout"></div>
-    <div id="cablenet-travel" class="cablenet-readout"></div>
-    <div class="dial-block" id="cablenet-speed-dial">
-    <label title="Rope speed, mm/s"><span>Rope speed</span>
-      <input id="cablenet-speed" type="range" min="1" max="400" step="1" value="50">
-      <b id="cablenet-speed-value">50</b><em>mm/s</em></label>
-    </div>
-    <div id="cablenet-speed-note" class="cablenet-readout"></div>
-  </div><!-- /cn-mechanism -->
-  <div id="cn-cost" class="cn-tab hidden">
-    <div id="cablenet-price" class="cablenet-readout"></div>
-    <div id="cablenet-buy" class="cablenet-readout"></div>
-    <button id="cablenet-export" title="Spreadsheet, diagram and data sheet">Export</button>
-    <div id="cablenet-export-row" class="folder-line">
-      <button id="cablenet-export-choose" title="Choose where the cable net exports are written">Export folder</button>
-      <span id="cablenet-export-path" title="">no folder chosen</span>
-    </div>
-    <div id="cablenet-export-result" class="cablenet-readout"></div>
-  </div><!-- /cn-cost -->
-  <div id="cn-graphs" class="cn-tab hidden">
-    <div id="cablenet-graphs" class="cablenet-readout"></div>
-  </div><!-- /cn-graphs -->
-</div><!-- the end of the cable net pop-up -->
-<div id="formwork-popup" class="hidden">
-  <!-- The Formwork tab's worst tables (spec 2026-10-10 formwork tab, section
-       10): one tab a part, a header sorts, a row moves the player and the
-       camera. Filled by formwork.js. -->
-  <div id="formwork-popup-head">
-    <div id="formwork-tabs">
-      <button data-fw-tab="ropes" class="active" type="button" title="Ropes">Ropes</button>
-      <button data-fw-tab="wires" type="button" title="Wires">Wires</button>
-      <button data-fw-tab="trees" type="button" title="Trees">Trees</button>
-      <button data-fw-tab="nodes" type="button" title="Nodes">Nodes</button>
-      <button data-fw-tab="machines" type="button" title="Machines">Machines</button>
-    </div>
-    <button id="formwork-popup-close" type="button" title="Close">Close</button>
+  <div id="mech-choose" class="mech-tab">
+    <select id="mechanism-preset" title="The whole spooling mechanism: its parts and one spool's pull"></select>
+    <div id="mechanism-have" class="cablenet-readout"></div>
   </div>
-  <div id="formwork-worst"></div>
-</div><!-- the end of the formwork pop-up -->
+  <div id="mech-cost" class="mech-tab hidden">
+    <div id="cost-body" class="cablenet-readout"></div>
+    <button id="cost-export" type="button" title="Write the bill of materials to the export folder">Export BOM</button>
+    <div id="cost-folder-row" class="folder-line">
+      <button id="cost-folder-choose" type="button" title="Choose where the bill of materials is saved">Folder</button>
+      <span id="cost-folder-path" title="">no folder chosen</span>
+    </div>
+    <div id="cost-export-status"></div>
+  </div>
+  <div id="mech-graphs" class="mech-tab hidden">
+    <div id="graphs-body"></div>
+  </div>
+</div><!-- the end of the mechanism pop-up -->
 <!-- Two checks that must not live in studio.js, because the fault they
      exist for is a studio.js the browser is serving from its own cache. The
      page is read from disk by every server on every request, so this is the
