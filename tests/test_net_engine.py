@@ -169,3 +169,75 @@ def test_ropes_refuse_nonsense():
         ne.ropes([(0, 1)], [1.0], -1.0)
     with pytest.raises(ne.EngineError, match="2 ropes but 1"):
         ne.ropes([(0, 1), (1, 2)], [1.0], 1.0e5)
+
+
+# spec 2026-10-11 across tendons, section 3 (amended): a tendon slides through
+# a ring at each node of its path, pulled in at its head with one tension along
+# its whole length; neighbouring rings stop against each other
+
+def _chain(pull=5000.0, ea=4.8e4):
+    # 0 held at x 0, 1 and 2 free, 3 held at x 3000; the tendon from 0 through
+    # a ring at 1 to 2, pulled in at 0, draws 2 in against the rope out to 3
+    x0 = np.array([[0.0, 0.0, 0.0], [1000.0, 0.0, 0.0], [2000.0, 0.0, 0.0], [3000.0, 0.0, 0.0]])
+    net = ne.ropes([(0, 1), (1, 2), (2, 3)], [800.0, 800.0, 900.0], ea)
+    if pull is not None:
+        net = net._replace(tendons=ne.tendons([(0, 1, 2)], pull))
+    return x0, net
+
+
+def test_a_tendon_pulls_with_its_tension_and_its_head_takes_it():
+    ea, pull = 4.8e4, 5000.0
+    x0, net = _chain(pull, ea)
+    rest = ne.bring_to_rest(x0, _held(4, 0, 3), net, np.zeros_like(x0))
+    # by hand: node 1 halfway; node 2 balances the outer rope against the inner
+    # and the tendon: EA (2100 - x2) / 900 = EA (x2 / 2 - 800) / 800 + pull
+    x2 = (ea * 2100.0 / 900.0 + ea - pull) / (ea / 900.0 + ea / 1600.0)
+    assert x2 == pytest.approx(1860.0)
+    assert rest.x[2, 0] == pytest.approx(x2, abs=0.01)
+    assert rest.x[1, 0] == pytest.approx(x2 / 2.0, abs=0.01)
+    assert rest.tendon_tension == pytest.approx([pull])
+    inner = ea * (x2 / 2.0 - 800.0) / 800.0
+    assert rest.reaction[0, 0] == pytest.approx(-(inner + pull), rel=1.0e-4)
+
+
+def test_a_ring_pulled_past_its_slack_ropes_stops_against_the_next():
+    # node 1 held; 2 free between slack ropes; the pull draws 2 in until its
+    # ring stops TENDON_STOP_MM short of 1's
+    x0 = np.array([[0.0, 0.0, 0.0], [1000.0, 0.0, 0.0], [2000.0, 0.0, 0.0], [3000.0, 0.0, 0.0]])
+    net = ne.ropes([(0, 1), (1, 2), (2, 3)], [1000.0, 1000.0, 2100.0], 1.0e5)._replace(
+        tendons=ne.tendons([(0, 1, 2)], 300.0))
+    rest = ne.bring_to_rest(x0, _held(4, 0, 1, 3), net, np.zeros_like(x0))
+    gap = rest.x[2, 0] - rest.x[1, 0]
+    assert gap == pytest.approx(ne.TENDON_STOP_MM - 300.0 / ne.TENDON_STOP_N_PER_MM, abs=1.0e-4)
+
+
+def test_a_tendon_presses_each_ring_toward_the_inside_of_its_line():
+    x0 = np.array([[0.0, 0.0, 0.0], [1000.0, 0.0, -300.0], [2000.0, 0.0, 0.0]])
+    plain = ne.ropes([(0, 1), (1, 2)], [1000.0, 1000.0], 1.0e5)
+    loads = np.zeros_like(x0)
+    loads[1, 2] = -100.0
+    without = ne.bring_to_rest(x0, _held(3, 0, 2), plain, loads)
+    rest = ne.bring_to_rest(x0, _held(3, 0, 2), plain._replace(tendons=ne.tendons([(0, 1, 2)], 1000.0)),
+                            loads)
+    assert rest.x[1, 2] > without.x[1, 2] + 20.0              # drawn up toward the chord
+    assert rest.tendon_tension == pytest.approx([1000.0])
+    assert without.tendon_tension.shape == (0,)
+
+
+def test_newton_and_relaxation_find_the_same_rest_with_a_tendon():
+    x0 = np.array([[0.0, 0.0, 0.0], [1000.0, 0.0, -300.0], [2000.0, 0.0, 0.0]])
+    net = ne.ropes([(0, 1), (1, 2)], [1000.0, 1000.0], 1.0e5)._replace(
+        tendons=ne.tendons([(0, 1, 2)], 1000.0))
+    loads = np.zeros_like(x0)
+    loads[1, 2] = -100.0
+    x_newton, _, _, newton_ok = ne.minimise(x0, _held(3, 0, 2), net, loads)
+    x_relax, _, _, relax_ok = ne.relax(x0, _held(3, 0, 2), net, loads)
+    assert newton_ok and relax_ok
+    assert np.abs(x_newton - x_relax).max() < 0.01
+
+
+def test_tendons_refuse_nonsense():
+    with pytest.raises(ne.EngineError, match="two nodes"):
+        ne.tendons([(0,)], 100.0)
+    with pytest.raises(ne.EngineError, match="nought or more"):
+        ne.tendons([(0, 1)], -1.0)
