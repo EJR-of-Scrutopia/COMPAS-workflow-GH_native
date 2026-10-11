@@ -4,14 +4,20 @@
 // THREE is handed in rather than imported, so the drawing runs under node in
 // the tests as it does in the page.
 
-import { colourOf, holdForce, holdRod, jackedAt, placedFaces, targetPoint } from "./formwork_model.js";
+import {
+  bandColour, colourOf, holdForce, holdRod, jackedAt, placedFaces, targetPoint,
+} from "./formwork_model.js";
 
 const WIRE_STUB_M = 0.3;        // each rim wire drawn 300 mm along the way it runs in
 const MARK_M = 0.05;            // an anchor's mark, and twice a ground contact's
 const HEAD_M = 0.08;            // a head's mark
-const PUSH_LONGEST_M = 1.0;     // a push at the run's 95th percentile and over, drawn this long
-const TIP_M = 0.08;             // the head on a push, this long
 const PROP_M = 0.03;            // a hold's rod, this thick (spec 2026-10-10 formwork holds)
+const RING_M = 0.12;            // the ring round a weakest part (spec 2026-10-11 section 5.3)
+const RING_TUBE_M = 0.015;
+const OVER = [0xc2 / 255, 0x49 / 255, 0x36 / 255];
+const CLOSE = [0xc9 / 255, 0x9a / 255, 0x2e / 255];
+const DESIGN_FACE = 0x9cc4ff;   // Compare's design: pale blue formwork, seen through
+const DESIGN_FACE_OPACITY = 0.25;
 const PLAIN = [0.86, 0.86, 0.86];
 const TREE_PLAIN = [0.72, 0.74, 0.78];
 const HEAD_TOUCHING = [0x3f / 255, 0x9e / 255, 0x57 / 255];
@@ -70,6 +76,24 @@ export function createFormworkView(THREE) {
     return object;
   }
 
+  // Compare's design (spec 2026-10-11 section 5.4): the designed form drawn as
+  // translucent formwork, the cut mesh's faces at their designed points.
+  function designFaces() {
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute("position", new THREE.BufferAttribute(new Float32Array(sim.design), 3));
+    const triangles = [];
+    for (const corners of sim.faces || []) {
+      for (let k = 1; k + 1 < corners.length; k++) triangles.push(corners[0], corners[k], corners[k + 1]);
+    }
+    geometry.setIndex(triangles);
+    const object = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial({
+      color: DESIGN_FACE, side: THREE.DoubleSide, transparent: true, opacity: DESIGN_FACE_OPACITY,
+      depthWrite: false }));
+    object.frustumCulled = false;
+    group.add(object);
+    return object;
+  }
+
   // Everything the document draws, once; the design and the anchors stand
   // still, the rest moves with the captures.
   function build(next) {
@@ -84,9 +108,6 @@ export function createFormworkView(THREE) {
       design: lines(sim.edges.length, new THREE.LineBasicMaterial({
         color: DESIGN_COLOUR, transparent: true, opacity: 0.45 }), false),
       wires: lines(rim, new THREE.LineBasicMaterial({ vertexColors: true }), true),
-      push: lines(heads, new THREE.LineBasicMaterial({ color: 0x3f9e57 }), false),
-      tips: marks(new THREE.ConeGeometry(TIP_M / 3, TIP_M, 8), heads,
-                  new THREE.MeshBasicMaterial({ color: 0x3f9e57 })),
       trees: marks(new THREE.CylinderGeometry(radius, radius, 1, 12), sim.trees.members.length,
                    new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.6, metalness: 0.3 })),
       heads: marks(new THREE.SphereGeometry(HEAD_M, 12, 8), heads,
@@ -98,6 +119,11 @@ export function createFormworkView(THREE) {
       skin: skin(),
       props: marks(new THREE.CylinderGeometry(PROP_M / 2, PROP_M / 2, 1, 8), sim.holds.length,
                    new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.6 })),
+      rings: marks(new THREE.TorusGeometry(RING_M, RING_TUBE_M, 8, 24),
+                   sim.nodes + sim.edges.length + rim + sim.trees.members.length,
+                   new THREE.MeshBasicMaterial({ color: 0xffffff })),
+      designFaces: designFaces(),
+      offsets: lines(sim.nodes, new THREE.LineBasicMaterial({ vertexColors: true }), true),
     };
     const design = parts.design.geometry.attributes.position;
     sim.edges.forEach(([u, v], e) => {
@@ -144,7 +170,8 @@ export function createFormworkView(THREE) {
   // The capture the player is at: positions blended between the two either
   // side for the drawing, every colour from the nearer one (spec section 7).
   // settings: { show: {net, trees, heads, wires, anchors, ground, skin,
-  // design}, colour, tolerance }.
+  // design, holds}, colour, tolerance, weakest (weakestAt's parts), compare,
+  // skinOpacity (0 to 0.5; 0 hides the skin) }.
   function show(head, settings) {
     if (!sim || !parts || !head) return;
     const a = sim.captures[head.from];
@@ -190,37 +217,19 @@ export function createFormworkView(THREE) {
     parts.trees.instanceMatrix.needsUpdate = true;
     if (parts.trees.instanceColor) parts.trees.instanceColor.needsUpdate = true;
 
-    const push = parts.push.geometry.attributes.position;
-    sim.trees.heads.forEach(([netNode, treeNode], h) => {
+    // each head marked green while it pushes its node, clear once it has let
+    // go; its push is a value, never an arrow (spec 2026-10-11 section 5.2)
+    sim.trees.heads.forEach(([, treeNode], h) => {
       matrix.makeTranslation(treeAt[3 * treeNode], treeAt[3 * treeNode + 1], treeAt[3 * treeNode + 2]);
       parts.heads.setMatrixAt(h, matrix);
       const force = near.headPush ? [near.headPush[3 * h], near.headPush[3 * h + 1], near.headPush[3 * h + 2]]
         : [0, 0, 0];
       const touching = Math.hypot(force[0], force[1], force[2]) > 0;
-      const tint = touching ? HEAD_TOUCHING : HEAD_CLEAR;
-      parts.heads.setColorAt(h, tone(tint));
-      const from = node(netNode);
-      const size = Math.hypot(force[0], force[1], force[2]);
-      const length = sim.scales.push > 0 ? Math.min(1, size / sim.scales.push) * PUSH_LONGEST_M : 0;
-      const tip = size > 0 ? from.map((value, k) => value + force[k] / size * length) : from;
-      put(push.array, 6 * h, from);
-      put(push.array, 6 * h + 3, tip);
-      // the head on the push, pointing along it; none where nothing pushes
-      if (size > 0) {
-        start.set(force[0] / size, force[1] / size, force[2] / size);
-        turn.setFromUnitVectors(up, start);
-        matrix.compose(middle.set(tip[0], tip[1], tip[2]), turn, stretch.set(1, 1, 1));
-      } else {
-        matrix.makeScale(0, 0, 0);
-      }
-      parts.tips.setMatrixAt(h, matrix);
+      parts.heads.setColorAt(h, tone(touching ? HEAD_TOUCHING : HEAD_CLEAR));
     });
     parts.heads.count = sim.trees.heads.length;
-    parts.tips.count = sim.trees.heads.length;
-    parts.tips.instanceMatrix.needsUpdate = true;
     parts.heads.instanceMatrix.needsUpdate = true;
     if (parts.heads.instanceColor) parts.heads.instanceColor.needsUpdate = true;
-    push.needsUpdate = true;
 
     const wires = parts.wires.geometry.attributes;
     sim.rim.nodes.forEach((rimNode, w) => {
@@ -262,6 +271,40 @@ export function createFormworkView(THREE) {
     surface.attributes.position.array.set(at);
     surface.attributes.position.needsUpdate = true;
     if (surface.index && surface.index.count) surface.computeVertexNormals();
+    // the skin's slider (spec 2026-10-11 section 5.5): how opaque, 0 hiding it
+    const opacity = settings.skinOpacity;
+    if (opacity != null) parts.skin.material.opacity = Math.min(0.5, Math.max(0, Number(opacity)));
+
+    // the weakest parts (section 5.3): a ring round each, red over its limit,
+    // amber the closest when none is over
+    let ringed = 0;
+    for (const item of settings.weakest || []) {
+      const p = point({ kind: item.kind, index: item.index });
+      if (!p) continue;
+      matrix.makeTranslation(p[0], p[1], p[2]);
+      parts.rings.setMatrixAt(ringed, matrix);
+      parts.rings.setColorAt(ringed, tone(item.over ? OVER : CLOSE));
+      ringed += 1;
+    }
+    parts.rings.count = ringed;
+    parts.rings.instanceMatrix.needsUpdate = true;
+    if (parts.rings.instanceColor) parts.rings.instanceColor.needsUpdate = true;
+
+    // Compare (section 5.4): each node's line from where it should be to where
+    // it is, in the nearer capture's band against the tolerance
+    const compare = !!settings.compare;
+    if (compare) {
+      const offsets = parts.offsets.geometry.attributes;
+      for (let i = 0; i < sim.nodes; i++) {
+        put(offsets.position.array, 6 * i, [sim.design[3 * i], sim.design[3 * i + 1], sim.design[3 * i + 2]]);
+        put(offsets.position.array, 6 * i + 3, node(i));
+        const band = bandColour(near.deviation[i], tolerance);
+        putColour(offsets.color.array, 6 * i, band);
+        putColour(offsets.color.array, 6 * i + 3, band);
+      }
+      offsets.position.needsUpdate = true;
+      offsets.color.needsUpdate = true;
+    }
 
     // the holds' rods (his ruling of 10 October 2026: a hold is a gripped rod
     // along its own force): from the jacking on, each set at the angle of its
@@ -288,15 +331,18 @@ export function createFormworkView(THREE) {
 
     const on = settings.show || {};
     parts.net.visible = !!on.net;
-    parts.design.visible = !!on.design;
+    parts.design.visible = compare || !!on.design;
+    parts.designFaces.visible = compare && !!(parts.designFaces.geometry.index
+      && parts.designFaces.geometry.index.count);
+    parts.offsets.visible = compare;
+    parts.rings.visible = ringed > 0;
     parts.trees.visible = !!on.trees;
     parts.heads.visible = !!on.heads;
-    parts.push.visible = !!on.heads;
-    parts.tips.visible = !!on.heads;
     parts.wires.visible = !!on.wires;
     parts.anchors.visible = !!on.anchors;
     parts.ground.visible = !!on.ground;
-    parts.skin.visible = !!on.skin && !!(surface.index && surface.index.count);
+    parts.skin.visible = (opacity != null ? Number(opacity) > 0 : !!on.skin)
+      && !!(surface.index && surface.index.count);
     parts.props.visible = !!on.holds && jacked && sim.holds.length > 0;
   }
 
