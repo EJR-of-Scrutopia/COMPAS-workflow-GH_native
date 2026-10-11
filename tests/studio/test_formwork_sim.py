@@ -189,3 +189,42 @@ def test_each_node_belongs_to_the_side_it_is_fewest_steps_from():
     assert [formwork_sim.sides_of(faces, edges, corners, 25)[n] for n in corners] == [0, 1, 2, 3]
     # a net with no faces has no boundary to find sides by
     assert formwork_sim.sides_of([], edges, far, 25) is None
+
+
+# spec 2026-10-11 across tendons, section 2: the lines the tendons run along
+
+def test_the_across_lines_run_from_each_column_head_out_to_the_free_edge():
+    faces, heads, node = _strip_net()
+    families, lines, reason = formwork_sim.across_lines(faces, heads)
+    assert reason is None
+    # the principal line runs along x through the heads; each head has a line
+    # out to either side, a step further from the principal line each time
+    assert sorted(tuple(line["path"]) for line in lines) == sorted(
+        [(node(i, 0), node(i, 1), node(i, 2)) for i in range(5)]
+        + [(node(i, 0), node(i, -1), node(i, -2)) for i in range(5)])
+    assert all(line["path"][0] == heads[line["head"]] for line in lines)
+    # every edge has its family: along x, or across in y
+    assert families[(node(0, 0), node(1, 0))] == "along"
+    assert families[(node(2, 1), node(3, 1))] == "along"
+    assert families[(node(2, 0), node(2, 1))] == "across"
+    edges = {tuple(sorted((f[i], f[(i + 1) % 4]))) for f in faces for i in range(4)}
+    assert set(families) == edges
+
+
+def test_each_lines_side_is_its_free_edge_nodes():
+    faces, heads, node = _strip_net()
+    sides = [0 if (n // 5) >= 2 else 1 for n in range(25)]   # above the principal line: side 0
+    _, lines, _ = formwork_sim.across_lines(faces, heads, sides)
+    for line in lines:
+        assert line["side"] == sides[line["path"][-1]]
+    _, unsided, _ = formwork_sim.across_lines(faces, heads)
+    assert all(line["side"] is None for line in unsided)
+
+
+def test_a_net_with_no_principal_line_or_lines_that_do_not_sort_has_none_and_says_why():
+    faces, heads, node = _strip_net()
+    why = "No tendons: this net's lines do not run across from a principal line"
+    assert formwork_sim.across_lines(faces, [node(2, 0)]) == (None, [], why)       # one head
+    assert formwork_sim.across_lines(faces + [[node(0, 0), node(1, 0), node(1, 1)]], heads) == (
+        None, [], why)                                                             # a triangle
+    assert formwork_sim.across_lines([], heads) == (None, [], why)
