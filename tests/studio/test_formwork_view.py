@@ -194,8 +194,9 @@ def out(tmp_path_factory):
 
 def test_the_view_builds_its_own_objects_and_the_still_ones_once(out):
     # net, design, wires, trees, heads, anchors, ground, skin, the holds' rods,
-    # the weakest's rings, and Compare's design faces and offset lines
-    assert out["children"] == 12
+    # the weakest's rings, Compare's design faces and offset lines, and the
+    # tendons and their reels (spec 2026-10-11 across tendons, section 6)
+    assert out["children"] == 14
     # the designed form as a light line net: the second member, node 1 to 2
     assert out["design"] == pytest.approx([1.0, 0.0, 0.0, 1.0, 1.0, 0.5])
     first, second, count = out["anchors"]
@@ -319,7 +320,7 @@ GREY = linear([0x9a / 255, 0xa4 / 255, 0xb2 / 255])
 
 def test_each_hold_is_a_rod_from_the_ground_along_its_force_from_the_jacking_on(out):
     # ten objects with the holds' rods
-    assert out["propsCount"] == 12
+    assert out["propsCount"] == 14                    # with the tendons and their reels
     # not in before the jacking
     assert out["propsBefore"] is False
     visible, count, prop, colour = out["propPushing"]
