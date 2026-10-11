@@ -56,10 +56,10 @@ out.colours = {
   both: [0, 1, 2, 3].map((e) => colour("both", e)),
   offset: colour("deviation", 0),
   unsorted: m.memberColour("along", unsorted, unsorted.captures[2], 0),
-  ramp: [m.ramp(1), m.ramp(700 / 3300), m.ramp(200 / 3300), m.ramp(3000 / 3300)],
+  judged: [m.judged(3000 / 1800), m.judged(400 / 1800), m.judged(200 / 1800)],
   other: m.OTHER_FAMILY,
 };
-out.force = m.memberForce(sim, sim.captures[2], 1);
+out.force = "memberForce" in m;
 const limits = { have: 1200, rope: 1800, tolerance: 20 };
 out.keys = ["along", "across", "both"].map((by) => m.colourKey(by, sim, limits));
 const flat = (list) => list.map((l) => [l.kind, l.index, l.text]);
@@ -127,10 +127,10 @@ def test_the_tendons_are_read_with_every_edges_family_and_each_edges_tendon(out)
     # edge 1 (1 to 2) carries the first tendon, edge 2 (2 to 3) the second
     assert read["edgeTendon"] == [-1, 0, 1, -1]
     assert read["pulls"] == [[0, 0], [300, 0], [300, 300], [300, 300]]
-    # along: the ropes alone, largest 200 N on edge 0; across and both: each
-    # across rope with its tendon, largest 3,000 + 300 N on edge 1
+    # each family by its ropes alone (his answer of 11 October 2026): along
+    # largest 200 N on edge 0, across and both 3,000 N on edge 1
     scales = read["scales"]
-    assert (scales["along"], scales["across"], scales["both"]) == (200, 3300, 3300)
+    assert (scales["along"], scales["across"], scales["both"]) == (200, 3000, 3000)
     assert read["older"] is False
     # a run without a pull has none, and its captures none
     assert read["plainTendons"] is None and read["plainPulls"] == []
@@ -144,43 +144,43 @@ def test_colour_by_is_wires_along_across_both_offset_trees_or_off(out):
 
 
 def test_along_and_across_colour_their_own_family_and_grey_the_other(out):
+    # each rope by its own tension against its 1,800 N working load, the
+    # tendon beside it left out (his answer of 11 October 2026)
     c = out["colours"]
-    red, edge2, edge0, _ = c["ramp"]
+    edge1, edge2, edge0 = c["judged"]
     other = c["other"]
-    # along at S1 q1: edge 0 at 200 N, the run's largest along; edges 1 and 2 grey
-    assert c["along"][0] == pytest.approx(red)
+    # along at S1 q1: edge 0 at 200 N; edges 1 and 2 grey
+    assert c["along"][0] == pytest.approx(edge0)
     assert c["along"][1] == c["along"][2] == other
     assert c["along"][3] != other
-    # across: edge 1 at 3,000 + 300 N, the largest; edge 2 at 400 + 300 N
-    assert c["across"][1] == pytest.approx(red)
+    # across: edge 1's rope at 3,000 N, edge 2's at 400 N
+    assert c["across"][1] == pytest.approx(edge1)
     assert c["across"][2] == pytest.approx(edge2)
     assert c["across"][0] == c["across"][3] == other
-    # both: every member by its whole force, on one scale
+    # both: every rope so
     assert c["both"][0] == pytest.approx(edge0)
-    assert c["both"][1] == pytest.approx(red)
+    assert c["both"][1] == pytest.approx(edge1)
     assert other not in c["both"]
     assert c["offset"] is None
     # a net with no families: nothing is either family's
     assert c["unsorted"] == other
-    assert out["force"] == 3300
+    assert out["force"] is False
 
 
-def test_along_and_both_mark_the_ropes_working_load_and_across_none(out):
+def test_along_across_and_both_mark_the_ropes_working_load(out):
     along, across, both = out["keys"]
-    assert along == {"title": "along, rope tension, kN", "min": "0", "max": "0.2 kN",
-                     "limitText": "working load 1.8 kN", "fraction": None}
-    assert across == {"title": "across, rope and tendon, kN", "min": "0", "max": "3.3 kN",
-                      "limitText": None, "fraction": None}
-    assert both["title"] == "rope and tendon, kN" and both["max"] == "3.3 kN"
-    assert both["limitText"] == "working load 1.8 kN"
-    assert both["fraction"] == pytest.approx(1800 / 3300)
+    assert along == {"title": "along, rope tension, kN", "min": "0", "max": "3.6 kN",
+                     "limitText": "working load 1.8 kN", "fraction": 0.5, "judged": True}
+    assert across == {"title": "across, rope tension, kN", "min": "0", "max": "3.6 kN",
+                      "limitText": "working load 1.8 kN", "fraction": 0.5, "judged": True}
+    assert both["title"] == "rope tension, kN" and both["max"] == "3.6 kN"
 
 
 def test_the_values_on_the_model_are_each_familys_worst_and_its_worst_a_side(out):
     labels = out["labels"]
     assert labels["along"] == [["member", 0, "0.2 kN"], ["member", 3, "0.1 kN"]]
-    assert labels["across"] == [["member", 1, "3.3 kN"], ["member", 2, "0.7 kN"]]
-    assert labels["both"] == [["member", 1, "3.3 kN"], ["member", 2, "0.7 kN"]]
+    assert labels["across"] == [["member", 1, "3.0 kN"], ["member", 2, "0.4 kN"]]
+    assert labels["both"] == [["member", 1, "3.0 kN"], ["member", 2, "0.4 kN"]]
     assert out["shown"] == [True, True, True]
 
 

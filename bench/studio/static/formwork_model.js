@@ -114,18 +114,19 @@ export function readSim(doc) {
       }
     });
   }
-  // each family's largest over the run: along, its ropes alone; across, each
-  // rope with its tendon; both, every member so
+  // each family's largest rope over the run, the tendons left out (his
+  // answer of 11 October 2026: each rope by its own tension): along, across,
+  // and both, every rope
   let along = 0;
   let across = 0;
   let both = 0;
   for (const c of captures) {
     for (let e = 0; c.tension && e < edges.length; e++) {
-      const whole = memberForce({ edgeTendon }, c, e);
-      if (whole > both) both = whole;
+      const t = c.tension[e];
+      if (t > both) both = t;
       const family = families && families[e];
-      if (family === "along" && c.tension[e] > along) along = c.tension[e];
-      if (family === "across" && whole > across) across = whole;
+      if (family === "along" && t > along) along = t;
+      if (family === "across" && t > across) across = t;
     }
   }
   return {
@@ -155,14 +156,6 @@ export function readSim(doc) {
     older: !Array.isArray(net.faces) || doc.captures.some((c) => !Array.isArray(c.ground))
       || !("families" in net),
   };
-}
-
-// A member's whole force at a capture, N: its rope's tension and, on an across
-// line, the pull of the tendon beside it (spec 2026-10-11 across tendons,
-// section 6).
-export function memberForce(sim, c, e) {
-  const t = sim.edgeTendon ? sim.edgeTendon[e] : -1;
-  return c.tension[e] + (t >= 0 ? c.tendonTension[t] || 0 : 0);
 }
 
 // The capture's label: its machine time and phase during the raise, its row
@@ -335,12 +328,45 @@ export function deviationBand(mm, tolerance) {
 const SCALE = { wire: "wire", tension: "tension", deviation: "deviation", utilisation: "utilisation",
                 along: "along", across: "across", both: "both" };
 
+// Each part judged against its own limit (his answer of 11 October 2026: red
+// to green by whether it does what it should, not a range from nought to the
+// run's largest): green at nothing, amber at half its limit, red at it, deep
+// red at twice it and past. Each stop: [share of the limit, colour].
+export const JUDGED_STOPS = [[0, "#3f9e57"], [0.5, "#c99a2e"], [1, "#c24936"], [2, "#7a1610"]];
+const JUDGED_TOP = 2;
+
+export function judged(share) {
+  const s = Math.min(Math.max(Number(share) || 0, 0), JUDGED_TOP);
+  let i = 1;
+  while (i < JUDGED_STOPS.length - 1 && s > JUDGED_STOPS[i][0]) i++;
+  const [s0, c0] = JUDGED_STOPS[i - 1];
+  const [s1, c1] = JUDGED_STOPS[i];
+  const t = (s - s0) / (s1 - s0);
+  const a = hexRgb(c0);
+  const b = hexRgb(c1);
+  return a.map((v, k) => v + (b[k] - v) * t);
+}
+
+// The limit a Colour by judges against: a wire, one spool's pull; a rope, its
+// working load; a node, the tolerance; a tree member, its capacity, 1. Null
+// where the run names none (a run cut for a prestress has no spool).
+function limitOf(by, sim, tolerance) {
+  const o = (sim && sim.options) || {};
+  const rope = o.rope_working_newtons;
+  const limit = { wire: o.have_newtons, tension: rope, along: rope, across: rope, both: rope,
+                  deviation: tolerance, utilisation: 1 }[by];
+  const v = Number(limit);
+  return limit != null && Number.isFinite(v) && v > 0 ? v : null;
+}
+
 // The colour a value is drawn in under a Colour by choice, [r, g, b] from 0 to
-// 1, on the full ramp over the run (spec 2026-10-11 section 5.1); null where
-// the choice colours nothing (Off). Whether a part is over its limit is
-// Weakest's to show, not the colour's.
-export function colourOf(by, value, sim) {
+// 1: judged against its limit, or with none named on the full ramp over the
+// run (spec 2026-10-11 section 5.1); null where the choice colours nothing
+// (Off). tolerance: the tab's, for the offsets.
+export function colourOf(by, value, sim, tolerance = null) {
   if (!sim || value == null || !SCALE[by]) return null;
+  const limit = limitOf(by, sim, tolerance);
+  if (limit != null) return judged(value / limit);
   const top = sim.scales[SCALE[by]];
   return ramp(top > 0 ? value / top : 0);
 }
@@ -356,40 +382,45 @@ function kilo(n) {
 export const OTHER_FAMILY = hexRgb("#7d828a");
 
 // The colour a net member is drawn in under a Colour by choice: its rope's
-// tension under the old Ropes, its family's force under Along and Across (the
-// other family grey), its whole force under Both; null where the choice does
-// not colour members.
+// own tension, the tendon beside it left out (his answer of 11 October 2026),
+// under the old Ropes and Both, and under Along and Across for its family
+// (the other family grey); null where the choice does not colour members.
 export function memberColour(by, sim, c, e) {
-  if (by === "tension") return colourOf("tension", c.tension[e], sim);
-  if (by === "both") return colourOf("both", memberForce(sim, c, e), sim);
+  if (by === "tension" || by === "both") return colourOf(by, c.tension[e], sim);
   if (by === "along" || by === "across") {
     if (!sim.families || sim.families[e] !== by) return OTHER_FAMILY;
-    return colourOf(by, by === "along" ? c.tension[e] : memberForce(sim, c, e), sim);
+    return colourOf(by, c.tension[e], sim);
   }
   return null;
 }
 
-// The key a Colour by choice draws: a real scale from nought to the run's
-// largest, and the limit named, with its place on the bar (fraction) when it
-// is on it; null for Off. limits: { have, rope, tolerance } (a bare number is
-// the tolerance, as the tab's older calls give it).
+// The key a Colour by choice draws: judged against its limit, from nought to
+// twice the limit, the limit named and marked at the middle (judged); or with
+// no limit named, the ramp from nought to the run's largest; null for Off.
+// limits: { have, rope, tolerance } (a bare number is the tolerance, as the
+// tab's older calls give it).
 export function colourKey(by, sim, limits) {
   if (!sim || !SCALE[by]) return null;
   const given = typeof limits === "number" ? { tolerance: limits } : (limits || {});
   const top = sim.scales[SCALE[by]];
+  const working = (v) => "working load " + kilo(v);
   const keyed = {
-    wire: ["wire tension, N", grouped(top), given.have, (v) => "one spool " + grouped(v)],
-    tension: ["rope tension, kN", kilo(top), given.rope, (v) => "working load " + kilo(v)],
-    along: ["along, rope tension, kN", kilo(top), given.rope, (v) => "working load " + kilo(v)],
-    across: ["across, rope and tendon, kN", kilo(top), null, null],
-    both: ["rope and tendon, kN", kilo(top), given.rope, (v) => "working load " + kilo(v)],
-    deviation: ["offset, mm", millimetres(top), given.tolerance, (v) => "tolerance " + Number(v) + " mm"],
-    utilisation: ["tree utilisation", top.toFixed(2), 1.0, (v) => "capacity " + Number(v).toFixed(1)],
+    wire: ["wire tension, N", grouped, given.have, (v) => "one spool " + grouped(v)],
+    tension: ["rope tension, kN", kilo, given.rope, working],
+    along: ["along, rope tension, kN", kilo, given.rope, working],
+    across: ["across, rope tension, kN", kilo, given.rope, working],
+    both: ["rope tension, kN", kilo, given.rope, working],
+    deviation: ["offset, mm", millimetres, given.tolerance, (v) => "tolerance " + Number(v) + " mm"],
+    utilisation: ["tree members, share of capacity", (v) => Number(v).toFixed(2), 1.0,
+                  (v) => "capacity " + Number(v).toFixed(1)],
   }[by];
-  const [title, max, limit, named] = keyed;
-  const known = limit != null && Number.isFinite(Number(limit));
-  const fraction = known && top > 0 && Number(limit) <= top ? Number(limit) / top : null;
-  return { title, min: "0", max, limitText: known ? named(limit) : null, fraction };
+  const [title, format, limit, named] = keyed;
+  const v = Number(limit);
+  if (limit != null && Number.isFinite(v) && v > 0) {
+    return { title, min: "0", max: format(JUDGED_TOP * v), limitText: named(v), fraction: 1 / JUDGED_TOP,
+             judged: true };
+  }
+  return { title, min: "0", max: format(top), limitText: null, fraction: null, judged: false };
 }
 
 // The parts a Colour by puts its values on, and which Show tick they need.
@@ -412,8 +443,7 @@ function valuesFor(sim, c, by) {
   } else if (by === "along" || by === "across" || by === "both") {
     sim.edges.forEach(([u], e) => {
       if (by !== "both" && (!sim.families || sim.families[e] !== by)) return;
-      out.push([{ kind: "member", index: e }, by === "along" ? c.tension[e] : memberForce(sim, c, e),
-                side(u)]);
+      out.push([{ kind: "member", index: e }, c.tension[e], side(u)]);
     });
   } else if (by === "deviation") {
     for (let i = 0; i < sim.nodes; i++) out.push([{ kind: "node", index: i }, c.deviation[i], side(i)]);
@@ -801,7 +831,10 @@ export function paintOverlay(ctx, { width, height, caption, labels, key }) {
     ctx.font = px(12) + "px sans-serif";
     ctx.fillText(key.title, barX, y0 + px(14));
     const gradient = ctx.createLinearGradient(barX, 0, barX + barW, 0);
-    RAMP_STOPS.forEach((stop, i) => gradient.addColorStop(i / (RAMP_STOPS.length - 1), stop));
+    const stops = key.judged
+      ? JUDGED_STOPS.map(([share, colour]) => [share / JUDGED_TOP, colour])
+      : RAMP_STOPS.map((colour, i) => [i / (RAMP_STOPS.length - 1), colour]);
+    stops.forEach(([at, colour]) => gradient.addColorStop(at, colour));
     ctx.fillStyle = gradient;
     ctx.fillRect(barX, barY, barW, barH);
     // the limit marked at its place on the bar, when it is within the run

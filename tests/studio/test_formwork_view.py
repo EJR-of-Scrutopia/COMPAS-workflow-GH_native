@@ -36,6 +36,27 @@ def ramp(fraction):
     a, b = ([((int(s[1:], 16) >> k) & 255) / 255 for k in (16, 8, 0)] for s in STOPS[i:i + 2])
     return linear([x + (y - x) * (f - i) for x, y in zip(a, b)])
 
+
+# his answer of 11 October 2026: each part judged against its own limit, green
+# at nothing, amber at half, red at the limit, deep red at twice it and past
+JUDGED = [(0.0, "#3f9e57"), (0.5, "#c99a2e"), (1.0, "#c24936"), (2.0, "#7a1610")]
+
+
+def judged_srgb(share):
+    # formwork_model.judged, in sRGB
+    share = min(max(share, 0.0), JUDGED[-1][0])
+    for (s0, c0), (s1, c1) in zip(JUDGED, JUDGED[1:]):
+        if share <= s1:
+            t = (share - s0) / (s1 - s0)
+            a, b = ([((int(c[1:], 16) >> k) & 255) / 255 for k in (16, 8, 0)] for c in (c0, c1))
+            return [x + (y - x) * t for x, y in zip(a, b)]
+    raise AssertionError(share)
+
+
+def judged(share):
+    # the same, as three is given it
+    return linear(judged_srgb(share))
+
 HARNESS = """
 import * as THREE from %(three)r;
 import * as m from %(model)r;
@@ -255,13 +276,13 @@ def test_the_skin_is_the_faces_placed_riding_the_net(out):
 
 def test_each_colour_by_colours_its_own_part(out):
     small, larger = out["deviation"]
-    # node 0 at 5 mm and node 2 at 12 mm, on the run's 500 mm scale (spec
-    # 2026-10-11 section 5.1: every Colour by on the full ramp over the run)
-    assert small == pytest.approx(ramp(5 / 500), abs=1e-6)
-    assert larger == pytest.approx(ramp(12 / 500), abs=1e-6)
+    # node 0 at 5 mm and node 2 at 12 mm against the 20 mm tolerance (his
+    # answer of 11 October 2026: each part judged against its limit)
+    assert small == pytest.approx(judged(5 / 20), abs=1e-6)
+    assert larger == pytest.approx(judged(12 / 20), abs=1e-6)
     tree, net, _ = out["utilisation"]
-    # the run's largest utilisation, 1.2: the ramp's end
-    assert tree == pytest.approx(ramp(1.0), abs=1e-6)
+    # the member at 1.2 of its capacity
+    assert tree == pytest.approx(judged(1.2), abs=1e-6)
     assert net == pytest.approx(linear([0.86, 0.86, 0.86]))
 
 

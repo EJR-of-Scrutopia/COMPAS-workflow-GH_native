@@ -161,7 +161,8 @@ function fakeContext() {
     measureText: (text) => ({ width: String(text).length * 6 }),
     fillRect: () => { drawn.rects += 1; },
     fillText: (text, x, y) => { drawn.texts.push([String(text), Math.round(x), Math.round(y)]); },
-    createLinearGradient: () => { drawn.gradients += 1; return { addColorStop() {} }; } };
+    createLinearGradient: () => { drawn.gradients += 1;
+      return { addColorStop: (at, colour) => { (drawn.stops = drawn.stops || []).push([at, colour]); } }; } };
   return [ctx, drawn];
 }
 {
@@ -315,16 +316,22 @@ def test_a_recorded_frame_carries_the_labels_and_the_key(out):
     # the key: its title, its two ends, and its limit on a line of its own
     # under them, as the page's legend has it (found in the video of 11
     # October: drawn over the bar, it sat on the title)
-    assert texts == [out["caption"], "3.0 kN", "offset, mm", "0", "500 mm", "tolerance 20 mm"]
+    assert texts == [out["caption"], "3.0 kN", "offset, mm", "0", "40 mm", "tolerance 20 mm"]
     at = {text: y for text, _, y in out["overlayBands"]["texts"]}
     assert at["offset, mm"] < at["0"] < at["tolerance 20 mm"]
     label = next(t for t in out["overlayBands"]["texts"] if t[0] == "3.0 kN")
     # standing on its point, as the page's labels do
     assert abs(label[1] - 500) < 30 and label[2] < 400
     assert out["overlayBands"]["gradients"] == 1 and out["overlayBands"]["rects"] >= 4
+    # judged against its limit, the key's bar green to deep red, the limit at
+    # its middle (his answer of 11 October 2026)
+    assert out["overlayBands"]["stops"] == [[0, "#3f9e57"], [0.25, "#c99a2e"], [0.5, "#c24936"],
+                                            [1, "#7a1610"]]
     ramp = out["overlayRamp"]
+    # a rope with no working load named keeps the ramp over the run
     assert [text for text, _, _ in ramp["texts"]] == ["rope tension, kN", "0", "3.0 kN"]
     assert ramp["gradients"] == 1
+    assert [colour for _, colour in ramp["stops"]] == ["#3a6fc4", "#3fa6a0", "#e8c547", "#cc2211"]
     assert out["overlayNone"]["texts"] == [] and out["overlayNone"]["rects"] == 0
 
 

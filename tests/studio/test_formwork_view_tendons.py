@@ -1,7 +1,8 @@
 """The across tendons drawn (spec 2026-10-11 across tendons, section 6): the
-net coloured by Along, Across and Both with the other family grey, and the
+net coloured by Along, Across and Both with the other family grey, each rope
+judged against its working load (his answer of 11 October 2026), and the
 Tendons chip's tendons proud of the net with a reel at each column head, in
-the Across or Both colours and white otherwise."""
+the colours of the ropes they run beside and white otherwise."""
 
 from __future__ import annotations
 
@@ -15,7 +16,7 @@ import pytest
 
 from test_cable_net_tendons import with_tendons
 from test_formwork_model import document
-from test_formwork_view import STATIC, linear, ramp
+from test_formwork_view import STATIC, judged, linear
 
 HARNESS = """
 import * as THREE from %(three)r;
@@ -64,6 +65,13 @@ OTHER = linear([0x7d / 255, 0x82 / 255, 0x8a / 255])
 WHITE = [1.0, 1.0, 1.0]
 
 
+def _tendons():
+    # the ropes' working load, 1,800 N, which each rope is judged against
+    doc = with_tendons(document())
+    doc["options"]["rope_working_newtons"] = 1800.0
+    return doc
+
+
 @pytest.fixture(scope="module")
 def out(tmp_path_factory):
     if shutil.which("node") is None:
@@ -73,7 +81,7 @@ def out(tmp_path_factory):
         "three": (STATIC / "vendor" / "three.module.js").resolve().as_uri(),
         "model": (STATIC / "formwork_model.js").resolve().as_uri(),
         "view": (STATIC / "formwork_view.js").resolve().as_uri(),
-        "doc": json.dumps(with_tendons(document())), "plain": json.dumps(document())},
+        "doc": json.dumps(_tendons()), "plain": json.dumps(document())},
         encoding="utf-8")
     result = subprocess.run(["node", str(script)], capture_output=True, text=True,
                             encoding="utf-8")
@@ -81,15 +89,17 @@ def out(tmp_path_factory):
     return json.loads(result.stdout)
 
 
-def test_across_colours_each_across_member_with_its_tendon_and_greys_the_rest(out):
+def test_across_colours_each_across_rope_and_greys_the_rest(out):
     across = out["across"]
-    # S1 q1: edge 1 at 3,000 + 300 N, the run's largest across; edge 2 at
-    # 400 + 300 N; edges 0 and 3 run along, grey
-    assert across["net"][1] == pytest.approx(ramp(1.0), abs=1e-6)
-    assert across["net"][2] == pytest.approx(ramp(700 / 3300), abs=1e-6)
+    # S1 q1: edge 1's rope at 3,000 N and edge 2's at 400 N against their
+    # 1,800 N working load, the tendons' pull left out; edges 0 and 3 run
+    # along, grey
+    assert across["net"][1] == pytest.approx(judged(3000 / 1800), abs=1e-6)
+    assert across["net"][2] == pytest.approx(judged(400 / 1800), abs=1e-6)
     assert across["net"][0] == pytest.approx(OTHER, abs=1e-6)
     assert across["net"][3] == pytest.approx(OTHER, abs=1e-6)
-    # each tendon in its across member's colour, and its reel too
+    # each tendon in the colour of the rope beside it, so it does not hide
+    # it, and its reel too
     assert across["tendons"][0] == across["tendons"][1] == across["net"][1]
     assert across["tendons"][2] == pytest.approx(across["net"][2])
     assert across["reels"][0] == pytest.approx(across["net"][1])
@@ -101,7 +111,7 @@ def test_along_colours_the_along_members_and_greys_the_tendons_with_their_family
     # found on screen: white tendons over the grey across members were the
     # loudest thing in the Along view
     along = out["along"]
-    assert along["net"][0] == pytest.approx(ramp(1.0), abs=1e-6)          # 200 N, the largest along
+    assert along["net"][0] == pytest.approx(judged(200 / 1800), abs=1e-6)
     assert along["net"][1] == pytest.approx(OTHER, abs=1e-6)
     assert along["tendons"][0] == pytest.approx(OTHER, abs=1e-6)
     assert along["reels"][1] == pytest.approx(OTHER, abs=1e-6)
@@ -120,10 +130,10 @@ def test_under_offset_each_tendon_wears_its_members_colours_and_white_on_a_plain
     assert wire["tendons"][0] == pytest.approx(WHITE) and wire["reels"][0] == pytest.approx(WHITE)
 
 
-def test_both_colours_every_member_by_its_whole_force(out):
+def test_both_colours_every_rope_by_its_own_tension(out):
     both = out["both"]
-    assert both["net"][0] == pytest.approx(ramp(200 / 3300), abs=1e-6)
-    assert both["net"][1] == pytest.approx(ramp(1.0), abs=1e-6)
+    assert both["net"][0] == pytest.approx(judged(200 / 1800), abs=1e-6)
+    assert both["net"][1] == pytest.approx(judged(3000 / 1800), abs=1e-6)
     assert both["tendons"][0] == both["net"][1]
 
 

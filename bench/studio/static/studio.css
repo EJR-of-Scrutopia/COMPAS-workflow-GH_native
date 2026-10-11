@@ -323,6 +323,10 @@ body.panel-collapsed #legend { right: var(--s4); }
    from nought to the run's largest, its limit marked at its place and named. */
 #legend.ramp #legend-bar { position: relative;
   background: linear-gradient(to right, #3a6fc4, #3fa6a0, #e8c547, #cc2211); }
+/* judged against its limit (his answer of 11 October 2026): formwork_model's
+   JUDGED_STOPS, nought to twice the limit, the limit at the middle */
+#legend.ramp.judged #legend-bar {
+  background: linear-gradient(to right, #3f9e57 0%, #c99a2e 25%, #c24936 50%, #7a1610 100%); }
 #legend-limit { position: absolute; top: -3px; bottom: -3px; width: 2px; margin-left: -1px;
   background: var(--ink); }
 #legend-limit.hidden, #legend:not(.ramp) #legend-limit,

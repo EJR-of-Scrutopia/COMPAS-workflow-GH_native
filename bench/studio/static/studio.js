@@ -15438,19 +15438,21 @@ function leaveFormworkTab() {
 function paintFormworkLegend(key) {
   if (!key) {
     document.getElementById("legend").classList.add("hidden");
-    document.getElementById("legend").classList.remove("ramp");
+    document.getElementById("legend").classList.remove("ramp", "judged");
     return;
   }
   paintRampLegend(key);
 }
 
-// The one Cable net tab's key (spec 2026-10-11 section 5.1): the full ramp
-// from nought to the run's largest, the limit marked at its place on the bar
-// and named; a limit past the run's largest is named with no mark.
+// The one Cable net tab's key (spec 2026-10-11 section 5.1): judged against
+// its limit, green to deep red from nought to twice the limit, the limit
+// marked at the middle and named (his answer of 11 October 2026); with no
+// limit named, the full ramp from nought to the run's largest.
 function paintRampLegend(key) {
   const legend = document.getElementById("legend");
   legend.classList.remove("hidden", "bands", "deflection");
   legend.classList.add("ramp");
+  legend.classList.toggle("judged", !!key.judged);
   document.getElementById("legend-title").textContent = key.title;
   document.getElementById("legend-min").textContent = key.min;
   document.getElementById("legend-zero").textContent = "";

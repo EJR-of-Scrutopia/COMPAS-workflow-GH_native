@@ -347,3 +347,16 @@ def test_the_tab_records_the_raise_through_the_studio_s_recorder():
 
 def test_the_studio_labels_and_card_stand_down_while_the_tab_is_open():
     assert 'document.body.classList.toggle("formwork-open", on);' in _inner(JS, "setActive")
+
+
+def test_the_key_bar_runs_green_to_deep_red_when_it_judges_against_a_limit():
+    # his answer of 11 October 2026: each part judged against its own limit;
+    # the page's bar wears formwork_model's JUDGED_STOPS, the limit at its middle
+    legend = _top(STUDIO, "paintRampLegend")
+    assert 'legend.classList.toggle("judged", !!key.judged);' in legend
+    assert 'classList.remove("ramp", "judged");' in _top(STUDIO, "paintFormworkLegend")
+    assert ("#legend.ramp.judged #legend-bar {\n  background: linear-gradient(to right, #3f9e57 0%, "
+            "#c99a2e 25%, #c24936 50%, #7a1610 100%); }") in CSS
+    model = (STATIC / "formwork_model.js").read_text(encoding="utf-8")
+    assert ('export const JUDGED_STOPS = [[0, "#3f9e57"], [0.5, "#c99a2e"], [1, "#c24936"], '
+            '[2, "#7a1610"]];') in model
