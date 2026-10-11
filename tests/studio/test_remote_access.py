@@ -1000,7 +1000,9 @@ def test_the_weight_note_names_the_material_and_shows_on_load():
     assert "entry.label" in label, "a library skin answers with its own name"
     note = _js_function(js, "function updateWeightNote()")
     assert "weighedAsLabel() + \": \"" in note, "the name leads"
-    assert "kg/m3 x " in note and "kN/m2" in note
+    # the density and the load, no sum and no tooltip (his ruling of 11
+    # October 2026: values, not explanations)
+    assert "kg/m3, " in note and "kN/m2" in note and " mm = " not in note and "note.title" not in note
     # Written on every study load, not only when a control moves. Pinned
     # CONTIGUOUS with the call above it, so an early return slipped in
     # between cannot leave the text standing while the row goes blank.
@@ -2076,7 +2078,7 @@ def test_a_scene_tile_can_update_itself_from_the_view_on_screen():
     # The tile underneath restores the scene, so the pip must not do both.
     assert "      event.stopPropagation();\n" \
         "      if (!state.bundle) {\n" \
-        '        showBanner("Load a study before updating a scene", "error");' in js
+        '        showBanner("No study loaded", "error");' in js
     assert "      await refreshScenes();\n    });\n    const holder" in js, (
         "the list is re-read so the new still appears at once")
     # Hovering ANYWHERE on the tile reveals the pip. A sibling selector
@@ -2087,7 +2089,7 @@ def test_a_scene_tile_can_update_itself_from_the_view_on_screen():
     # scene is bad. "Method Not Allowed" is the least useful thing that
     # could be said about that, and it is what he was shown.
     assert "        showBanner(response.status === 405" in js
-    assert '            + "update route existed. Restart it and this will work."' in js
+    assert '          ? "Scene not updated: restart the server"' in js
 
     css = (REPO / "bench" / "studio" / "static" / "studio.css").read_text(encoding="utf-8")
     # POSITIONING UNSCOPED, because the scene list is drawn in two places:
@@ -2696,8 +2698,9 @@ def test_a_scene_missing_its_sky_says_so_and_restores_the_rest():
     verdict = apply_body.index("await loadHdri(hdri.name);")
     after_load = apply_body[verdict:]
     assert "if (state.hdriName !== hdri.name)" in after_load
-    assert "is not in the sky " in after_load
-    assert "the rest of the scene is restored" in after_load
+    # a few words (his ruling of 11 October 2026: no descriptive text)
+    assert "showBanner('Sky \"' + hdri.name + '\" missing', \"error\");" in after_load
+    assert "the rest of the scene is restored" not in after_load
 
 
 def test_the_folder_status_line_carries_the_reason():
@@ -6028,7 +6031,7 @@ def test_a_still_is_tiled_through_its_own_endpoint_and_covers_the_viewport():
     assert "paintStillReadout" not in paint, (
         "the size line belongs to paintStillSize, written when the size "
         "changes and never in the finally clause of a render")
-    assert "written in " in still
+    assert "written in " not in still and '" s  " + done.still' in still
 
     # Named for the page.
     assert '{ key: "a3-300", label: "A3", long: 4961 }' in js

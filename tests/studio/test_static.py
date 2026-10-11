@@ -2450,6 +2450,38 @@ def test_the_studio_log_is_kept_off_the_screen():
     assert "logStudio(" in _function_body(js, "loadHdri")
 
 
+def test_the_drawers_and_the_still_say_names_and_values_only():
+    """His ruling of 11 October 2026: no descriptive text. Empty lists say
+    none, tooltips name what they are, the still's line is its size, its
+    time and its file, and a failure says what failed in a few words."""
+
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    for gone in ("no saved scenes yet", "nothing on this layer yet", "more placed by hand",
+                 "This scene file is damaged and cannot be restored", '"loads " + row.study',
+                 "Update this scene with the view on screen now", "Delete this scene",
+                 " -- click to select", "Open this layer: newly placed",
+                 "Show or hide everything on the open layer", "Delete the open layer and every prop",
+                 "variants, one at random", "Failed to load the HDRI list", "Could not load HDRI",
+                 "unrecognised column JSON", "The formwork's columns failed",
+                 "The scene's study would not load", "That scene file is damaged; delete it",
+                 "Could not restore that scene", "Load a study before",
+                 "was started before the update route existed", "framing the plate",
+                 "the plate failed", "predates the still fixes", "Restart studio first (foot",
+                 '" pixels, "', '" was refused"', '" placed" : "none placed"', '" saved" : "none saved"',
+                 '"calm"', "the structural material\"", "and the weight the analysis is run at"):
+        assert gone not in js, gone
+    assert js.count('empty.textContent = "none";') == 2
+    assert 'tile.title = row.unreadable ? "Damaged" : "Restore";' in js
+    assert 'remove.title = "Delete";' in js and 'update.title = "Update";' in js
+    assert 'tab.title = "Double-click to rename";' in js
+    assert 'eye.title = "Show or hide layer";' in js and 'del.title = "Delete layer";' in js
+    assert 'heading("+" + (byHand.length - shown.length).toLocaleString() + " more");' in js
+    assert 'showBanner("Sky list failed: " + error.message, "error");' in js
+    assert 'showBanner("Scene damaged", "error");' in js
+    assert 'paintStillReadout(frame.width + " x " + frame.height);' in js
+    assert 'paintStillReadout(sent + " / " + (across * down));' in js
+
+
 def test_banners_dismiss_themselves_and_close():
     js = (STATIC / "studio.js").read_text(encoding="utf-8")
     html = (STATIC / "index.html").read_text(encoding="utf-8")
@@ -2935,7 +2967,7 @@ def test_asset_loads_announce_themselves_on_the_glass():
     assert 'classList.remove("hidden")' in body
     # The four wired loaders, each with a fitting label.
     assert 'beginLoading("Loading sky " + name)' in js
-    assert 'beginLoading("Preparing sky " + name + " at full quality")' in js
+    assert js.count('beginLoading("Loading sky " + name)') == 2 and "Preparing sky" not in js
     assert 'beginLoading("Loading " + (entry.label || "material"))' in js
     assert 'beginLoading("Loading floor " + (entry.label || key))' in js
     # Props announce ONE MODEL at a time now: the library is lazy (the
@@ -4240,7 +4272,7 @@ def test_the_layers_drawer_lists_what_is_placed():
     assert 'class="hidden danger"' in button and "title=" in button and "disabled" in button
     stamp = _function_body(js, "paintStampButton")
     assert "const going = actingProps().length;" in stamp
-    assert '"Nothing selected to delete: pick a tile here, or a prop in the viewport"' in stamp
+    assert 'del.title = going ? "Delete " + going.toLocaleString() : "Nothing selected";' in stamp
     assert "() => deletePropsWithUndo(actingProps()));" in js
     assert 'document.getElementById("layer-delete-chosen").classList' in _function_body(js, "renderShelf")
     assert "#shelf-actions button.danger:hover:not(:disabled) { background: var(--danger);" in css

@@ -499,9 +499,10 @@ def test_every_card_is_in_place_before_any_plot_measures_itself():
     js = (STATIC / "studio.js").read_text(encoding="utf-8")
     build = _body(js, "async function buildLiveGraphs()")
     placed = build.index("holder.appendChild(card);")
-    notes = build.index("notes.textContent = series.notes.join(\" \");")
     drawn = build.index("await window.Plotly.react(")
-    assert placed < drawn and notes < drawn, "cards and notes first, then the plots"
+    assert placed < drawn, "cards first, then the plots"
+    # the notes strip went (his ruling of 11 October 2026: no descriptive text)
+    assert "graphs-notes" not in build and "series.notes" not in build
     assert "for (const spec of specs) holder.appendChild(liveGraphs.cards.get(spec.id));" in build, (
         "the cards stand in the specs' order, a late card not left at the bottom")
     assert "new ResizeObserver(" in js and "window.Plotly.Plots.resize(plot)" in js
@@ -549,7 +550,7 @@ def test_the_graphs_tuck_to_the_side_and_remember_it():
     assert early < tick.index("buildLiveGraphs();"), "no build while tucked either"
     apply = _body(js, "function applyGraphsTucked(on)")
     assert 'panel.classList.toggle("tucked", liveGraphs.tucked);' in apply
-    assert '"Bring the graphs back" : "Tuck the graphs to the side"' in apply
+    assert '"Show graphs" : "Hide graphs"' in apply
     assert "panel-collapsed" not in apply
     tucked = _body(js, "function setGraphsTucked(on)")
     assert 'localStorage.setItem(LIVE_TUCKED_KEY, on ? "1" : "0")' in tucked
@@ -566,7 +567,7 @@ def test_the_graphs_stand_on_the_drawers_ground_with_the_drawers_buttons():
 
     css = (STATIC / "studio.css").read_text(encoding="utf-8")
     assert "--veil-thin" not in css, "the thin veil had no other use"
-    assert ("#graphs-head, #graphs-notes, #graphs-dials, .live-card { background: var(--scrim);\n"
+    assert ("#graphs-head, #graphs-dials, .live-card { background: var(--scrim);\n"
             "  -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px);") in css
     button = css[css.index("#graphs-head button {"):]
     button = button[:button.index("}")]
@@ -583,113 +584,20 @@ def test_the_graphs_stand_on_the_drawers_ground_with_the_drawers_buttons():
     assert "nowrap" not in study and "ellipsis" not in study
 
 
-def test_the_header_says_when_a_skin_sets_the_weight():
-    """"concrete, 200 mm at 8940 kg/m3" was a copper skin's density on a
-    concrete cut; the study line names the skin that sets the weight."""
+def test_the_header_is_the_study_its_material_thickness_and_density():
+    """His ruling of 11 October 2026: values, not sentences. The header was
+    "5 sided form, concrete cut in a copper skin, 80 mm, weighed at 8940
+    kg/m3"; it is the study, the material, the thickness and the density."""
 
     js = (STATIC / "studio.js").read_text(encoding="utf-8")
-    word = _body(js, "function liveSkinWord(bundle, density)")
-    assert "bundle.provenance.density_from_skin" in word
-    assert "(structural && Math.abs(density - structural) > 1)" in word
-    assert "if (pattern.test(entry.name)) { word = pattern.source; break; }" in word
-    # A skin swapped in since the cut re-cuts nothing when it keeps the
-    # structural class, so the skin worn now need not be the one whose
-    # density the bundle was weighed with. It is not named then.
-    assert 'if (Math.abs(skinDensity() - density) > 1) return "a library skin";' in word
     build = _body(js, "async function buildLiveGraphs()")
-    assert '(skinWord ? " cut in " + skinWord : "")' in build
-    assert '+ " mm, weighed at "' in build, (
-        "the header states the density the cut was weighed at, and does "
-        "not hand it to the material as its own")
-
-
-SKIN_WORD_HARNESS = r"""
-%(tables)s
-const library = [
-  { key: "metal/copper-mill-copper", family: "metal", name: "copper-mill-copper", label: "Copper mill copper" },
-  { key: "timber/grain-honey", family: "timber", name: "grain-honey", label: "Grain honey" },
-  { key: "stone/rough-ashlar", family: "stone", name: "rough-ashlar", label: "Rough ashlar" },
-  { key: "stone/limestone-buff", family: "stone", name: "limestone-buff", label: "Limestone buff" },
-  { key: "concrete/board-marked-grey", family: "concrete", name: "board-marked-grey", label: "Board marked grey" },
-  { key: "stone/granite-grey", family: "stone", name: "granite-grey", label: "Granite grey" },
-];
-const state = { appearance: { skin: null } };
-// The cut's own material, as the page's material-select holds it:
-// structuralDensity reads that select, and skinDensity falls back to it.
-let cut = "concrete";
-const document = { getElementById: () => ({ value: cut }) };
-const isLibraryKey = (key) => typeof key === "string" && key.includes("/");
-const libraryEntry = (key) => library.find((entry) => entry.key === key) || null;
-%(weight)s
-%(word)s
-const said = (skin, material, density, fromSkin) => {
-  state.appearance.skin = skin;
-  cut = material;
-  return liveSkinWord({ material, provenance: { density_from_skin: fromSkin } }, density);
-};
-console.log(JSON.stringify({
-  copper: said("metal/copper-mill-copper", "concrete", 8940, true),
-  timber: said("timber/grain-honey", "timber", 500, true),
-  stone: said("stone/rough-ashlar", "stone", 2400, true),
-  limestone: said("stone/limestone-buff", "stone", 2400, true),
-  concrete: said("concrete/board-marked-grey", "concrete", 2400, true),
-  plain: said("concrete", "concrete", 2400, false),
-  // Granite worn over a cut weighed at limestone's 2400: the swap
-  // re-cut nothing, so this skin did not set that density.
-  swapped: said("stone/granite-grey", "stone", 2400, true),
-  // And the same skin over a cut weighed at its own 2700 is named.
-  worn: said("stone/granite-grey", "stone", 2700, true),
-}));
-"""
-
-
-@needs_node
-def test_the_header_names_the_skin_not_its_own_class(tmp_path):
-    """A timber skin weighs 500 kg/m3 against the structural 385, and
-    stone's family figure is 2400 against 2500, so the line said "timber
-    cut in a timber skin": a skin set the weight, but the words named the
-    same material. When the family IS the cut's class, the skin itself
-    is named.
-
-    And a skin the cut was NOT weighed with is not named at all. A swap
-    within one structural class (granite for limestone, both stone)
-    dispatches no material change; since 2026-09-15 it re-cuts at the new
-    density all the same, but until that cut lands the header would
-    otherwise name the skin worn now beside the density the one before it
-    set."""
-
-    js = (STATIC / "studio.js").read_text(encoding="utf-8")
-    tables = []
-    for head in ("const STRUCTURAL_DENSITIES = {", "const FAMILY_DENSITIES = {",
-                 "const FAMILY_TO_STRUCTURAL = {"):
-        start = js.index(head)
-        tables.append(js[start:js.index("};", start) + 2])
-    start = js.index("const NAME_DENSITIES = [")
-    tables.append(js[start:js.index("];", start) + 2])
-    word = "function liveSkinWord(bundle, density)" + _body(js, "function liveSkinWord(bundle, density)")[
-        len("function liveSkinWord(bundle, density)"):] + "\n}\n"
-    # The real weigher comes too: the word and the weight have to agree,
-    # and liveSkinWord names a skin only when skinDensity says that skin
-    # is the one the bundle was weighed with.
-    weight = "\n".join(_body(js, head) + "\n}\n" for head in (
-        "function structuralDensity()", "function skinDensity()"))
-    script = tmp_path / "skin_word.mjs"
-    script.write_text(SKIN_WORD_HARNESS % {"tables": "\n".join(tables), "word": word,
-                                           "weight": weight},
-                      encoding="utf-8")
-    result = subprocess.run(["node", str(script)], capture_output=True, text=True)
-    assert result.returncode == 0, result.stderr
-    said = json.loads(result.stdout)
-    assert said["copper"] == "a copper skin"
-    assert said["timber"] == "a grain honey skin"
-    assert said["stone"] == "a rough ashlar skin"
-    assert said["limestone"] == "a limestone skin", "a name word that says more is kept"
-    assert said["concrete"] == "a board marked grey skin"
-    assert said["plain"] == ""
-    assert said["swapped"] == "a library skin", (
-        "granite worn over a cut weighed at limestone's 2400 did not set "
-        "that density, so the header must not name it beside it")
-    assert said["worn"] == "a granite skin", "the skin that did set it is named"
+    assert ('study.textContent = [bundle.export, bundle.material,\n'
+            '        Math.round(bundle.provenance.thickness * 1000) + " mm", '
+            'Math.round(density) + " kg/m3"].join("  ");') in build
+    assert "liveSkinWord" not in js and "weighed at" not in build
+    html = (STATIC / "index.html").read_text(encoding="utf-8")
+    css = (STATIC / "studio.css").read_text(encoding="utf-8")
+    assert "graphs-notes" not in html and "#graphs-notes" not in css
 
 
 MATCH_HARNESS = r"""

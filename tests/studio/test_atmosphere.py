@@ -715,7 +715,7 @@ def test_a_folded_sky_atmosphere_or_wind_heading_says_what_it_holds(tmp_path):
     """.replace("%CHUNK%", json.dumps(chunk)))
     out = json.loads(printed.strip().splitlines()[-1])
     assert out == {"sky": "40%", "fog": "Haze", "rays": "Haze, rays 30%",
-                   "calm": "calm", "breeze": "10% from 225", "degree": 176}, out
+                   "calm": "0%", "breeze": "10%, 225", "degree": 176}, out
 
 
 def test_a_row_hidden_at_boot_still_becomes_a_row():

@@ -1735,7 +1735,7 @@ async function refreshHdriList(selectName) {
   try {
     ({ files } = await fetchJson("/api/hdri"));
   } catch (error) {
-    showBanner("Failed to load the HDRI list: " + error.message, "error");
+    showBanner("Sky list failed: " + error.message, "error");
     return null;
   }
   const select = document.getElementById("hdri-select");
@@ -1790,7 +1790,7 @@ function beginLoading(label) {
 // where 8192 of half-float is 256 MB and is then thrown away by the blur.
 async function loadHdriBackdrop(name) {
   const wanted = name;
-  const done = beginLoading("Preparing sky " + name + " at full quality");
+  const done = beginLoading("Loading sky " + name);
   try {
     // Full resolution is for machines with the memory to hold it: a 16k
     // backdrop uploads as half a GIGABYTE of texture, and an iPad asked
@@ -1893,7 +1893,7 @@ async function loadHdri(name) {
     // the banner, named, so it cannot be missed off-screen or overwritten
     // by the next progress message.
     status.textContent = "";
-    showBanner("Could not load HDRI " + name + ": " + error.message, "error");
+    showBanner("Sky " + name + " failed: " + error.message, "error");
     regenerateEnvironment(); // keep the environment matching state.environmentMode even on failure
   } finally {
     done();
@@ -4161,8 +4161,8 @@ function buildPropTiles() {
     tile.title = (entry.label || entry.key)
       + (entry.sizeMetres ? "  " + entry.sizeMetres.map(
         (n) => n.toFixed(n < 1 ? 2 : 1)).join(" x ") + " m" : "")
-      + (entry.variants > 1 ? "  --  " + entry.variants + " variants, one at random each time" : "")
-      + (entry.credit ? " -- " + entry.credit : "");
+      + (entry.variants > 1 ? "  " + entry.variants + " variants" : "")
+      + (entry.credit ? "  " + entry.credit : "");
     tile.addEventListener("click", async () => {
       select.value = entry.key;
       paintTileSelection(holder, entry.key);
@@ -5799,7 +5799,7 @@ function columnGeometryFrom(document_) {
     vertices = document_.equilibrium.vertices.map((v) => [v.x, v.y, v.z]);
     faces = document_.formGraph.faces.map((f) => f.vertices);
   } else {
-    throw new Error("unrecognised column JSON: need vertices+faces or a contract export");
+    throw new Error("column file unreadable");
   }
   const geometry = new THREE.BufferGeometry();
   geometry.setAttribute("position", new THREE.BufferAttribute(new Float32Array(vertices.flat()), 3));
@@ -5835,7 +5835,7 @@ async function loadColumns(names) {
     try {
       addColumnSolid(group, await fetchJson("/api/columns/" + encodeURIComponent(name)));
     } catch (error) {
-      showBanner("Column file " + name + " failed to load: " + error.message, "error");
+      showBanner("Column file " + name + ": " + error.message, "error");
     }
   }
   return group;
@@ -5873,7 +5873,7 @@ async function reloadColumns(names) {
     try {
       addColumnSolid(state.objects.columns, ownSolid);
     } catch (error) {
-      showBanner("The formwork's columns failed to draw: " + error.message, "error");
+      showBanner("Columns failed: " + error.message, "error");
     }
     scene.add(state.objects.columns);
   } else if (names.length) {
@@ -6156,7 +6156,7 @@ async function applyScene(record) {
   if (study) control("study-select").value = study;
   const loaded = await loadStudy(study);
   if (loaded === false) {
-    showBanner("The scene's study would not load: " + (state.lastRefusal || ""), "error");
+    showBanner("Study failed: " + (state.lastRefusal || ""), "error");
     return false;
   }
 
@@ -6319,9 +6319,7 @@ async function applyScene(record) {
     // everything else still restored (Param's live case: a scene saved
     // under evening_meadow after that file moved out of the sky folder).
     if (state.hdriName !== hdri.name) {
-      showBanner('This scene\'s sky "' + hdri.name + '" is not in the sky '
-        + "folder any more; the rest of the scene is restored under the "
-        + "current sky.", "error");
+      showBanner('Sky "' + hdri.name + '" missing', "error");
     }
   }
   applyEnvironment();
@@ -6540,9 +6538,8 @@ function renderSceneList() {
   if (!state.scenes.length) {
     const empty = document.createElement("div");
     empty.className = "scene-empty";
-    // Named after the button that actually exists (it says Save, not
-    // "Save scene"), in the same lowercase register as the other empties.
-    empty.textContent = "no saved scenes yet -- frame a view and press Save";
+    // the state, not how to change it (his ruling of 11 October 2026)
+    empty.textContent = "none";
     list.appendChild(empty);
     return;
   }
@@ -6550,9 +6547,7 @@ function renderSceneList() {
   for (const row of state.scenes) {
     const tile = document.createElement("button");
     tile.className = "scene-tile";
-    tile.title = row.unreadable
-      ? "This scene file is damaged and cannot be restored"
-      : "Restore " + row.name;
+    tile.title = row.unreadable ? "Damaged" : "Restore";
     if (row.thumbnail) {
       const image = document.createElement("img");
       // VERSIONED BY WHEN IT WAS SAVED. Param, 2026-09-14: "when i update a
@@ -6578,7 +6573,7 @@ function renderSceneList() {
       study.textContent = "damaged";
       study.classList.add("scene-elsewhere");
     } else if (row.study && row.study !== current) {
-      study.textContent = "loads " + row.study;
+      study.textContent = row.study;
       study.classList.add("scene-elsewhere");
     } else {
       study.textContent = row.study || "";
@@ -6586,13 +6581,13 @@ function renderSceneList() {
     tile.appendChild(study);
     tile.addEventListener("click", async () => {
       if (row.unreadable) {
-        showBanner("That scene file is damaged; delete it and save a new one", "error");
+        showBanner("Scene damaged", "error");
         return;
       }
       try {
         await applyScene(await fetchJson("/api/scenes/" + encodeURIComponent(row.id)));
       } catch (error) {
-        showBanner("Could not restore that scene: " + error.message, "error");
+        showBanner("Restore failed: " + error.message, "error");
       }
     });
     const remove = document.createElement("button");
@@ -6600,7 +6595,7 @@ function renderSceneList() {
     // The same glyph the banner close uses: a letter x sits on the text
     // baseline, low and left in an 18px square, where this one centres.
     remove.textContent = "✕";
-    remove.title = "Delete this scene";
+    remove.title = "Delete";
     remove.addEventListener("click", async (event) => {
       event.stopPropagation();
       if (!window.confirm("Delete the scene \"" + row.name + "\"?")) return;
@@ -6619,12 +6614,12 @@ function renderSceneList() {
     const update = document.createElement("button");
     update.className = "scene-update";
     update.textContent = "\u27f3";        // the reload glyph, needing no legend
-    update.title = "Update this scene with the view on screen now";
+    update.title = "Update";
     update.addEventListener("click", async (event) => {
       // The tile beneath restores the scene; this must not do both.
       event.stopPropagation();
       if (!state.bundle) {
-        showBanner("Load a study before updating a scene", "error");
+        showBanner("No study loaded", "error");
         return;
       }
       const response = await fetch(
@@ -6642,8 +6637,7 @@ function renderSceneList() {
         // browser long before it reaches the server. "Method Not Allowed"
         // is the least useful thing that could be said about that.
         showBanner(response.status === 405
-          ? "Scene not updated: this studio server was started before the "
-            + "update route existed. Restart it and this will work."
+          ? "Scene not updated: restart the server"
           : "Scene not updated: " + (body.detail || response.status), "error");
         return;
       }
@@ -6666,7 +6660,7 @@ function renderSceneList() {
 
 document.getElementById("scene-save").addEventListener("click", async () => {
   if (!state.bundle) {
-    showBanner("Load a study before saving a scene", "error");
+    showBanner("No study loaded", "error");
     return;
   }
   const study = document.getElementById("study-select").value;
@@ -6720,7 +6714,7 @@ let startingNewScene = false;
 
 async function startNewScene() {
   if (!state.bundle) {
-    showBanner("Load a study before starting a new scene", "error");
+    showBanner("No study loaded", "error");
     return false;
   }
   // A second press while the first is still rebuilding would take the
@@ -7126,9 +7120,8 @@ const GROUP_SUMMARIES = {
     return String(hours).padStart(2, "0") + ":" + String(minutes).padStart(2, "0")
   ;
   },
-  "Props": () => state.props.length
-    ? state.props.length + " placed" : "none placed",
-  "Scenes": () => state.scenes.length ? state.scenes.length + " saved" : "none saved",
+  "Props": () => String(state.props.length),
+  "Scenes": () => String(state.scenes.length),
   "Sky": () => Math.round(state.skyBrightness * 100) + "%",
   "Atmosphere": () => {
     const select = document.getElementById("atmosphere-preset");
@@ -7137,7 +7130,7 @@ const GROUP_SUMMARIES = {
     return (label ? label.textContent : "") + rays;
   },
   "Wind": () => state.wind.strength
-    ? state.wind.strength + "% from " + Math.round(state.wind.from) + "\u00b0" : "calm",
+    ? state.wind.strength + "%, " + Math.round(state.wind.from) + "\u00b0" : "0%",
   "Image": () => state.brightness.toFixed(2) + " / "
     + (state.contrast >= 0 ? "+" : "") + state.contrast.toFixed(2),
 };
@@ -7415,7 +7408,7 @@ function weighedAsLabel() {
   }
   const select = document.getElementById("material-select");
   const option = select && select.options[select.selectedIndex];
-  return option ? option.textContent : "the structural material";
+  return option ? option.textContent : "material";
 }
 
 function updateWeightNote() {
@@ -7428,14 +7421,9 @@ function updateWeightNote() {
   // Param: "just showing how much density and weight is added and what
   // material. Nothing too detailed." So: the name first, because that is
   // what he changed to get here, then the density it brings and the load
-  // that follows. One line, and the tooltip carries the rest.
-  note.textContent = weighedAsLabel() + ": " + Math.round(density)
-    + " kg/m3 x " + Math.round(thickness * 1000) + " mm = "
-    + kNPerM2.toFixed(2) + " kN/m2 (" + Math.round(kgPerM2) + " kg/m2)";
-  note.title = Math.abs(density - structuralDensity()) > 1
-    ? "The skin's own density, and the weight the analysis is run at."
-    : "The structural material's density, and the weight the analysis "
-      + "is run at.";
+  // that follows; no sum and no tooltip (his ruling of 11 October 2026).
+  note.textContent = weighedAsLabel() + ": " + Math.round(density) + " kg/m3, "
+    + kNPerM2.toFixed(2) + " kN/m2";
 }
 
 // The size of one repeat, in metres, for whatever the vault is wearing.
@@ -7936,10 +7924,7 @@ function paintStillControls() {
 // and reported nothing, which reads exactly like "it never saves".
 function paintStillSize() {
   const frame = stillFrame();
-  const tiles = Math.ceil(frame.width / STILL_TILE)
-    * Math.ceil(frame.height / STILL_TILE);
-  paintStillReadout(frame.width + " by " + frame.height + " pixels, "
-    + tiles + (tiles === 1 ? " tile" : " tiles"));
+  paintStillReadout(frame.width + " x " + frame.height);
 }
 
 // READING THE COMPOSER'S TARGET DOES NOT WORK HERE, and the reason is
@@ -7959,13 +7944,12 @@ function paintStillSize() {
 
 async function renderStill() {
   if (state.stillRendering || state.recording) return;
-  if (!state.bundle) { paintStillReadout("load a study first"); return; }
+  if (!state.bundle) { paintStillReadout("no study"); return; }
   // Asked again at the moment it matters: a plate from a stale server goes
   // where the old code sends it.
   if (await checkServerCode()) {
-    paintStillReadout("restart the studio first: this server predates the still fixes");
-    showBanner("Restart studio first (foot of the panel): this server is older than its "
-      + "code, and would put the still where the old code does.", "error");
+    paintStillReadout("restart the server");
+    showBanner("Restart the studio", "error");
     return;
   }
   const frame = stillFrame();
@@ -7989,7 +7973,7 @@ async function renderStill() {
   const wasPixelRatio = renderer.getPixelRatio();
   const wasWidth = canvas.width, wasHeight = canvas.height;
   document.body.classList.add("stilling");
-  paintStillReadout("framing the plate");
+  paintStillReadout("");
   state.recording = true;          // resize() must keep its hands off
   const restoreHelpers = hideHelpersForPicture();
   // The plate is framed now and will not change: its reflections are
@@ -8027,9 +8011,9 @@ async function renderStill() {
         const index = row * across + column;
         const response = await fetch("/api/still/" + target + "?tile=" + index
           + "&x=" + x + "&y=" + y, { method: "POST", body: blob });
-        if (!response.ok) throw new Error("tile " + index + " was refused");
+        if (!response.ok) throw new Error("tile " + index + " refused");
         sent += 1;
-        paintStillReadout("tile " + sent + " of " + (across * down));
+        paintStillReadout(sent + " / " + (across * down));
       }
     }
     const stitched = await fetch("/api/still/" + target + "/stitch?width="
@@ -8037,11 +8021,10 @@ async function renderStill() {
     if (!stitched.ok) throw new Error(await stitched.text());
     const done = await stitched.json();
     const seconds = ((performance.now() - began) / 1000).toFixed(1);
-    paintStillReadout(frame.width + " by " + frame.height + " written in "
-      + seconds + " s: " + done.still);
+    paintStillReadout(frame.width + " x " + frame.height + "  " + seconds + " s  " + done.still);
     logStudio("still: " + done.still);
   } catch (error) {
-    paintStillReadout("the plate failed: " + (error.message || error));
+    paintStillReadout("failed: " + (error.message || error));
     logStudio("still failed: " + (error.message || error));
   } finally {
     // Every one of these restores something the loop above took, and the
@@ -8536,10 +8519,7 @@ function paintStampButton() {
   const del = document.getElementById("layer-delete-chosen");
   del.disabled = !going;
   del.textContent = going > 1 ? "Delete " + going.toLocaleString() : "Delete";
-  del.title = going
-    ? "Delete the " + (going > 1 ? going.toLocaleString() + " selected props" : "selected prop")
-      + "; Ctrl+Z brings them back"
-    : "Nothing selected to delete: pick a tile here, or a prop in the viewport";
+  del.title = going ? "Delete " + going.toLocaleString() : "Nothing selected";
 }
 
 function renderShelfLayers(grid) {
@@ -8553,7 +8533,7 @@ function renderShelfLayers(grid) {
   if (!members.length) {
     const empty = document.createElement("div");
     empty.className = "tile-family";
-    empty.textContent = "nothing on this layer yet -- placed props land here";
+    empty.textContent = "none";
     grid.appendChild(empty);
   }
   // WHAT IS ON THE LAYER, AS HE PLACED IT. Param, 2026-09-13, over a
@@ -8599,8 +8579,7 @@ function renderShelfLayers(grid) {
     tile.title = plantingName(planting) + ": "
       + common.slice(0, 5).map(([type, n]) =>
         propDisplayName({ type }) + " " + n.toLocaleString()).join(", ")
-      + (common.length > 5 ? " and " + (common.length - 5) + " more kinds" : "")
-      + " -- click to select all of it, Delete removes it";
+      + (common.length > 5 ? " and " + (common.length - 5) + " more kinds" : "");
     tile.classList.toggle("active", entry.chosen === planting.members);
     layerItems.push({ tile, first, records: () => plantingRecords(planting),
       chosenIn: (acting) => plantingRecords(planting).every((r) => acting.has(r)) });
@@ -8615,16 +8594,14 @@ function renderShelfLayers(grid) {
     const tile = previewTile("prop#" + record.id, propTag(record),
       (canvasEl) => paintPropThumb(canvasEl, record.type));
     tile.title = propTag(record)
-      + "  (" + record.x.toFixed(1) + ", " + record.y.toFixed(1) + ")"
-      + " -- click to select: drag it in the viewport, Delete removes";
+      + "  (" + record.x.toFixed(1) + ", " + record.y.toFixed(1) + ")";
     tile.classList.toggle("active", gatheredProps.has(record));
     layerItems.push({ tile, first: record, records: () => [record],
       chosenIn: (acting) => acting.has(record) });
     grid.appendChild(tile);
   }
   if (byHand.length > shown.length) {
-    heading("and " + (byHand.length - shown.length).toLocaleString()
-      + " more placed by hand -- pick them in the viewport");
+    heading("+" + (byHand.length - shown.length).toLocaleString() + " more");
   }
   layerItems.forEach((item, index) => wireLayerTile(item, index));
   renderLayerTabs();
@@ -8749,8 +8726,7 @@ function renderLayerTabs() {
       + (layer.id === state.activeLayer ? " active" : "")
       + (layer.visible === false ? " off" : "");
     tab.textContent = layer.name;
-    tab.title = "Open this layer: newly placed props land on it. "
-      + "Double-click to rename.";
+    tab.title = "Double-click to rename";
     tab.addEventListener("click", () => {
       state.activeLayer = layer.id;
       gatheredProps.clear();
@@ -8778,7 +8754,7 @@ function renderLayerTabs() {
   const eye = document.createElement("button");
   eye.className = "layer-eye";
   eye.textContent = active && active.visible === false ? "Hidden" : "Shown";
-  eye.title = "Show or hide everything on the open layer";
+  eye.title = "Show or hide layer";
   eye.addEventListener("click", () => {
     if (!active) return;
     active.visible = active.visible === false;
@@ -8789,7 +8765,7 @@ function renderLayerTabs() {
   const del = document.createElement("button");
   del.className = "layer-delete";
   del.textContent = "✕";
-  del.title = "Delete the open layer and every prop on it";
+  del.title = "Delete layer";
   del.addEventListener("click", () => deleteLayer(state.activeLayer));
   strip.append(eye, del);
 }
@@ -9047,7 +9023,7 @@ function applyGraphsTucked(on) {
   const handle = document.getElementById("graphs-collapse");
   if (handle) {
     handle.textContent = liveGraphs.tucked ? "›" : "‹";
-    handle.title = liveGraphs.tucked ? "Bring the graphs back" : "Tuck the graphs to the side";
+    handle.title = liveGraphs.tucked ? "Show graphs" : "Hide graphs";
   }
 }
 
@@ -9064,35 +9040,6 @@ function liveCursorAt(series) {
   const duration = series.t[n - 1] || 1;
   const t = Math.max(0, Math.min(duration, state.timeline.t));
   return { k: Math.round((n - 1) * t / duration), t };
-}
-
-// What the header says the vault is weighed as. A skin that sets the
-// density is named: "concrete, 200 mm at 8940 kg/m3" was a copper skin's
-// density on a concrete cut, and read as a contradiction.
-function liveSkinWord(bundle, density) {
-  const structural = STRUCTURAL_DENSITIES[bundle.material];
-  const fromSkin = bundle.provenance.density_from_skin
-    || (structural && Math.abs(density - structural) > 1);
-  if (!fromSkin) return "";
-  const skin = state.appearance.skin;
-  const entry = isLibraryKey(skin) ? libraryEntry(skin) : null;
-  if (!entry) return "a library skin";
-  // The bundle was weighed with the skin worn when it was cut, and a
-  // swap within one structural class since (granite for limestone, both
-  // stone) re-cuts nothing. So when the skin worn now would weigh the
-  // vault differently, it is not the one this density came from: say a
-  // library skin and name none, rather than credit the wrong one.
-  if (Math.abs(skinDensity() - density) > 1) return "a library skin";
-  let word = entry.family || entry.name;
-  for (const [pattern] of NAME_DENSITIES) {
-    if (pattern.test(entry.name)) { word = pattern.source; break; }
-  }
-  // A family word that is the cut's own class says nothing ("timber cut
-  // in a timber skin", "stone cut in a stone skin"): name the skin itself.
-  if (FAMILY_TO_STRUCTURAL[word] === bundle.material) {
-    word = (entry.label || entry.name).toLowerCase();
-  }
-  return (/^[aeiou]/i.test(word) ? "an " : "a ") + word + " skin";
 }
 
 // Wanted is the user's own switch, remembered; shown is whether the
@@ -9134,14 +9081,14 @@ async function buildLiveGraphs() {
       card.remove();
       liveGraphs.cards.delete(id);
     }
+    // the study, its material, thickness and density, no sentence (his
+    // ruling of 11 October 2026)
     const study = document.getElementById("graphs-study");
-    const skinWord = liveSkinWord(bundle, density);
-    if (study) study.textContent = bundle.export + ", " + bundle.material
-      + (skinWord ? " cut in " + skinWord : "") + ", "
-      + Math.round(bundle.provenance.thickness * 1000) + " mm, weighed at "
-      + Math.round(density) + " kg/m3";
-    // Every card, and the notes line under them, is in place BEFORE any
-    // plot is drawn: the cards share the column's height, and a card
+    if (study) {
+      study.textContent = [bundle.export, bundle.material,
+        Math.round(bundle.provenance.thickness * 1000) + " mm", Math.round(density) + " kg/m3"].join("  ");
+    }
+    // Every card is in place BEFORE any plot is drawn: the cards share the column's height, and a card
     // appended after an earlier one was drawn left that one clipped to
     // its new row with no x axis.
     for (const spec of specs) {
@@ -9162,8 +9109,6 @@ async function buildLiveGraphs() {
     // In the specs' order, so a card that arrives later (a study with
     // columns after one without) stands where it belongs, not last.
     for (const spec of specs) holder.appendChild(liveGraphs.cards.get(spec.id));
-    const notes = document.getElementById("graphs-notes");
-    if (notes) notes.textContent = series.notes.join(" ");
     // The first frame is already cut at the take's clock, so no frame of
     // whole curves flashes before the first tick trims them.
     const cursor = liveCursorAt(series);

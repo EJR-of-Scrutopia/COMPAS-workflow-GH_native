@@ -1447,7 +1447,7 @@ body.recording #stats-overlay { display: none; }
   border-radius: 0 var(--radius) var(--radius) 0;
   font: inherit; font-size: 15px; line-height: 1; cursor: pointer; }
 #graphs-collapse:hover { color: var(--ink); border-color: var(--line-lit); }
-#graphs-head, #graphs-notes, #graphs-dials, .live-card { background: var(--scrim);
+#graphs-head, #graphs-dials, .live-card { background: var(--scrim);
   -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px);
   border: 1px solid var(--line); border-radius: var(--radius); }
 #graphs-head { display: flex; align-items: center; gap: 8px; padding: 5px 10px;
@@ -1479,8 +1479,6 @@ body.recording #stats-overlay { display: none; }
 .live-card .live-label, .live-card .live-aside { color: var(--ink-3); font-size: 10px;
   font-family: ui-monospace, monospace; font-variant-numeric: tabular-nums; }
 .live-card .live-plot { flex: 1; min-height: 0; }
-#graphs-notes { padding: 4px 10px; font-size: 10px; line-height: 1.35;
-  color: var(--ink-3); max-height: 5.5em; overflow: auto; }
 /* A narrow window gets narrower cards rather than none. */
 @media (max-width: 900px) { #graphs-panel { width: 280px; } }
 
