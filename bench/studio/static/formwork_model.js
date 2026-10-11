@@ -384,6 +384,32 @@ export function colourLabels(sim, index, by, count = 5) {
   return picked.map(([target, value]) => ({ ...target, value, text: textFor(by, value) }));
 }
 
+// The values on the model (spec 2026-10-11 sections 5.2 to 5.4): the Colour
+// by's (by, or null with the values off), then each weakest part's value, or
+// with none over what it has to spare, then with Compare the largest offsets
+// in mm. One label a part, the first kept; largest first within each.
+const KIND_BY = { wire: "wire", member: "tension", tree: "utilisation", node: "deviation" };
+
+export function modelLabels(sim, index, { by = null, weakest = [], compare = false } = {}) {
+  const out = [];
+  const seen = new Set();
+  const add = (label) => {
+    const key = label.kind + ":" + label.index;
+    if (!seen.has(key)) {
+      seen.add(key);
+      out.push(label);
+    }
+  };
+  if (!sim) return out;
+  if (by != null) colourLabels(sim, index, by).forEach(add);
+  for (const item of weakest || []) {
+    add({ kind: item.kind, index: item.index, value: item.value,
+          text: item.over ? item.text : textFor(KIND_BY[item.kind], item.limit - item.value) + " spare" });
+  }
+  if (compare) colourLabels(sim, index, "deviation").forEach(add);
+  return out;
+}
+
 // The weakest parts at a capture (spec 2026-10-11 section 5.3): every part
 // over its limit, the furthest over first (a wire over one spool's pull, a
 // rope over its working load, a tree member over 1.0, a node outside the

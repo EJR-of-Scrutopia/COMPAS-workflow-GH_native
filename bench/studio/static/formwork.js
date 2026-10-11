@@ -7,7 +7,7 @@
 // tables.
 
 import {
-  answer, answerHtml, captureLabel, captureTimes, colourKey, colourLabels, formworkPickHtml,
+  answer, answerHtml, captureLabel, captureTimes, colourKey, formworkPickHtml, modelLabels,
   formworkWarnings, frameLine, frameLineHtml, labelsShown, paintOverlay, playhead, readSim,
   recordingCaption, weakestAt, withWall,
 } from "./formwork_model.js";
@@ -154,11 +154,11 @@ export function mountFormwork({ studyName, studyOptions, mechanism, view, hooks 
 
   // The values for the capture shown, rebuilt when the capture or the
   // settings change; placed every frame (place).
-  function rebuildLabels(index, by) {
+  function rebuildLabels(index, now) {
     el.labels.innerHTML = "";
     tab.items = [];
-    if (!tab.judged || !tab.active || by == null) return;
-    for (const target of colourLabels(tab.judged, index, by).slice(0, LABEL_MAX)) {
+    if (!tab.judged || !tab.active) return;
+    for (const target of modelLabels(tab.judged, index, onModel(now, index)).slice(0, LABEL_MAX)) {
       const label = document.createElement("div");
       label.className = "model-label";
       label.textContent = target.text;
@@ -170,6 +170,13 @@ export function mountFormwork({ studyName, studyOptions, mechanism, view, hooks 
   // The Colour by whose values go on the model, or null.
   function labelled(now) {
     return now.values && labelsShown(now.colour, now.show) ? now.colour : null;
+  }
+
+  // What goes on the model at a capture: the Colour by's values, the weakest
+  // parts' and, with Compare on, the largest offsets (spec sections 5.2 to 5.4).
+  function onModel(now, index) {
+    return { by: labelled(now), compare: now.compare,
+             weakest: now.weakestOn ? weakestAt(tab.judged, index, limits()) : [] };
   }
 
   // The capture the player is at, drawn: the positions blended, every number
@@ -190,7 +197,7 @@ export function mountFormwork({ studyName, studyOptions, mechanism, view, hooks 
       el.scrubValue.textContent = String(head.nearer + 1);
       if (document.activeElement !== el.scrub) el.scrub.value = String(head.nearer + 1);
       el.line.innerHTML = frameLineHtml(frameLine(tab.judged, head.nearer));
-      rebuildLabels(head.nearer, labelled(now));
+      rebuildLabels(head.nearer, now);
       if (tab.pickNode != null) el.pick.innerHTML = formworkPickHtml(tab.judged, head.nearer, tab.pickNode);
       tab.shown = head.nearer;
       tab.settingsKey = key;
@@ -578,8 +585,7 @@ export function mountFormwork({ studyName, studyOptions, mechanism, view, hooks 
       const now = settings();
       const rect = { left: 0, top: 0, width, height };
       const scale = height / 900;
-      const by = labelled(now);
-      const targets = by == null ? [] : colourLabels(tab.judged, head.nearer, by).slice(0, LABEL_MAX);
+      const targets = modelLabels(tab.judged, head.nearer, onModel(now, head.nearer)).slice(0, LABEL_MAX);
       const points = targets.map((target) => view.project(view.point(target), hooks.camera(), rect));
       const shown = spreadLabels(points, LABEL_GAP_X * scale, LABEL_GAP_Y * scale);
       const labels = targets.map((target, i) => (shown[i]

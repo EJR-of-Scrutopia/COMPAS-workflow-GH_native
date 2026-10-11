@@ -41,6 +41,16 @@ out.shown = [m.labelsShown("wire", { wires: true }), m.labelsShown("wire", { net
 out.weakest = m.weakestAt(sim, 2, limits);
 out.closest = m.weakestAt(sim, 1, { have: 5000, rope: 9000, tolerance: 100 });
 out.noLimits = m.weakestAt(sim, 1, { have: null, rope: null, tolerance: 100 });
+const flat = (list) => list.map((l) => [l.kind, l.index, l.text]);
+out.model = {
+  weakest: flat(m.modelLabels(sim, 2, { weakest: out.weakest })),
+  closest: flat(m.modelLabels(sim, 1, { weakest: out.closest })),
+  compare: flat(m.modelLabels(sim, 2, { by: "wire", compare: true })),
+  both: flat(m.modelLabels(sim, 2, { by: "deviation", compare: true })),
+  none: m.modelLabels(sim, 2, {}),
+  wire: flat(m.colourLabels(sim, 2, "wire")),
+  deviation: flat(m.colourLabels(sim, 2, "deviation")),
+};
 console.log(JSON.stringify(out));
 """
 
@@ -129,3 +139,18 @@ def test_with_none_over_the_weakest_are_the_five_closest(out):
     assert closest[0]["ratio"] == pytest.approx(0.4)
     # a kind with no limit is never judged
     assert {w["kind"] for w in out["noLimits"]} <= {"tree", "node"}
+
+
+def test_the_weakest_wear_their_values_and_compare_its_offsets(out):
+    # spec 2026-10-11 sections 5.3 and 5.4 (found by the final review: rings
+    # with no numbers, and Compare labelling nothing unless Colour by was
+    # Offset): each part over its limit labelled with its value, and with none
+    # over the closest with what they have to spare; Compare the largest
+    # offsets in mm, whatever the Colour by; one label a part
+    model = out["model"]
+    assert model["weakest"] == [[w["kind"], w["index"], w["text"]] for w in out["weakest"]]
+    assert len(model["closest"]) == len(out["closest"]) == 5
+    assert all(label[2].endswith(" spare") for label in model["closest"])
+    assert model["compare"] == model["wire"] + model["deviation"]
+    assert model["both"] == model["deviation"]
+    assert model["none"] == []

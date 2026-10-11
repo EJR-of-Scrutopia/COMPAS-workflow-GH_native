@@ -157,7 +157,12 @@ def test_the_player_draws_blended_values_the_weakest_and_its_key():
             in draw)
     assert "view.show(head, { ...now, weakest });" in draw
     assert "hooks.legend(colourKey(now.colour, tab.judged, limits()));" in draw
-    assert "rebuildLabels(head.nearer, labelled(now));" in draw
+    assert "rebuildLabels(head.nearer, now);" in draw
+    # the values on the model: the Colour by's, the weakest's and Compare's
+    # offsets, on the page and in the recording alike
+    labels = _inner(JS, "rebuildLabels")
+    assert "modelLabels(tab.judged, index, onModel(now, index))" in labels
+    assert "modelLabels(tab.judged, head.nearer, onModel(now, head.nearer))" in JS
     assert "el.line.innerHTML = frameLineHtml(frameLine(tab.judged, head.nearer));" in draw
     # play and pause in the studio's own symbols
     assert 'const PLAY = "▶";' in JS and 'const PAUSE = "❚❚";' in JS
@@ -269,7 +274,7 @@ def test_the_tab_records_the_raise_through_the_studio_s_recorder():
     assert "tab.at = Math.min(Math.max(seconds, 0), end());" in seek and "draw();" in seek
     overlay = JS[JS.index("    overlay(ctx, width, height) {"):]
     overlay = overlay[:overlay.index("\n    },")]
-    assert "const by = labelled(now);" in overlay
+    assert "modelLabels(tab.judged, head.nearer, onModel(now, head.nearer))" in overlay
     assert "paintOverlay(ctx, { width, height, caption: recordingCaption(tab.judged, head.nearer)," in overlay
     take = _top(STUDIO, "recordAnimation")
     assert "const formwork = !!(formworkTab && formworkTab.active());" in take
