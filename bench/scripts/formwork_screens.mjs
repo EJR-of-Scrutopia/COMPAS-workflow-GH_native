@@ -184,9 +184,9 @@ try {
   });
   await page.evaluate((study, cut) => window.__studio.applyScene({ study, state: { cut } }), STUDY, CUT);
   note("scene applied");
-  // the formwork run takes the cable net run's design prestress
-  if (!await waitFor(page, () => !!window.__studio.state.cablenet, 180000)) {
-    report.errors.push("no cable net demand for this cut");
+  // the study's bundle first: the view is framed from its mesh
+  if (!await waitFor(page, () => !!window.__studio.state.bundle, 180000)) {
+    report.errors.push("the study's bundle did not load");
   }
   // The net in clear view: the study's props put away, the camera three
   // quarters on to the net from its own extent.

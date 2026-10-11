@@ -100,3 +100,34 @@ def two_radius_contract():
         },
         "formGraph": {"faces": faces},
     }
+
+
+def tiny_mechanism():
+    # the older nested shape wires_from_mechanism still reads: one wire per
+    # support, pulling from outside and above
+    at = {0: (-1.5, -1.5), 2: (3.5, -1.5), 6: (-1.5, 3.5), 8: (3.5, 3.5)}
+    return {"mechanism": {"wires": [
+        {"name": "w{}".format(n), "net_vertex": n,
+         "frame_point": {"x": x, "y": y, "z": 0.8}} for n, (x, y) in at.items()]}}
+
+
+def tiny_formwork():
+    flat = [[float(i), float(j), 0.0] for j in range(3) for i in range(3)]
+    raised = [[float(i), float(j), 1.0 if (i, j) == (1, 1) else 0.0]
+              for j in range(3) for i in range(3)]
+    half = [[x, y, z * 0.5] for x, y, z in raised]
+
+    def frame(t, phase, v):
+        return {"time": t, "phase": phase, "vertices": v,
+                "columnNodes": [[1.0, 1.0, 0.0], [1.0, 1.0, v[4][2]]]}
+
+    return {
+        "schema": "bench.formwork/1", "units": "m", "study": "Tiny",
+        "vertexCount": 9, "columnNodeCount": 2,
+        "columns": {"nodes": [{"x": 1.0, "y": 1.0, "z": 0.0}, {"x": 1.0, "y": 1.0, "z": 1.0}],
+                    "members": [{"u": 0, "v": 1}], "heads": [1], "feet": [0],
+                    "headNode": [4]},
+        "frames": [frame(0.0, "reel", flat), frame(30.0, "raise", half),
+                   frame(60.0, "finish", raised), frame(90.0, "hold", raised),
+                   frame(100.0, "hold", raised)],
+    }

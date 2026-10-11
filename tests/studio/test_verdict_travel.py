@@ -136,11 +136,6 @@ def test_the_drum_and_pulley_diameters_over_the_ropes_are_numbers_with_no_verdic
     assert result["pulley_over_rope"] == pytest.approx(90.0 / 4.0)
 
 
-def test_the_cable_net_runs_reel_commands_become_each_wires_take_up():
-    series = machine.take_ups_from_commands([[-5.0, 0.0], [-3.0, 2.0], [4.0, 0.0]])
-    assert series == [[5.0, 8.0, 4.0], [0.0, -2.0, -2.0]]
-
-
 def test_a_wire_held_by_its_shared_gearbox_reports_the_ceiling_its_margin_gives(parts):
     """Seven wires at 300 N on one 34HS31 through a 50:1 EG34 put 71,190 N mm
     on its 100 N m: a margin of 1.40, set by the gearbox. The wire's ceiling is
@@ -155,17 +150,3 @@ def test_a_wire_held_by_its_shared_gearbox_reports_the_ceiling_its_margin_gives(
     assert worst["margin"] == pytest.approx(100000.0 / (300.0 * 33.9 * 7))
     assert worst["ceiling"] == pytest.approx(worst["margin"] * 300.0)
     assert worst["own_ceiling"] == pytest.approx(2600.0)
-
-
-def test_no_wire_is_judged_below_the_prestress_it_was_cut_at():
-    """The real study's fit finds 14.6 N in its worst wire and the wires are cut
-    at 300 N: each wire is judged at the larger, stage by stage."""
-
-    demand = {"prestress": 300.0, "stages": [
-        {"wire_tensions": [14.6, 450.0, None], "wire_reel_commands": [0.0, -1.0, 0.0]},
-        {"wire_tensions": [12.0, 320.0, 0.0], "wire_reel_commands": [0.0, 0.0, 0.0]}]}
-    peaks, take_ups = machine.cable_net_demands(demand)
-    assert peaks == [300.0, 450.0, 300.0]
-    assert take_ups[1] == [1.0, 1.0]
-    # no prestress recorded: the fit's own figures stand
-    assert machine.cable_net_demands({"stages": demand["stages"]})[0] == [14.6, 450.0, 0.0]

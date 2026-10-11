@@ -16,7 +16,7 @@ import cablenet  # noqa: E402
 import formwork_sim  # noqa: E402
 import geometry  # noqa: E402
 from conftest_data import tiny_contract  # noqa: E402
-from test_cablenet_routes import _tiny_formwork, _tiny_mechanism  # noqa: E402
+from conftest_data import tiny_formwork, tiny_mechanism  # noqa: E402
 
 EA = 450000.0
 
@@ -62,14 +62,14 @@ def test_a_route_is_taken_into_the_world_by_its_instance_and_gives_the_wire():
 
 
 def test_the_older_nested_shape_still_gives_every_wire_an_anchor_a_direction_and_a_stiffness():
-    rim = formwork_sim.rim_wires(_tiny_mechanism(), _design_mm(), [0, 2, 6, 8], EA)
+    rim = formwork_sim.rim_wires(tiny_mechanism(), _design_mm(), [0, 2, 6, 8], EA)
     wire = {w["node"]: w for w in rim}[0]
     # node 0 sits at the origin and its machine point at (-1.5, -1.5, 0.8) m
     run = math.sqrt(1.5 ** 2 + 1.5 ** 2 + 0.8 ** 2) * 1000.0
     assert wire["anchor"] == pytest.approx([0.0, 0.0, 0.0])
     assert wire["into"] == pytest.approx([-1500.0 / run, -1500.0 / run, 800.0 / run])
     assert wire["stiffness"] == pytest.approx(EA / run) and wire["reeve"] == 1
-    assert formwork_sim.machines_of(_tiny_mechanism(), rim) == []
+    assert formwork_sim.machines_of(tiny_mechanism(), rim) == []
 
 
 def test_a_rim_node_away_from_where_its_wire_enters_the_anchor_is_refused():
@@ -81,17 +81,17 @@ def test_a_rim_node_away_from_where_its_wire_enters_the_anchor_is_refused():
 def test_the_documents_are_read_and_checked_before_the_cut():
     contract = tiny_contract()
     with pytest.raises(formwork_sim.FormworkError, match="formwork document"):
-        formwork_sim.check_documents(contract, _tiny_mechanism(), None, EA)
+        formwork_sim.check_documents(contract, tiny_mechanism(), None, EA)
     with pytest.raises(formwork_sim.FormworkError, match="mechanism document"):
-        formwork_sim.check_documents(contract, None, _tiny_formwork(), EA)
-    other = _tiny_formwork()
+        formwork_sim.check_documents(contract, None, tiny_formwork(), EA)
+    other = tiny_formwork()
     other["vertexCount"] = 10
     with pytest.raises(formwork_sim.FormworkError, match="was not read"):
-        formwork_sim.check_documents(contract, _tiny_mechanism(), other, EA)
+        formwork_sim.check_documents(contract, tiny_mechanism(), other, EA)
     with pytest.raises(formwork_sim.FormworkError, match="no machine instances"):
-        formwork_sim.check_documents(contract, _tiny_mechanism(), _tiny_formwork(), EA,
+        formwork_sim.check_documents(contract, tiny_mechanism(), tiny_formwork(), EA,
                                      wires_per_motor=2)
-    inputs = formwork_sim.check_documents(contract, _tiny_mechanism(), _tiny_formwork(), EA)
+    inputs = formwork_sim.check_documents(contract, tiny_mechanism(), tiny_formwork(), EA)
     assert inputs.heads == [[4, 1]] and inputs.tree_members == [[0, 1]]
     assert inputs.tree_feet == [0]
     # from machine time 30 on, in millimetres: the reel phase is people's work
