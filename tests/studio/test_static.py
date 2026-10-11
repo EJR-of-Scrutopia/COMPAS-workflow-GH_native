@@ -4871,3 +4871,12 @@ def test_a_disabled_panel_button_looks_disabled():
     rule = "#panel button:disabled { color: var(--ink-3); cursor: default; border-color: var(--line); }"
     assert rule in css
     assert css.index("#panel button:hover") < css.index(rule), "after :hover, which weighs the same"
+
+
+def test_the_data_sheets_tables_line_their_columns_up():
+    # found on screen (11 October 2026): each group's table sized its own
+    # columns, so the values stood at a different place in every group
+    css = (STATIC / "studio.css").read_text(encoding="utf-8")
+    assert "#data-analysis table { width: 100%; table-layout: fixed;" in css
+    assert "#data-analysis th { width: 42%; font-weight: normal; color: var(--ink-2); }" in css
+    assert "#data-analysis td:last-child { width: 22%; color: var(--ink-2); }" in css
