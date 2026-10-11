@@ -36,7 +36,8 @@ export function mountMechanism({ studyName, onChange, onPopup = () => {} }) {
       console.warn(`the mechanism pop-up is not on this page: no element for ${missing.join(", ")}`);
     }
     return { reload: async () => {}, clear: () => {}, chosen: () => null, entry: () => null,
-             setWires: () => {}, setChecks: () => {}, toggle: () => {}, closePopup: () => {} };
+             setWires: () => {}, setChecks: () => {}, toggle: () => {}, closePopup: () => {},
+             adopt: async () => {} };
   }
 
   const state = { list: [], index: -1, wires: 1, checks: null, ticket: 0 };
@@ -127,6 +128,14 @@ export function mountMechanism({ studyName, onChange, onPopup = () => {} }) {
       if (Number(n) === state.wires) return;
       state.wires = Number(n);
       reload();
+    },
+    // a study's run read first: its wires a motor and its motor become the
+    // choice, so the run on screen is not out of date when nothing changed
+    adopt(choices) {
+      if (!choices || !choices.motor) return Promise.resolve();
+      try { localStorage.setItem(REMEMBERED_PREFIX + studyName(), choices.motor); } catch (_) { /* private */ }
+      state.wires = Number(choices.wires_per_motor) || state.wires;
+      return reload();
     },
     // the run's drum and carriage, for the Checks line
     setChecks(checks) {

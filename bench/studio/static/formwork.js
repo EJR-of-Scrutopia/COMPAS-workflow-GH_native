@@ -392,7 +392,10 @@ export function mountFormwork({ studyName, studyOptions, mechanism, view, hooks 
     tab.loading = false;
     const first = !tab.sim;
     tab.sim = sim;
-    if (sim && first) setHolds(sim.holdsPerSide);
+    if (sim && first) {
+      setHolds(sim.holdsPerSide);
+      adoptMechanism(sim);
+    }
     judge();
     mechanism.setChecks(sim ? sim.checks : null);
     tab.times = sim ? captureTimes(sim.captures) : [];
@@ -416,6 +419,17 @@ export function mountFormwork({ studyName, studyOptions, mechanism, view, hooks 
     renderGraphs();
     loadCost();
     draw(true);
+  }
+
+  // A study's run read first: the slider and the pop-up take its wires a
+  // motor and its motor, so a current run does not open out of date (found by
+  // the final review). Not his hand, so no run follows.
+  function adoptMechanism(sim) {
+    const ran = (sim.options || {}).mechanism;
+    if (!ran) return;
+    el.wires.value = String(ran.wires_per_motor);
+    el.wiresValue.textContent = el.wires.value;
+    mechanism.adopt(ran);
   }
 
   // The pop-up's Graphs (spec section 8.3), from the run shown: judged again

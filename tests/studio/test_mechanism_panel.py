@@ -91,8 +91,8 @@ def test_under_it_three_lines_have_limited_by_and_checks(out):
 
 
 def test_the_controller_loads_where_there_is_no_page(out):
-    assert out["stub"] == ["chosen", "clear", "closePopup", "entry", "reload", "setChecks",
-                           "setWires", "toggle"]
+    assert out["stub"] == ["adopt", "chosen", "clear", "closePopup", "entry", "reload",
+                           "setChecks", "setWires", "toggle"]
 
 
 def test_the_pop_up_has_three_tabs_mechanism_cost_and_graphs():

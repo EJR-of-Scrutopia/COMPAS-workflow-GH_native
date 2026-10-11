@@ -115,7 +115,7 @@ def test_rods_a_side_rerun_from_the_hold_once_they_settle():
     # is his from then on
     load = _inner(JS, "load")
     assert "const first = !tab.sim;" in load
-    assert "if (sim && first) setHolds(sim.holdsPerSide);" in load
+    assert "if (sim && first) {\n      setHolds(sim.holdsPerSide);" in load
 
 
 def test_the_cost_and_the_graphs_follow_the_run_and_export_bom_writes_it():
@@ -144,6 +144,20 @@ def test_the_cost_and_the_graphs_follow_the_run_and_export_bom_writes_it():
     # the pop-up switches between its three tabs
     assert "function showTab(id) {" in PICK
     assert 'el.popup.querySelectorAll("[data-mech-tab]")' in PICK
+
+
+def test_a_studys_run_read_first_gives_the_mechanism_its_wires_and_its_motor():
+    # found by the final review: a run made at 3 wires a motor, or chosen in
+    # another browser, opened greyed as "mechanism changed" though nothing had
+    # changed, and matching the slider to it ran it again
+    load = _inner(JS, "load")
+    assert "if (sim && first) {\n      setHolds(sim.holdsPerSide);\n      adoptMechanism(sim);" in load
+    adopt = _inner(JS, "adoptMechanism")
+    assert "el.wires.value = String(ran.wires_per_motor);" in adopt and "mechanism.adopt(ran);" in adopt
+    assert "tab.again" not in adopt                      # not his hand: no run follows
+    assert "adopt(choices) {" in PICK
+    assert "state.wires = Number(choices.wires_per_motor) || state.wires;" in PICK
+    assert "localStorage.setItem(REMEMBERED_PREFIX + studyName(), choices.motor);" in PICK
 
 
 def test_the_answer_greys_when_out_of_date_and_its_needed_goes_to_the_wire():
