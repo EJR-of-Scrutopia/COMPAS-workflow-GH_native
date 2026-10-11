@@ -1762,10 +1762,13 @@ def test_the_material_presets_read_apart():
     assert min(pairs)[0] > 4.0, min(pairs)
 
 
-def test_the_pattern_control_says_what_is_not_built_yet():
+def test_the_pattern_control_has_no_note_beside_it():
+    # nothing writes a note there now (his ruling of 11 October 2026: no
+    # descriptive text), so the empty line and its state went
     page = (STATIC / "index.html").read_text(encoding="utf-8")
     assert 'id="pattern-select"' in page
-    assert 'id="pattern-note"' in page
+    assert 'id="pattern-note"' not in page
+    assert "patternNotes" not in (STATIC / "studio.js").read_text(encoding="utf-8")
 
 
 def test_taper_is_a_drawing_parameter_and_the_hud_says_so():

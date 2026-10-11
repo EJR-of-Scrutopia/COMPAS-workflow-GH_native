@@ -275,10 +275,9 @@ const state = {
   wireRadius: 0.02,
   // Task 9: filled from /api/studies at boot, so the pattern control knows
   // which patterns are actually selectable and what each material's own
-  // default and honesty note are.
+  // default is.
   patterns: [],
   patternDefaults: {},
-  patternNotes: {},
   patternChosen: false, // an explicit pattern choice survives material changes
   loadSequence: 0,      // bundle request token: only the newest response lands
   reloadTimer: null,    // the settle timer behind size and thickness commits
