@@ -125,6 +125,10 @@ def test_the_cost_and_the_graphs_follow_the_run_and_export_bom_writes_it():
     assert "renderGraphs();" in load and "loadCost();" in load
     cost = _inner(JS, "loadCost")
     assert "/formwork/cost?" in cost and "el.costBody.innerHTML = costHtml(" in cost
+    # a run with no mechanism has no cost, and is not asked for one (found on
+    # screen: an older run's refusal reached the console)
+    assert cost.index("if (!(tab.sim.options || {}).mechanism) {") < cost.index("/formwork/cost?")
+    assert "Run again: no mechanism in this run" in cost
     graphs = _inner(JS, "renderGraphs")
     assert ("el.graphs.innerHTML = graphsHtml(tab.judged, have == null ? null : Number(have), "
             "Number(el.tolerance.value));") in graphs

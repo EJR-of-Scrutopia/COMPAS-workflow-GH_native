@@ -447,6 +447,12 @@ export function mountFormwork({ studyName, studyOptions, mechanism, view, hooks 
     const options = studyOptions();
     el.costStatus.textContent = "";
     if (!tab.sim || !options || !studyName()) { el.costBody.innerHTML = ""; return; }
+    // a run with no mechanism has no cost to ask for (found on screen: an
+    // older run's refusal reached the console)
+    if (!(tab.sim.options || {}).mechanism) {
+      el.costBody.innerHTML = '<div class="cablenet-warning">Run again: no mechanism in this run</div>';
+      return;
+    }
     const query = new URLSearchParams();
     for (const [key, value] of Object.entries(sentOptions(options))) query.set(key, String(value));
     try {
