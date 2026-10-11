@@ -1264,7 +1264,7 @@ def test_a_lamp_is_a_prop_that_carries_a_real_light():
     # be told when the count changes -- it read "Lights" over two lamps
     # until a placement started saying so.
     sync = _js_function(js, "function syncLightControls()")
-    assert '"tuning all " + lamps.length + " fixtures"' in sync, (
+    assert '"All " + lamps.length + " fixtures' in sync, (
         "the heading moved into the Lights drawer's readout line, and it "
         "stopped calling them lamps: Param asked for both")
     assert "  if (isLamp(record)) syncLightControls();\n  if (save) saveProps();" in js
@@ -2266,7 +2266,7 @@ def test_the_machine_draws_the_way_he_asked():
     assert "    state.recordStop = true;" in js, "a second press stops the take"
     # A stopped take is not stitched: he pressed stop because it was
     # wrong, and handing him a video of it anyway would be a surprise.
-    assert '      status.textContent = "stopped at frame " + stopped + " of " + total' in js
+    assert '      status.textContent = "stopped at frame " + stopped + " / " + total;' in js
     # And the button goes back to Record however the take ended.
     assert "    state.recording = false;\n" \
         "    state.recordStop = false;\n" \
@@ -2818,8 +2818,9 @@ def test_the_scatter_stops_at_a_measured_budget_and_says_why():
     assert "if (triangles >= SCATTER_BUDGET_TRIANGLES) break;" in solve
     assert "if (placed.length >= SCATTER_MAX_ITEMS) break;" in solve
     paint = _js_function(js, "function paintScatter(solved)")
-    assert "stopped at" in paint, (
-        "a guard rail with no explanation reads as a broken tool")
+    assert '"Stopped: " + solved.stopped' in paint, (
+        "a guard rail that does not say it stopped reads as a broken tool; "
+        "which cap it hit is the reason, in deep red")
 
 
 def test_the_scatter_region_outline_cannot_steal_a_click():
@@ -3654,16 +3655,22 @@ def test_every_placement_lands_on_the_open_layer():
     assert 'pushUndo("grouping " + chosen.length + " props", () => {' in group
     assert "at = dropLayerIfEmpty(home);" in group
     assert "() => groupToNewLayer({ chosen, home, at, openBefore })" in group
-    # Say where things go.
+    # Say where things go: the layer by name, and no instructions round
+    # it (his ruling of 11 October 2026: no descriptive text).
     paint = _js_function(js, "function paintScatter(solved)")
-    assert '"  --  brush it on, or drag an area, onto " + placingOntoName()' in paint
-    assert '" placed onto "' in paint
-    assert '"press and drag to paint onto " + placingOntoName()' in _js_function(
+    assert '"  \\u00b7  Layer: " + placingOntoName()' in paint
+    assert '" placed  \\u00b7  Layer: "' in paint
+    assert 'readout.textContent = "Layer: " + placingOntoName();' in _js_function(
         js, "function armScatterBrush()")
-    assert '"drag a rectangle to fill it onto " + placingOntoName()' in _js_function(
+    assert 'readout.textContent = "Layer: " + placingOntoName();' in _js_function(
         js, "function armScatterArea()")
-    assert '"; new fixtures go onto " + placingOntoName()' in _js_function(
+    assert '+ "Layer: " + placingOntoName();' in _js_function(
         js, "function syncLightControls()")
+    for gone in ("brush it on, or drag an area", "press and drag to paint",
+                 "drag a rectangle to fill it", "new fixtures go onto",
+                 "loosen the spacing", "pick one or more species",
+                 "click a fixture to place it"):
+        assert gone not in js, gone
 
 
 def _js_whole_function(source, header):
