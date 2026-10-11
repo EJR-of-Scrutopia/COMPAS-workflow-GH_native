@@ -71,6 +71,9 @@ class Model(NamedTuple):
     sides: tuple = ()       # each node's side, a wired run of the rim; -1 for none (spec
                             # 2026-10-11 one Cable net tab, section 6)
     holds_per_side: int = 0  # the rods placed on each side at the hold when holds is empty
+    tendons: tuple = ()     # each tendon's path of nodes, from its column head to the free
+                            # edge (spec 2026-10-11 across tendons)
+    tendon_pull: float = 0.0  # N, every tendon's tension from the raise on; nought for none
 
 
 class Capture(NamedTuple):
@@ -99,6 +102,7 @@ class Capture(NamedTuple):
     solver: str
     iterations: int
     leftover: float
+    tendon_tension: object = None   # (tendons,) each tendon's tension, N
 
 
 class HoldState(NamedTuple):
@@ -182,6 +186,15 @@ def _places(model):
     return bool(model.holds) or (int(model.holds_per_side) > 0 and len(model.sides) > 0)
 
 
+def _pulled(model, net):
+    """The net with its tendons pulled in (spec 2026-10-11 across tendons,
+    section 3, as amended); as it is with no pull or no lines."""
+
+    if not model.tendons or float(model.tendon_pull) <= 0.0:
+        return net
+    return net._replace(tendons=ne.tendons(model.tendons, model.tendon_pull))
+
+
 def _count(model):
     return (len(model.frames) + (1 if _places(model) else 0)
             + sum(len(row.quarters) for row in model.rows))
@@ -233,6 +246,8 @@ def _capture(model, rest, contacts, reel, target, tree_x, phase, time, row, quar
         tree_bending=loads.bending,
         ground=tuple(sorted(int(node) for node in contacts.resting)),
         solver=rest.solver, iterations=rest.iterations, leftover=rest.leftover,
+        tendon_tension=np.zeros(0) if rest.tendon_tension is None
+        else np.asarray(rest.tendon_tension, dtype=float),
     )
 
 
@@ -295,6 +310,8 @@ def _raise(model, net, plan, progress, total):
     previous = None
     rest = None
     done_steps = 0
+    # laid out by hand unpulled; the tendons pull from the raise on
+    net = _pulled(model, net)
     for frame in model.frames:
         now = {node: np.asarray(frame.trees[tree], dtype=float) for node, tree in tree_of.items()}
         if previous is None:
@@ -323,6 +340,7 @@ def _raise(model, net, plan, progress, total):
 
 
 def _jack_and_tile(model, net, progress, total, captures, x, contacts, reel, wires, tree_x):
+    net = _pulled(model, net)
     # the holds (spec 2026-10-10 formwork holds, section 3): once the net is up,
     # each hold is put under its node and jacked to the node's design point, at
     # most SUB_STEP_MM a step, gripping it; it keeps its grip from then on,
