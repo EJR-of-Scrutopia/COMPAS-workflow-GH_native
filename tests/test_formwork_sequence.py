@@ -366,9 +366,15 @@ def test_the_net_is_laid_out_unpulled_and_pulled_from_the_raise_on(monkeypatch):
     monkeypatch.setattr(ne, "settle", spy)
     result = fs.simulate(_toy()._replace(tendons=TENDONS, tendon_pull=50.0))
     assert seen[0][0] is True and seen[0][1] is None          # the layout, by hand
-    assert all(t is not None and t.pull == 50.0 for _, t in seen[1:])
+    assert all(t is not None for _, t in seen[1:])
+    # each line pulls once none of its nodes rests on the ground: at the start
+    # of the raise the toy lies flat, its edge midpoints on the ground; from
+    # the hold on, all four pull
+    assert result.captures[0].tendon_tension.tolist() == [0.0] * 4
     for c in result.captures:
-        assert c.tendon_tension.tolist() == [50.0] * 4
+        assert c.tendon_tension.shape == (4,)
+        if c.phase not in ("raise", "finish"):
+            assert c.tendon_tension.tolist() == [50.0] * 4
     # no pull, or no lines: none
     monkeypatch.setattr(ne, "settle", real)
     assert all(c.tendon_tension.shape == (0,)

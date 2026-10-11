@@ -241,3 +241,25 @@ def test_tendons_refuse_nonsense():
         ne.tendons([(0,)], 100.0)
     with pytest.raises(ne.EngineError, match="nought or more"):
         ne.tendons([(0, 1)], -1.0)
+
+
+
+def test_each_tendon_has_its_own_pull_and_a_pulled_net_gets_a_longer_newton_budget(monkeypatch):
+    # found running the real study: a line still lying on the ground pulls
+    # nothing, and a pulled net settles slowly where its ropes go slack
+    t = ne.tendons([(0, 1), (1, 2)], [300.0, 0.0])
+    assert t.pull.tolist() == [300.0, 0.0]
+    assert ne.tendons([(0, 1), (1, 2)], 50.0).pull.tolist() == [50.0, 50.0]
+    x0, net = _chain(pull=None)
+    seen = []
+    real = ne.minimise
+
+    def spy(x, held, net, loads, cap=ne.NEWTON_CAP, **kwargs):
+        seen.append(cap)
+        return real(x, held, net, loads, cap=cap, **kwargs)
+
+    monkeypatch.setattr(ne, "minimise", spy)
+    ne.bring_to_rest(x0, _held(4, 0, 3), net, np.zeros_like(x0))
+    ne.bring_to_rest(x0, _held(4, 0, 3), net._replace(tendons=ne.tendons([(0, 1, 2)], 300.0)),
+                     np.zeros_like(x0))
+    assert seen == [ne.NEWTON_CAP, ne.TENDON_NEWTON_CAP]

@@ -198,8 +198,12 @@ def test_the_document_carries_the_pull_each_tendons_line_and_its_tension(tmp_pat
     assert [line["path"] for line in tendons["lines"]] == [[4, 1], [4, 3], [4, 5], [4, 7]]
     assert [line["side"] for line in tendons["lines"]] == [0, 0, 1, 2]
     assert tendons["lines"][0]["head"] == 0
+    # each line pulls once it is off the ground: from the hold on, all four
     for c in document["captures"]:
-        assert solve_formwork.unpack(c["tendon_tension"]).tolist() == [50.0] * 4
+        pulls = solve_formwork.unpack(c["tendon_tension"]).tolist()
+        assert len(pulls) == 4 and set(pulls) <= {0.0, 50.0}
+        if c["phase"] not in ("raise", "finish"):
+            assert pulls == [50.0] * 4
     assert document["summary"]["tendon_pull_n"] == 50.0
     # no pull is no tendons
     for asked in ({**_request(), "tendons": TENDON_LINES}, _request()):

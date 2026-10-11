@@ -54,6 +54,9 @@ SETTLE_ROUNDS = 50          # rounds of contact updates before the rest is refus
 HEAD_REACH_MM = 30.15       # a head catches a node over it within its tube's radius (60.3 mm)
 TENDON_STOP_MM = 20.0       # two neighbouring rings on a tendon stop this far apart
 TENDON_STOP_N_PER_MM = 1.0e5    # and push back this hard for every millimetre closer
+TENDON_NEWTON_CAP = 3000    # Newton steps for a pulled net: where a pull slackens a line's
+                            # ropes its rings are held along it only by the pull, and
+                            # Newton gets there slowly (found running the real study)
 
 
 class EngineError(RuntimeError):
@@ -70,7 +73,7 @@ class Ropes(NamedTuple):
 
 class Tendons(NamedTuple):
     paths: tuple            # each tendon's nodes, from its head to its free end
-    pull: float             # N, the tension every tendon is pulled in with
+    pull: np.ndarray        # (t,) N, each tendon's tension; nought for one that pulls nothing
     segments: np.ndarray    # (s, 2) consecutive nodes of every path
     owner: np.ndarray       # (s,) the tendon each segment is part of
 
@@ -113,13 +116,13 @@ def ropes(edges, rest, ea):
 
 def tendons(paths, pull):
     """Tendons from plain lists, checked: every path of two nodes or more, and
-    the pull nought or more and finite."""
+    each pull (one for all, or one a tendon) nought or more and finite."""
 
     paths = tuple(tuple(int(node) for node in path) for path in paths)
-    pull = float(pull)
+    pull = np.array(np.broadcast_to(np.asarray(pull, dtype=float), (len(paths),)))
     if any(len(path) < 2 for path in paths):
         raise EngineError("every tendon needs a path of two nodes or more")
-    if not (np.isfinite(pull) and pull >= 0.0):
+    if np.any(~np.isfinite(pull)) or np.any(pull < 0.0):
         raise EngineError("a tendon's pull must be nought or more newtons")
     segments = np.array([(a, b) for path in paths for a, b in zip(path, path[1:])],
                         dtype=int).reshape(-1, 2)
@@ -146,7 +149,7 @@ def tendon_state(x, net):
     if t is None or not len(t.paths):
         return np.zeros(0), np.zeros(0)
     seg, _, _ = _tendon_segments(x, t)
-    return np.bincount(t.owner, seg, minlength=len(t.paths)), np.full(len(t.paths), t.pull)
+    return np.bincount(t.owner, seg, minlength=len(t.paths)), t.pull.copy()
 
 
 def rope_state(x, net):
@@ -174,7 +177,7 @@ def _forces(x, net):
         # a tendon acts on its nodes as its segments would as ropes of its
         # tension, less where two rings have closed to the stop
         _, seg_unit, stop = _tendon_segments(x, t)
-        each = t.pull - stop
+        each = t.pull[t.owner] - stop
         np.add.at(force, t.segments[:, 0], each[:, None] * seg_unit)
         np.add.at(force, t.segments[:, 1], -each[:, None] * seg_unit)
     return force, length, tension
@@ -195,7 +198,7 @@ def energy(x, net, loads):
     pulled = 0.0
     if net.tendons is not None and len(net.tendons.paths):
         seg, _, stop = _tendon_segments(x, net.tendons)
-        pulled = (net.tendons.pull * float(np.sum(seg))
+        pulled = (float(np.sum(net.tendons.pull[net.tendons.owner] * seg))
                   + 0.5 * float(np.sum(stop ** 2)) / TENDON_STOP_N_PER_MM)
     return (0.5 * float(np.sum(net.ea / net.rest * stretch ** 2)) + pulled
             - float(np.sum(loads * x)))
@@ -227,7 +230,7 @@ def tangent_stiffness(x, net):
         uu = seg_unit[:, :, None] * seg_unit[:, None, :]
         stopped = np.where(stop > 0.0, TENDON_STOP_N_PER_MM, 0.0)
         block = (stopped[:, None, None] * uu
-                 + (t.pull / seg_length)[:, None, None] * (np.eye(3)[None] - uu))
+                 + (t.pull[t.owner] / seg_length)[:, None, None] * (np.eye(3)[None] - uu))
         for a, b, sign in ((0, 0, 1.0), (1, 1, 1.0), (0, 1, -1.0), (1, 0, -1.0)):
             for p in range(3):
                 for q in range(3):
@@ -422,7 +425,7 @@ def relax(x, held, net, loads, cap=RELAX_CAP, wires=None, on_ground=()):
         if net.tendons is not None and len(net.tendons.paths):
             t = net.tendons
             seg_length, _, stop = _tendon_segments(x, t)
-            each = t.pull / seg_length + np.where(stop > 0.0, TENDON_STOP_N_PER_MM, 0.0)
+            each = t.pull[t.owner] / seg_length + np.where(stop > 0.0, TENDON_STOP_N_PER_MM, 0.0)
             np.add.at(mass, t.segments[:, 0], each)
             np.add.at(mass, t.segments[:, 1], each)
         mass = np.maximum(mass[owner] + wire_mass, 1.0e-9)
@@ -455,8 +458,10 @@ def bring_to_rest(x, held, net, loads, wires=None, on_ground=()):
 
     loads = np.asarray(loads, dtype=float)
     held = np.asarray(held, dtype=bool)
-    x_rest, iterations, worst, ok = minimise(x, held, net, loads, wires=wires,
-                                             on_ground=on_ground)
+    pulled = net.tendons is not None and len(net.tendons.paths)
+    x_rest, iterations, worst, ok = minimise(x, held, net, loads,
+                                             cap=TENDON_NEWTON_CAP if pulled else NEWTON_CAP,
+                                             wires=wires, on_ground=on_ground)
     solver = "newton"
     if not ok:
         x_rest, more, worst, ok = relax(x_rest, held, net, loads, wires=wires,
