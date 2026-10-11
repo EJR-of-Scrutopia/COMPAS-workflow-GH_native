@@ -165,6 +165,10 @@ body { overflow: hidden;
 #hud { margin-top: var(--s2); font-size: var(--t-2); line-height: 1.5;
        white-space: pre-wrap; color: var(--ink-2); }
 #hud:empty { display: none; }
+/* A name and a value a row (his ruling of 11 October 2026). */
+#hud table { border-collapse: collapse; }
+#hud td { padding: 0 var(--s2) 0 0; vertical-align: top; white-space: normal; }
+#hud td:last-child { color: var(--ink); }
 #data-button.active { background: var(--accent-bg); color: var(--ink); }
 #banner-close { margin-left: 12px; cursor: pointer; pointer-events: auto; }
 /* White ink stated, not inherited: the ground is the danger red in both
@@ -226,6 +230,7 @@ body { overflow: hidden;
 #data-content table { width: 100%; border-collapse: collapse; margin: 0 0 var(--s2); }
 #data-content th, #data-content td { text-align: left; padding: 2px 6px 2px 0;
               border-bottom: 1px solid var(--line); }
+#data-content table.name-value td:first-child { color: var(--ink-2); width: 45%; }
 /* Specificity, and the bug it caused. "#panel button" is one id plus one
    element and beats a bare class, so every new component that set its own
    width lost to it silently: tiles and chips stretched to the full panel
@@ -1667,6 +1672,11 @@ body.stilling
 #panel #formwork-answer .over, #mechanism-popup .over { color: #e2453a; font-weight: 600; }
 :root[data-theme="light"] #panel #formwork-answer .over,
 :root[data-theme="light"] #mechanism-popup .over { color: #a3231a; }
+/* The Overview tab and the HUD under the Data button show a bad value the
+   same way (his ruling of 11 October 2026). The HUD keeps the one red in
+   both themes: no light rule names it (test_the_overlays_are_not_themed). */
+#data-content .over, #hud .over { color: #e2453a; font-weight: 600; }
+:root[data-theme="light"] #data-content .over { color: #a3231a; }
 /* a figure stays on one line */
 #panel #formwork-answer td:nth-child(2) { white-space: nowrap; }
 #panel #formwork-answer tr[data-capture] { cursor: pointer; }

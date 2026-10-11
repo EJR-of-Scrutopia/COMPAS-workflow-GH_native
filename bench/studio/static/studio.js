@@ -11210,19 +11210,10 @@ function applyCut(preserve) {
   }
   // bundle.py is explicit that document["size"] is the REQUESTED size and
   // that an authored cut ignores it (its own target_size is None). The
-  // number above is therefore what the control asked for, not what the cut
-  // used, and calling it a "target" when nothing targeted it is the same
-  // claim the Data panel already refuses to make. The units span, which
-  // the slider's live input handler never touches, carries the correction
-  // so a mid-drag label stays true rather than reverting to "mm target".
-  // The correction is two words, not a sentence. The long form ran to 466
-  // pixels inside a 300 pixel panel, printed straight through the words
-  // "Piece size" and then off the right edge -- found in the first
-  // screenshot of the studio ever taken here, 2026-09-04. The HUD carries
-  // the explanation in full, which is where a sentence belongs.
-  document.getElementById("size-units").textContent =
-    state.bundle.tessellation.source === "imported"
-      ? " mm requested" : " mm target";
+  // units span is the unit and nothing more (his ruling of 11 October
+  // 2026): the HUD and the Data panel's size rows say "authored" for such
+  // a cut, so no qualifier here has to.
+  document.getElementById("size-units").textContent = " mm";
   // Same defence for the pattern (Task 9, the half of C1 Task 8 left open):
   // an authored cut's own pattern name (tess["pattern"] in staging.py, not
   // the requested one) is only adopted when it is one the server actually
@@ -11354,22 +11345,6 @@ function craVerdict() {
   return staging.stages[staging.stages.length - 1].cra || null;
 }
 
-// Keyed by material, not by the numeric mu value: stone's friction is 0.6,
-// the same number staging.py gives concrete, so a value-keyed lookup would
-// attribute it to EN 1992-1-1 clause 6.2.5, a smooth precast concrete
-// joint, when it was deliberately sourced as the middle of the 0.5 to 0.7
-// span the dry stone rigid block literature uses. See staging.py's own
-// FRICTION comment, which this mirrors.
-const FRICTION_PROVENANCE = {
-  "concrete": "mu 0.60: EN 1992-1-1 clause 6.2.5, smooth precast concrete joint",
-  "concrete-c50": "mu 0.60: EN 1992-1-1 clause 6.2.5, smooth precast concrete joint",
-  "concrete-sprayed": "mu 0.60: EN 1992-1-1 clause 6.2.5, smooth precast concrete joint",
-  "timber": "mu 0.40: literature value for dry timber on timber contact (Eurocode 5 gives none)",
-  "brick": "mu 0.60: EN 1992-1-1 clause 6.2.5, the same value for a mortared brick bed joint",
-  "tile": "mu 0.60: EN 1992-1-1 clause 6.2.5, the same value for a mortared tile bed joint",
-  "stone": "mu 0.60: middle of the 0.5 to 0.7 span the dry stone rigid block literature uses, quoted no more precisely than the source supports",
-};
-
 function layerAvailability(name) {
   const stage = finalStage();
   const v = state.bundle && state.bundle.verification;
@@ -11378,7 +11353,7 @@ function layerAvailability(name) {
     // exactly what the reactions layer needs.
     return state.bundle && Object.keys(state.bundle.reactions).length
       ? { on: true }
-      : { on: false, why: "this contract shipped no reaction vectors" };
+      : { on: false, why: "No reactions" };
   }
   if (name === "stress" || name === "deflection") {
     if (stage) return { on: true };
@@ -11393,25 +11368,25 @@ function layerAvailability(name) {
     if (staged) {
       // Two reasons a finished run still has no per-node field to colour
       // with, and only two: either the material has no ananke_fea preset
-      // (stagingUnavailable, updateHud's "not available for this
-      // material") or the solver ran and did not converge (updateHud's
-      // "no equilibrium found"). Neither is "no staging exists".
+      // (stagingUnavailable, updateHud's "no solver") or the solver ran
+      // and did not converge (updateHud's "no equilibrium"). Neither is a
+      // run that never happened.
       if (stagingUnavailable()) {
         return v
-          ? { on: true, why: "peaks only: struck-now fields are not available for this material" }
-          : { on: false, why: "not available for this material, and no verification data" };
+          ? { on: true, why: "Peaks only: no solver" }
+          : { on: false, why: "No solver, unverified" };
       }
       return v
-        ? { on: true, why: "peaks only: no equilibrium found on the last staged run" }
-        : { on: false, why: "no equilibrium found on the last staged run, and no verification data" };
+        ? { on: true, why: "Peaks only: no equilibrium" }
+        : { on: false, why: "No equilibrium, unverified" };
     }
-    if (v) return { on: true, why: "peaks only until a staged run exists" };
-    return { on: false, why: "no staging and no verification data" };
+    if (v) return { on: true, why: "Peaks only: not staged" };
+    return { on: false, why: "Not staged, unverified" };
   }
   if (name === "reactions") {
     return state.bundle && Object.keys(state.bundle.reactions).length
       ? { on: true }
-      : { on: false, why: "this contract shipped no reaction vectors" };
+      : { on: false, why: "No reactions" };
   }
   if (name === "forces") {
     const bundle = state.bundle;
@@ -11419,7 +11394,7 @@ function layerAvailability(name) {
     const edgeCount = bundle ? bundle.analysis_mesh.edges.length : 0;
     return forceCount && forceCount === edgeCount
       ? { on: true }
-      : { on: false, why: "this contract shipped no member forces" };
+      : { on: false, why: "No member forces" };
   }
   return { on: true };
 }
@@ -12065,38 +12040,38 @@ function updateHud() {
   // loading bundle) and the HUD must never claim a thickness the shell
   // isn't built at.
   const provenanceThickness = state.bundle.provenance.thickness;
-  // Same correction the size control carries and the Data panel already
-  // makes in as many words: bundle.size is the size that was REQUESTED,
-  // and an authored cut ignores it. The HUD is what a user reads during
-  // playback, so it is the last place that may quote a target the cut on
-  // screen never had.
-  const sizeCaption = state.bundle.tessellation.source === "imported"
-    ? "authored cut, the size control is not used"
-    : Math.round(state.bundle.size * 1000) + " mm target";
-  const lines = [state.bundle.export + "  (" + state.bundle.material + ", " +
-    sizeCaption + ", " +
-    state.bundle.pieces.length + " pieces in " +
-    state.bundle.tessellation.courses + " courses)"];
-  const thicknessMm = Math.round(provenanceThickness * 1000);
-  let thicknessLine = "shell thickness " + thicknessMm + " mm";
+  // bundle.size is the size that was REQUESTED, and an authored cut ignores
+  // it. The HUD is what a user reads during playback, so it is the last
+  // place that may quote a size the cut on screen never had.
+  // A name and a value a row, red for bad (his ruling of 11 October 2026).
+  const rows = [
+    ["study", state.bundle.export],
+    ["material", state.bundle.material],
+    ["size", state.bundle.tessellation.source === "imported"
+      ? "authored" : Math.round(state.bundle.size * 1000) + " mm"],
+    ["pieces", String(state.bundle.pieces.length)],
+    ["courses", String(state.bundle.tessellation.courses)],
+    ["thickness", Math.round(provenanceThickness * 1000) + " mm"],
+  ];
+  // A verification run made at another thickness: the figures below are
+  // not this shell's, which is bad.
   if (v && v.thickness && Math.abs(v.thickness - provenanceThickness) > 1e-9) {
-    const verifiedMm = Math.round(v.thickness * 1000);
-    thicknessLine += " (verified run used " + verifiedMm + " mm)";
+    rows.push(["verified at", Math.round(v.thickness * 1000) + " mm", true]);
   }
-  lines.push(thicknessLine);
+  // The analysis used a uniform thickness, so a taper is a picture that
+  // disagrees with its own numbers.
   if (state.taper > 0) {
-    lines.push("crown taper " + Math.round(state.taper * 100) +
-      "% (drawing only: the analysis used a uniform thickness)");
+    rows.push(["taper", Math.round(state.taper * 100) + "%, drawing only", true]);
   }
   if (v && v.stress) {
-    lines.push("peak compression " + (v.stress.peak_compression / 1e6).toFixed(2) + " MPa, utilisation " + (100 * v.stress.utilisation).toFixed(1) + "%");
-    let deflectionLine = "peak deflection " + (v.displacement.peak_magnitude * 1000).toFixed(2) + " mm";
-    if (v.deflection && v.deflection.span_over_deflection) {
-      deflectionLine += " (1 / " + Math.round(v.deflection.span_over_deflection) + ")";
-    }
-    lines.push(deflectionLine);
+    rows.push(["compression", (v.stress.peak_compression / 1e6).toFixed(2) + " MPa"]);
+    rows.push(["utilisation", (100 * v.stress.utilisation).toFixed(1) + "%",
+      v.stress.utilisation > 1]);
+    rows.push(["deflection", (v.displacement.peak_magnitude * 1000).toFixed(2) + " mm"
+      + (v.deflection && v.deflection.span_over_deflection
+        ? ", 1 / " + Math.round(v.deflection.span_over_deflection) : "")]);
   } else {
-    lines.push("no verification run embedded yet");
+    rows.push(["verification", "none"]);
   }
   const staging = state.bundle.staging;
   if (staging && staging.stages && staging.stages.length) {
@@ -12105,27 +12080,26 @@ function updateHud() {
     const build = Math.max(0, state.timeline.t - openingSeconds());
     const index = currentStageIndex(build);
     const stage = staging.stages[index === null ? staging.stages.length - 1 : index];
-    lines.push("stage " + stage.stage + " of " + staging.stages.length);
-    lines.push("formwork carries " + (stage.formwork_carries_newtons / 1000).toFixed(1) + " kN");
+    rows.push(["stage", stage.stage + " of " + staging.stages.length]);
+    rows.push(["formwork", (stage.formwork_carries_newtons / 1000).toFixed(1) + " kN"]);
     const struck = stage.struck_now;
-    // Three readings, not two: a real convergence failure ("no equilibrium
-    // found") must never be the label for a material nobody ever tried to
-    // solve. staging.py's FEA_MATERIALS materials (concrete, timber, ...)
-    // are the only ones that reach a real runner call at all; brick, tile
-    // and stone come back with struck.status "unavailable" instead, and
-    // that has to read as "not available for this material", not failure.
-    let struckLine;
+    // Three readings, not two: a real convergence failure ("no
+    // equilibrium", in red) must never be the label for a material nobody
+    // ever tried to solve. staging.py's FEA_MATERIALS materials (concrete,
+    // timber, ...) are the only ones that reach a real runner call at all;
+    // brick, tile and stone come back with struck.status "unavailable"
+    // instead, and that has to read as "no solver", not failure.
     if (struck && struck.converged) {
-      struckLine = "struck now: stands (peak tension " + (struck.peak_tension / 1e6).toFixed(2) +
-        " MPa, peak compression " + (struck.peak_compression / 1e6).toFixed(2) + " MPa)";
+      rows.push(["struck", "stands"]);
+      rows.push(["struck tension", (struck.peak_tension / 1e6).toFixed(2) + " MPa"]);
+      rows.push(["struck compression", (struck.peak_compression / 1e6).toFixed(2) + " MPa"]);
     } else if (struck && struck.status === "unavailable") {
-      struckLine = "struck now: not available for this material -- " + struck.message;
+      rows.push(["struck", "no solver"]);
     } else {
-      struckLine = "struck now: no equilibrium found -- " + (struck && struck.message ? struck.message : "no solve result");
+      rows.push(["struck", "no equilibrium", true]);
     }
-    lines.push(struckLine);
   }
-  hud.textContent = lines.join("\n");
+  hud.replaceChildren(nameValueTable(rows));
 }
 
 // The studio's log is not scene state: the purity contract below covers the
@@ -12198,6 +12172,31 @@ function capPointCount() {
     (total, piece) => total + piece.mid.length, 0);
 }
 
+// A name and its value a row, and a value that is bad in deep red (his
+// ruling of 11 October 2026: "just showing the data with red for bad, and
+// a basic layout for information"). Each row is [name, value, bad].
+function nameValueTable(rows) {
+  const table = document.createElement("table");
+  table.className = "name-value";
+  for (const [name, value, bad] of rows) {
+    const row = document.createElement("tr");
+    const nameCell = document.createElement("td");
+    nameCell.textContent = name;
+    const valueCell = document.createElement("td");
+    if (bad) {
+      const mark = document.createElement("span");
+      mark.className = "over";
+      mark.textContent = value;
+      valueCell.appendChild(mark);
+    } else {
+      valueCell.textContent = value;
+    }
+    row.append(nameCell, valueCell);
+    table.appendChild(row);
+  }
+  return table;
+}
+
 function renderDataPanel(v) {
   const content = document.getElementById("data-content");
   content.innerHTML = "";
@@ -12214,201 +12213,133 @@ function renderDataPanel(v) {
     const cutHeading = document.createElement("h3");
     cutHeading.textContent = "Cut";
     content.appendChild(cutHeading);
+    const rows = [
+      ["pattern", tess.pattern],
+      ["source", tess.source === "imported" ? "imported" : "generated"],
+      // An authored cut has no target size of its own: it ignores the
+      // size control entirely.
+      ["size", tess.source === "imported"
+        ? "authored" : Math.round(tess.target_size * 1000) + " mm"],
+      ["pieces", String(tess.cells)],
+      // An authored cut whose cells carry no course lands every one of
+      // them in course 0 (tessellation.from_document), so the vault
+      // collapses to one course and the drops, taperAt and the stage
+      // mapping all follow that collapse: an inferred count is bad.
+      ["courses", tess.courses + (tess.courses_inferred ? ", inferred" : ""),
+        !!tess.courses_inferred],
+    ];
 
-    const patternLine = document.createElement("p");
-    patternLine.textContent = tess.pattern + " ("
-      + (tess.source === "imported" ? "imported from Grasshopper" : "generated") + ")";
-    content.appendChild(patternLine);
-
-    const sizeLine = document.createElement("p");
-    sizeLine.textContent = tess.source === "imported"
-      ? "no target size of its own: an authored cut ignores the size control entirely"
-      : "target size " + tess.target_size + " m";
-    content.appendChild(sizeLine);
-
-    const countLine = document.createElement("p");
-    countLine.textContent = tess.cells + " pieces, " + tess.courses + " courses";
-    content.appendChild(countLine);
-
-    // An authored cut whose cells carry no course lands every one of them
-    // in course 0 (tessellation.from_document), so the vault collapses to
-    // a single course and the drop sequence, taperAt and the stage mapping
-    // all follow that collapse. The flag saying so shipped in the bundle
-    // and was never rendered anywhere a user could see it.
-    if (tess.courses_inferred) {
-      const inferredLine = document.createElement("p");
-      inferredLine.textContent = "no cell in this authored cut carried a "
-        + "course, so every one was placed in course 0: the courses above "
-        + "are inferred, not authored, and the drop sequence, the crown "
-        + "taper and the stage mapping all read this vault as one course.";
-      content.appendChild(inferredLine);
-    }
-
-    // The spec asks for boundary sub-edges per piece, before and after, in
-    // BENCH.md and in the Data panel where the user can see them. The
-    // bundle has carried both since pieces.py started reporting them; the
-    // panel is the only place a user meets a specific loaded cut, and the
-    // rim outlier is exactly the caveat it exists for.
+    // Boundary sub-edges per piece, which the spec asks to see in the
+    // panel: the bundle has carried both spreads since pieces.py started
+    // reporting them, and older caches carry neither.
     const fpp = tess.facets_per_piece;
     if (fpp) {
-      const facetLine = document.createElement("p");
-      facetLine.textContent = "facets per piece: min " + fpp.min + " / median "
-        + fpp.median + " / max " + fpp.max
+      rows.push(["facets per piece", "min " + fpp.min + ", median " + fpp.median
+        + ", max " + fpp.max
         + (fpp.max_course === undefined || fpp.max_course === null
-          ? "" : " (the max belongs to course " + fpp.max_course + ")")
-        + ". This is the number the retired ring and wedge binning's 30 to "
-        + "86 boundary edges per cell compares against: a four sided "
-        + "voussoir has four.";
-      content.appendChild(facetLine);
+          ? "" : " (course " + fpp.max_course + ")")]);
     }
     const bpp = tess.boundary_points_per_piece;
     if (bpp) {
-      const boundaryLine = document.createElement("p");
-      boundaryLine.textContent = "boundary points per piece: min " + bpp.min
-        + " / median " + bpp.median + " / max " + bpp.max
-        + ". These count every subdivided boundary point rather than the "
-        + "joints themselves, so read facets per piece for the headline.";
-      content.appendChild(boundaryLine);
+      rows.push(["boundary points per piece", "min " + bpp.min
+        + ", median " + bpp.median + ", max " + bpp.max]);
     }
-
-    const chordLine = document.createElement("p");
-    chordLine.textContent = "cap chord deviation " + tess.chord_mm.toFixed(3)
-      + " mm against a 5.0 mm target, " + tess.rounds + " subdivision round(s), "
-      + "limited by " + tess.limit;
-    content.appendChild(chordLine);
+    rows.push(["chord deviation", tess.chord_mm.toFixed(3) + " / 5.0 mm",
+      tess.chord_mm > 5.0]);
+    rows.push(["subdivision rounds", String(tess.rounds)]);
+    rows.push(["limited by", String(tess.limit)]);
 
     // The single worst-corner number badly misrepresents the cut, so the
     // whole distribution is shown, not only tess.corner_residual (which
-    // stays the worst corner alone, equal to stats.max below): the median
-    // is what describes a typical joint, and the max describes only its
-    // own worst corner, which the studio names by course rather than
-    // leaving the reader to assume it is typical.
+    // stays the worst corner alone, equal to stats.max below).
     // Guarded, not assumed. corner_residual_stats landed late in the
     // cutting wave and REQUIRED_BUNDLE_KEYS did not name it until this
     // fix, so every machine that ran this branch mid-wave has a cached
     // bundle without it. Dereferencing stats.count on one of those threw
     // out of the Data button's click handler AFTER content.innerHTML = ""
     // and BEFORE the panel was unhidden, so the button read as doing
-    // nothing at all. A missing sub-field degrades to a line saying so.
+    // nothing at all. A missing sub-field degrades to a row saying so.
     const stats = tess.corner_residual_stats;
     if (!stats) {
-      const residualMissing = document.createElement("p");
-      residualMissing.textContent = "corner normal residual: not measured in "
-        + "this bundle, which was cached before the distribution was "
-        + "reported. Delete the cached bundle, or change any control, to "
-        + "re-cut.";
-      content.appendChild(residualMissing);
+      rows.push(["corner residual", "not measured"]);
     } else {
-      const residualWhat = document.createElement("p");
-      residualWhat.textContent = "corner normal residual, over " + stats.count
-        + " corners: the sine of the angle between a corner's one stored "
-        + "normal and the plane of the facet that does not own it, since a "
-        + "corner belongs to two joints and one normal cannot lie in both";
-      content.appendChild(residualWhat);
-      const residualDistribution = document.createElement("p");
       // In degrees as well as the bare sine, the way docs/BENCH.md quotes
-      // it: a sine of 0.33 is not a number a reader converts in their head,
-      // and the whole point of the distribution is that it can be read.
-      residualDistribution.textContent = "median " + stats.median.toFixed(4)
-        + " (" + residualDegrees(stats.median).toFixed(2) + " degrees)"
-        + ", mean " + stats.mean.toFixed(4)
-        + " (" + residualDegrees(stats.mean).toFixed(2) + " degrees)"
-        + ", p99 " + stats.p99.toFixed(4)
-        + " (" + residualDegrees(stats.p99).toFixed(2) + " degrees)"
-        + ", max " + stats.max.toFixed(4)
-        + " (" + residualDegrees(stats.max).toFixed(2) + " degrees, its own "
-        + "worst corner, in course(s) " + stats.worst_corner_courses.join(", ")
-        + "). The median describes the cut; the max describes only its worst "
-        + "corner, which clusters with the rest of the tail in the rim course, "
-        + "where the cut follows the mesh's own irregular boundary rather "
-        + "than a straight chord.";
-      content.appendChild(residualDistribution);
-      const residualCounts = document.createElement("p");
-      residualCounts.textContent = "corners over threshold: " + stats.over.map(
-        function (entry) {
-          return entry.count + " of " + stats.count + " over " + entry.threshold
-            + " (" + residualDegrees(entry.threshold).toFixed(1) + " degrees)";
-        }
-      ).join(", ");
-      content.appendChild(residualCounts);
+      // it: a sine of 0.33 is not a number a reader converts in their head.
+      const reading = (sine) => sine.toFixed(4) + ", "
+        + residualDegrees(sine).toFixed(2) + "\u00b0";
+      rows.push(["corners", String(stats.count)]);
+      rows.push(["residual median", reading(stats.median)]);
+      rows.push(["residual mean", reading(stats.mean)]);
+      rows.push(["residual p99", reading(stats.p99)]);
+      rows.push(["residual max", reading(stats.max)]);
+      rows.push(["worst corner, course", stats.worst_corner_courses.join(", ")]);
+      // No limit is set for these, so none reads red.
+      for (const entry of stats.over) {
+        rows.push(["over " + entry.threshold + " ("
+          + residualDegrees(entry.threshold).toFixed(1) + "\u00b0)",
+          entry.count + " of " + stats.count]);
+      }
     }
 
     // With denominators and, for the clamp, with the magnitude. The same
     // 137 clamped points are either rounding noise or ten times the 5 mm
     // chord target depending on how far they moved, which is why the
-    // report carries clamped_max_m and clamped_median_m at all.
+    // report carries clamped_max_m and clamped_median_m at all; past that
+    // target a clamp is bad.
     const capPoints = capPointCount();
-    const clampedLine = document.createElement("p");
-    let clampedText = tess.clamped_points + " of " + capPoints
-      + " cap point(s) clamped to the nearest render mesh face";
+    rows.push(["cap points clamped", tess.clamped_points + " of " + capPoints]);
     if (typeof tess.clamped_max_m === "number"
         && typeof tess.clamped_median_m === "number") {
-      clampedText += ", reaching " + (tess.clamped_max_m * 1000).toFixed(1)
-        + " mm at the worst and " + (tess.clamped_median_m * 1000).toFixed(1)
-        + " mm at the median";
+      rows.push(["clamped worst", (tess.clamped_max_m * 1000).toFixed(1) + " mm",
+        tess.clamped_max_m * 1000 > 5.0]);
+      rows.push(["clamped median", (tess.clamped_median_m * 1000).toFixed(1) + " mm",
+        tess.clamped_median_m * 1000 > 5.0]);
     } else {
-      clampedText += " (by how far: not measured in this cached bundle)";
+      rows.push(["clamped by", "not measured"]);
     }
-    clampedText += "; " + tess.missing_planes
-      + " boundary facet(s) with no joint plane to project onto";
-    clampedLine.textContent = clampedText;
-    content.appendChild(clampedLine);
+    rows.push(["facets with no joint plane", String(tess.missing_planes),
+      tess.missing_planes > 0]);
 
+    // Every one of these is a hole, a seam or a sliver in the cut, so any
+    // count above nought is bad.
     const coverage = tess.report;
     const analysisFaces = state.bundle.analysis_mesh.faces.length;
-    const coverageLine = document.createElement("p");
-    coverageLine.textContent = "coverage: " + coverage.orphan_faces.length
-      + " of " + analysisFaces + " analysis face(s) orphaned, "
-      + coverage.double_faces.length + " doubled; of " + tess.cells
-      + " cell(s), " + coverage.open_facets.length + " open facet(s), "
-      + coverage.slivers.length + " sliver(s), "
-      + coverage.coverage_holes.length + " coverage hole(s), "
-      + coverage.broken_boundary.length + " broken boundary entrie(s)";
-    content.appendChild(coverageLine);
+    rows.push(["orphaned faces", coverage.orphan_faces.length + " of " + analysisFaces,
+      coverage.orphan_faces.length > 0]);
+    for (const [name, list] of [
+      ["doubled faces", coverage.double_faces],
+      ["open facets", coverage.open_facets],
+      ["slivers", coverage.slivers],
+      ["coverage holes", coverage.coverage_holes],
+      ["broken boundary", coverage.broken_boundary],
+    ]) {
+      rows.push([name, String(list.length), list.length > 0]);
+    }
 
     // A folded cell is named and nowhere excluded: it is still cut, still
     // capped and still drawn, with one lobe of its cap inside out. It
     // enters none of the counts above, so naming it here is the only way
     // anyone learns which piece on screen is the bad one.
     const folded = coverage.folded;
-    const foldedLine = document.createElement("p");
-    foldedLine.textContent = !folded
-      ? "folded cells: not measured in this cached bundle"
-      : folded.length
-        ? "folded: " + folded.length + " cell(s) whose welded outline "
-          + "crosses itself -- " + folded.join(", ") + ". Each is still cut, "
-          + "still capped and still drawn, with one lobe of its cap inside "
-          + "out, and enters none of the coverage counts above."
-        : "folded: no cell's welded outline crosses itself";
-    content.appendChild(foldedLine);
+    rows.push(["folded cells", !folded ? "not measured"
+      : folded.length ? folded.length + ": " + folded.join(", ") : "0",
+      !!(folded && folded.length)]);
 
     if (tess.backward_turn_degrees !== null && tess.backward_turn_degrees !== undefined) {
-      const wobbleLine = document.createElement("p");
-      wobbleLine.textContent = tess.backward_steps + " of the plan's own rim step(s) "
-        + "turn backward, " + tess.backward_turn_degrees.toFixed(3)
-        + " degrees of backward turn total";
-      content.appendChild(wobbleLine);
+      rows.push(["backward rim steps", tess.backward_steps + ", "
+        + tess.backward_turn_degrees.toFixed(3) + "\u00b0"]);
     }
 
+    // An imported cut quotes its own provenance verbatim, a key a row, and
+    // the measured z offset in place of a target size.
     if (tess.source === "imported") {
-      const provenanceLine = document.createElement("p");
-      provenanceLine.textContent = "provenance: " + JSON.stringify(tess.provenance || {});
-      content.appendChild(provenanceLine);
-      const zLine = document.createElement("p");
-      zLine.textContent = tess.z_offset_max === null || tess.z_offset_max === undefined
-        ? "measured z offset against the thrust surface: unmeasured"
-        : "measured z offset against the thrust surface: "
-          + (tess.z_offset_max * 1000).toFixed(1) + " mm";
-      content.appendChild(zLine);
+      for (const [key, value] of Object.entries(tess.provenance || {})) {
+        rows.push([key, typeof value === "string" ? value : JSON.stringify(value)]);
+      }
+      rows.push(["z offset", tess.z_offset_max === null || tess.z_offset_max === undefined
+        ? "unmeasured" : (tess.z_offset_max * 1000).toFixed(1) + " mm"]);
     }
-
-    const interpolationLine = document.createElement("p");
-    interpolationLine.textContent = "a piece's own points are not render mesh "
-      + "vertices, so every field value shown on a casting is sampled by "
-      + "interpolation through the barycentric weights the cut recorded for "
-      + "it, not read off a single mesh vertex directly: a heatmap value at "
-      + "a point is an interpolated reading, not a lookup.";
-    content.appendChild(interpolationLine);
+    content.appendChild(nameValueTable(rows));
   }
 
   // The CRA verdict no longer pops up: it is gone from the badge and the
@@ -12424,64 +12355,36 @@ function renderDataPanel(v) {
     const craHeading = document.createElement("h3");
     craHeading.textContent = "CRA rigid-block verdict";
     content.appendChild(craHeading);
-    const line = document.createElement("p");
-    line.textContent = verdict.stands === true
-      ? "stands as rigid blocks under friction, self-weight only"
-      : verdict.stands === false
-        ? "does not stand as rigid blocks (" + verdict.status + ")"
-        : "not run: " + (verdict.message || verdict.status);
-    content.appendChild(line);
-    const mu = document.createElement("p");
-    mu.textContent = FRICTION_PROVENANCE[state.bundle.material]
-      || ("mu " + verdict.mu);
-    content.appendChild(mu);
-    const counts = document.createElement("p");
-    counts.textContent = verdict.blocks + " blocks, "
-      + verdict.interfaces + " contact interfaces";
-    content.appendChild(counts);
-    const faceted = document.createElement("p");
-    faceted.textContent = "the verdict is computed on a faceted model, not "
-      + "on the castings drawn here. The analysis model replaces each cell "
-      + "with a single voussoir whose faces are planar, one per neighbour, "
-      + "so its surface cuts the chord wherever the vault curves: it sits "
-      + "inside the drawn surface, carries less volume than the cell it "
-      + "stands for, and both errors grow as the segmentation coarsens. "
-      + "Position is the larger of the two, and on this vault it has been "
-      + "measured in metres against a shell half thickness of 0.1 m, so "
-      + "the solver weighs blocks that do not sit where the vault is "
-      + "shown. Neither error is quoted as a figure against what is on "
-      + "screen, and the reason is that the drawing has since moved: a "
-      + "casting here is projected onto its own flat joint planes, shrunk "
-      + "by the joint gap and thinned by the crown taper, all in the same "
-      + "dimension. The measurements in docs/BENCH.md were taken against "
-      + "the mesh-following block model this viewer no longer draws, and "
-      + "are a distance between two analysis models rather than a "
-      + "distance to these pieces";
-    content.appendChild(faceted);
+    const rows = [
+      // Standing is plain; anything else is bad.
+      ["verdict", verdict.stands === true
+        ? "stands"
+        : verdict.stands === false
+          ? "does not stand (" + verdict.status + ")"
+          : "not run: " + (verdict.message || verdict.status),
+        verdict.stands !== true],
+      ["mu", typeof verdict.mu === "number" ? verdict.mu.toFixed(2) : String(verdict.mu)],
+      ["blocks", String(verdict.blocks)],
+      ["interfaces", String(verdict.interfaces)],
+    ];
     const skipped = state.bundle.staging && state.bundle.staging.cra_skipped;
     if (skipped && skipped.length) {
-      const missing = document.createElement("p");
-      missing.textContent = skipped.length + " piece(s) could not be modelled "
-        + "as a voussoir and are absent from the rigid-block model, so this "
-        + "verdict describes less than the whole vault: "
-        // entry.ring/entry.wedge are voussoirs.py's own field names,
-        // unchanged there by Task 7's ruling: ring is the course index and
-        // wedge is the piece's position within it, not a ring/wedge polar
-        // bin. The sentence a user reads says so honestly without asking
-        // voussoirs.py to rename anything.
-        + skipped.map(function (entry) {
-            return "course " + entry.ring + " piece " + entry.wedge
-              + " (" + entry.reason + ")";
-          }).join("; ");
-      content.appendChild(missing);
+      // A verdict on less than the whole vault. entry.ring/entry.wedge are
+      // voussoirs.py's own field names, unchanged there by Task 7's
+      // ruling: ring is the course index and wedge is the piece's position
+      // within it, not a ring/wedge polar bin, so the row names them as a
+      // course and a piece without asking voussoirs.py to rename anything.
+      rows.push(["skipped", skipped.length + ": " + skipped.map(function (entry) {
+        return "course " + entry.ring + " piece " + entry.wedge
+          + " (" + entry.reason + ")";
+      }).join("; "), true]);
     }
+    content.appendChild(nameValueTable(rows));
   }
 
   // Verification content: early-out if no verification file.
   if (!v) {
-    const p = document.createElement("p");
-    p.textContent = "no verification run embedded yet";
-    content.appendChild(p);
+    content.appendChild(nameValueTable([["verification", "none"]]));
     return;
   }
 
@@ -12489,31 +12392,28 @@ function renderDataPanel(v) {
   heading.textContent = (v.export || "") + " -- " + (v.material || "");
   content.appendChild(heading);
 
-  if (v.material_assumptions) {
-    const assumptions = document.createElement("p");
-    assumptions.textContent = v.material_assumptions;
-    content.appendChild(assumptions);
-  }
-
+  const rows = [];
   const cross = v.cross_check;
   if (cross) {
-    const reactions = document.createElement("p");
-    reactions.textContent = "reactions agree: " + (cross.reactions_agree ? "yes" : "no");
-    content.appendChild(reactions);
-    const strict = document.createElement("p");
-    strict.textContent = "strict per-member agreement: " + (cross.strict_agrees ? "yes" : "no");
-    content.appendChild(strict);
-    if (cross.member_note) {
-      const note = document.createElement("p");
-      note.textContent = cross.member_note;
-      content.appendChild(note);
-    }
+    rows.push(["reactions agree", cross.reactions_agree ? "yes" : "no", !cross.reactions_agree]);
+    rows.push(["per-member agree", cross.strict_agrees ? "yes" : "no", !cross.strict_agrees]);
   }
+  if (v.displacement) {
+    rows.push(["deflection", (v.displacement.peak_magnitude * 1000).toFixed(2) + " mm"
+      + (v.deflection && v.deflection.span_over_deflection
+        ? ", 1 / " + Math.round(v.deflection.span_over_deflection) : "")]);
+  }
+  if (v.stress) {
+    rows.push(["compression", (v.stress.peak_compression / 1e6).toFixed(2) + " MPa"]);
+    rows.push(["utilisation", (100 * v.stress.utilisation).toFixed(1) + "%",
+      v.stress.utilisation > 1]);
+  }
+  if (rows.length) content.appendChild(nameValueTable(rows));
 
   if (v.tension_sweep && v.tension_sweep.length) {
-    const label = document.createElement("p");
-    label.textContent = "tension sweep";
-    content.appendChild(label);
+    const sweepHeading = document.createElement("h3");
+    sweepHeading.textContent = "Tension sweep";
+    content.appendChild(sweepHeading);
     const table = document.createElement("table");
     const head = document.createElement("tr");
     for (const text of ["factor", "peak tension (MPa)", "utilisation %", "state"]) {
@@ -12528,36 +12428,27 @@ function renderDataPanel(v) {
         row.factor,
         (row.peak_tension / 1e6).toFixed(2),
         (100 * row.utilisation).toFixed(1),
-        row.tension_present ? "TENSION" : "compression",
       ];
       for (const value of cells) {
         const td = document.createElement("td");
         td.textContent = value;
         tr.appendChild(td);
       }
+      // Tension in an unreinforced shell is the bad reading.
+      const stateCell = document.createElement("td");
+      if (row.tension_present) {
+        const mark = document.createElement("span");
+        mark.className = "over";
+        mark.textContent = "tension";
+        stateCell.appendChild(mark);
+      } else {
+        stateCell.textContent = "compression";
+      }
+      tr.appendChild(stateCell);
       table.appendChild(tr);
     }
     content.appendChild(table);
   }
-
-  const headline = document.createElement("ul");
-  if (v.displacement) {
-    const li = document.createElement("li");
-    li.textContent = "peak deflection " + (v.displacement.peak_magnitude * 1000).toFixed(2) + " mm";
-    if (v.deflection && v.deflection.span_over_deflection) {
-      li.textContent += " (1 / " + Math.round(v.deflection.span_over_deflection) + ")";
-    }
-    headline.appendChild(li);
-  }
-  if (v.stress) {
-    const compression = document.createElement("li");
-    compression.textContent = "peak compression " + (v.stress.peak_compression / 1e6).toFixed(2) + " MPa";
-    headline.appendChild(compression);
-    const utilisation = document.createElement("li");
-    utilisation.textContent = "utilisation " + (100 * v.stress.utilisation).toFixed(1) + "%";
-    headline.appendChild(utilisation);
-  }
-  if (headline.children.length) content.appendChild(headline);
 }
 
 // ---------- data plumbing ----------
