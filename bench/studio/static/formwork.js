@@ -8,8 +8,8 @@
 
 import {
   answer, answerHtml, captureLabel, captureTimes, colourKey, formworkPickHtml, modelLabels,
-  formworkWarnings, frameLine, frameLineHtml, labelsShown, paintOverlay, playhead, readSim,
-  recordingCaption, weakestAt, withWall,
+  formworkWarnings, frameLine, frameLineHtml, labelsShown, nextScene, paintOverlay, playhead,
+  readSim, recordingCaption, weakestAt, withWall,
 } from "./formwork_model.js";
 import { spreadLabels } from "./labels.js";
 import { costHtml, graphsHtml } from "./run_popup_model.js";
@@ -225,10 +225,6 @@ export function mountFormwork({ studyName, studyOptions, mechanism, view, hooks 
     draw();
   }
 
-  function step(by) {
-    const head = playhead(tab.times, tab.at);
-    if (head) goTo(head.nearer + by);
-  }
 
   // The run with its trees judged in the Wall dial's tube (spec section 7: a
   // new wall is judged again from the run's own forces, without a run).
@@ -242,8 +238,12 @@ export function mountFormwork({ studyName, studyOptions, mechanism, view, hooks 
     if (!tab.playing && tab.at >= end()) tab.at = 0;
     setPlaying(!tab.playing);
   });
-  el.back.addEventListener("click", () => step(-1));
-  el.on.addEventListener("click", () => step(1));
+  // back to the start; on to the next scene (his ask of 11 October 2026)
+  el.back.addEventListener("click", () => goTo(0));
+  el.on.addEventListener("click", () => {
+    const head = playhead(tab.times, tab.at);
+    if (head && tab.judged) goTo(nextScene(tab.judged.captures, head.nearer));
+  });
   el.scrub.addEventListener("input", () => goTo(Number(el.scrub.value) - 1));
   el.speed.addEventListener("input", () => {
     tab.speed = Number(el.speed.value);

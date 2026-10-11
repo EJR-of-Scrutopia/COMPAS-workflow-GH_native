@@ -175,6 +175,21 @@ export function captureLabel(capture) {
   return "t " + Number(Number(capture.time).toFixed(1)) + " " + capture.phase;
 }
 
+// The first capture of the scene after the one capture index is in, or the
+// last capture from the last scene (his ask of 11 October 2026: the player
+// steps on a scene, not a capture). A scene is a phase (the raise, the
+// finish, the hold, the jacking), and in the tiling each row of tiles.
+export function nextScene(captures, index) {
+  const list = captures || [];
+  if (!list.length) return 0;
+  const scene = (c) => (c.phase === "tiling" ? "tiling " + c.row : c.phase);
+  const here = scene(list[Math.min(Math.max(index, 0), list.length - 1)]);
+  for (let i = Math.max(index, 0) + 1; i < list.length; i++) {
+    if (scene(list[i]) !== here) return i;
+  }
+  return list.length - 1;
+}
+
 // When the player reaches each capture, in seconds at 1x: the raise, finish
 // and hold at the act's rate from the first capture's machine time, the
 // capture after the jacking JACK_SECONDS after the hold, each tiling quarter
