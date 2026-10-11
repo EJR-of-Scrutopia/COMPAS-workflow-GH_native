@@ -1533,14 +1533,10 @@ def create_app(runner=None, cra_runner=None, formwork_runner=None) -> FastAPI:
         threading.Thread(target=work, daemon=True).start()
         return {"run": run_id}
 
-    @app.get("/api/studies/{export}/formwork/sim")
-    def study_formwork_sim(export: str, material: str = "tile", pattern: str = "herringbone",
-                           size: float = 1.0, thickness: float = 0.02,
-                           density: Optional[float] = None, source: Optional[str] = None):
+    def _formwork_sim_file(export, material, pattern, size, thickness, density, source):
         """The capture document the formwork run wrote for this study and these
-        options, served as it lies: several megabytes, never parsed here. Found
-        by the cut the run made, through staging.cut_slot, as a staged run's
-        documents are."""
+        options, found by the cut the run made, through staging.cut_slot, as a
+        staged run's documents are; a 404 that says so when there is none."""
 
         pairs = geometry.available_exports(bundle.UPLOAD_DIR)
         if export not in pairs:
@@ -1557,10 +1553,72 @@ def create_app(runner=None, cra_runner=None, formwork_runner=None) -> FastAPI:
         if not path.is_file():
             raise HTTPException(404, "This study has no formwork run for these options yet; "
                                      "a formwork run writes one.")
+        return path
+
+    @app.get("/api/studies/{export}/formwork/sim")
+    def study_formwork_sim(export: str, material: str = "tile", pattern: str = "herringbone",
+                           size: float = 1.0, thickness: float = 0.02,
+                           density: Optional[float] = None, source: Optional[str] = None):
+        """The capture document, served as it lies: several megabytes, never
+        parsed here."""
+
+        path = _formwork_sim_file(export, material, pattern, size, thickness, density, source)
         # asked again every time: a rerun rewrites the file in place, and a
         # browser left to guess kept the run before it on screen
         return FileResponse(path, media_type="application/json",
                             headers={"Cache-Control": "no-cache"})
+
+    def _run_cost(export, material, pattern, size, thickness, density, source):
+        """The run's mechanism priced on this study (spec 2026-10-11 one Cable
+        net tab, section 8.2), its demands the run's own peaks."""
+
+        import bom
+        import catalogue
+        import machine
+
+        path = _formwork_sim_file(export, material, pattern, size, thickness, density, source)
+        document = json.loads(path.read_text(encoding="utf-8"))
+        chosen = (document.get("options") or {}).get("mechanism")
+        if not isinstance(chosen, dict):
+            raise HTTPException(400, "This run has no mechanism: choose one and Run")
+        parts = catalogue.load_parts()
+        facts = _machine_facts(export, parts, chosen.get("rope"))
+        try:
+            built = machine.derive(parts, chosen, facts, MECHANISM_ANGLE_DEGREES)
+            return bom.run_cost(parts, built, facts, document)
+        except (machine.MachineError, catalogue.CatalogueError) as error:
+            raise HTTPException(400, str(error))
+
+    @app.get("/api/studies/{export}/formwork/cost")
+    def study_formwork_cost(export: str, material: str = "tile", pattern: str = "herringbone",
+                            size: float = 1.0, thickness: float = 0.02,
+                            density: Optional[float] = None, source: Optional[str] = None):
+        return _run_cost(export, material, pattern, size, thickness, density, source)
+
+    @app.post("/api/studies/{export}/formwork/bom")
+    def write_formwork_bom(export: str, body: dict):
+        """Export BOM: the run's bill of materials written to the export folder."""
+
+        import bom
+
+        try:
+            size = float(body.get("size", 1.0))
+            thickness = float(body.get("thickness", 0.02))
+            density = float(body["density"]) if body.get("density") else None
+        except (TypeError, ValueError, OverflowError) as error:
+            raise HTTPException(400, "a number was unreadable: {}".format(error))
+        cost = _run_cost(export, str(body.get("material", "tile")),
+                         str(body.get("pattern", "herringbone")), size, thickness, density,
+                         body.get("source"))
+        folder = _exports_folder()
+        name = "{}-bom-{}.xlsx".format(geometry.slugify(export),
+                                       time.strftime("%Y%m%d-%H%M%S"))
+        try:
+            path = bom.write_bom(folder / name, cost, export)
+        except OSError as error:
+            raise HTTPException(400, "the bill of materials could not be written to {}: "
+                                     "{}".format(folder, error))
+        return {"path": str(path), "name": name}
 
     @app.get("/api/runs/{run_id}")
     def run_state(run_id: str):
