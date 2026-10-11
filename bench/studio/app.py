@@ -154,6 +154,9 @@ FORMWORK_DEFAULTS = {"prestress": None, "rope": "rope-4mm", "wires_per_motor": 1
 FORMWORK_TUBE_MM = 60.3     # the trees' tube, the engine's trees.DIAMETER
 # The most rods a side a run takes (spec 2026-10-11 one Cable net tab, section 6).
 HOLDS_PER_SIDE_MAX = 20
+PULL_IN_MAX = 30000.0   # N a tendon, the most the Pull in dial asks for (spec 2026-10-11
+                        # across tendons, section 9: every pull to 30,000 N ran on the
+                        # real study)
 # The wire's angle to its eye bolt's axis, which the export does not record:
 # assumed, as the panel always has, and the conservative direction.
 MECHANISM_ANGLE_DEGREES = 10.0
@@ -1403,6 +1406,15 @@ def create_app(runner=None, cra_runner=None, formwork_runner=None) -> FastAPI:
         resume = body.get("resume", False)
         if not isinstance(resume, bool):
             raise HTTPException(400, "resume: true or false, not {!r}".format(resume))
+        # the pull on every across tendon, newtons a tendon (spec 2026-10-11
+        # across tendons, section 7); nought is none
+        pull_in = body.get("pull_in", 0)
+        if (isinstance(pull_in, bool) or not isinstance(pull_in, (int, float))
+                or not 0 <= pull_in <= PULL_IN_MAX):
+            raise HTTPException(
+                400, "pull_in must be newtons a tendon from 0 to {:,.0f}, not {!r}".format(
+                    PULL_IN_MAX, pull_in))
+        pull_in = float(pull_in)
         source = body.get("source")
         if source is not None and source not in bundle.CUT_SOURCES:
             raise HTTPException(400, "source must be one of {} when given".format(
@@ -1519,9 +1531,9 @@ def create_app(runner=None, cra_runner=None, formwork_runner=None) -> FastAPI:
                              "prestress_from": prestress_from,
                              "wires_per_motor": wires_per_motor, "wall": wall,
                              "pulleys": pulleys, "holds_per_side": holds_per_side,
-                             **mechanism_options},
+                             "pull_in": pull_in, **mechanism_options},
                     runner=formwork_runner, progress=progress, holds_per_side=holds_per_side,
-                    state_path=state_path, resume=resume, annotate=annotate)
+                    state_path=state_path, resume=resume, annotate=annotate, pull_in=pull_in)
                 run["state"] = "done"
                 run["phase"] = "done"
                 run["message"] = ""

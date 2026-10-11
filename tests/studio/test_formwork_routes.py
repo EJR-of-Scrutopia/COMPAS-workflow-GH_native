@@ -208,6 +208,37 @@ def test_the_run_takes_rods_a_side_and_tells_the_engine_the_sides_and_its_state(
     assert "state_in" not in seen[-1]
 
 
+def test_the_run_takes_pull_in_newtons_a_tendon(tmp_path, monkeypatch):
+    # spec 2026-10-11 across tendons, section 7 (amended): nought, none, by
+    # default; the Tiny net has one head, so no principal line, and a pulled
+    # run says so
+    seen = []
+
+    def fake(request, progress=None):
+        seen.append(request)
+        return {"schema": "bench.formwork-sim/1", "captures": []}
+
+    client, _ = make_client(tmp_path, monkeypatch, formwork_runner=fake)
+    _plant(tmp_path)
+    import formwork_sim
+    started = client.post("/api/studies/Tiny/formwork/run", json=RUN)
+    assert wait_for(client, started.json()["run"])["state"] == "done"
+    assert seen[-1]["options"]["pull_in"] == 0.0 and seen[-1]["tendon_pull"] == 0.0
+    assert seen[-1]["tendons"] == []
+    document = client.get("/api/studies/Tiny/formwork/sim", params=RUN).json()
+    assert document["tendons_reason"] is None
+    started = client.post("/api/studies/Tiny/formwork/run", json={**RUN, "pull_in": 3000})
+    assert wait_for(client, started.json()["run"])["state"] == "done"
+    assert seen[-1]["options"]["pull_in"] == 3000.0 and seen[-1]["tendon_pull"] == 3000.0
+    document = client.get("/api/studies/Tiny/formwork/sim", params=RUN).json()
+    assert document["tendons_reason"] == formwork_sim.NO_TENDONS
+    for bad in (-1, 30001, True, "3000", None):
+        response = client.post("/api/studies/Tiny/formwork/run", json={**RUN, "pull_in": bad})
+        assert response.status_code == 400, bad
+        assert "pull_in must be newtons a tendon from 0 to 30,000" in \
+            response.json()["detail"], bad
+
+
 def test_rods_a_side_are_a_whole_number_from_nought_to_twenty(tmp_path, monkeypatch):
     client, _ = make_client(tmp_path, monkeypatch, formwork_runner=_idle)
     _plant(tmp_path)
