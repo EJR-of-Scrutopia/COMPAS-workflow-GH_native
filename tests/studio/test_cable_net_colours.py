@@ -73,8 +73,10 @@ def out(tmp_path_factory):
     return json.loads(result.stdout)
 
 
-def test_colour_by_is_wires_ropes_offset_trees_or_off(out):
-    assert out["order"] == ["wire", "tension", "deviation", "utilisation", "off"]
+def test_colour_by_is_wires_along_across_both_offset_trees_or_off(out):
+    # Ropes became Along, Across and Both (spec 2026-10-11 across tendons,
+    # section 6)
+    assert out["order"] == ["wire", "along", "across", "both", "deviation", "utilisation", "off"]
 
 
 def test_the_ramp_starts_from_a_colour_that_shows_and_ends_red(out):

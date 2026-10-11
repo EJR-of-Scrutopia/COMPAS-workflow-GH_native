@@ -65,7 +65,9 @@ def document(older=False):
                     "prestress": 723.4, "wall": 3.2},
         "net": {"nodes": 4, "edges": [[0, 1], [1, 2], [2, 3], [3, 0]],
                 "design": pack([[0, 0, 0], [1000, 0, 0], [1000, 1000, 500], [0, 1000, 0]]),
-                "faces": [[0, 1, 2, 3]]},
+                "faces": [[0, 1, 2, 3]],
+                # each edge's family (spec 2026-10-11 across tendons, section 4)
+                "families": ["along", "across", "across", "along"]},
         "rim": {"nodes": [0, 1], "names": ["w0", "w1"],
                 "anchors": pack([[0, 0, 0], [1000, 0, 0]]),
                 "into": pack([[-1, 0, 0], [1, 0, 0]]), "machines": [[0, 1]]},
@@ -84,6 +86,7 @@ def document(older=False):
     }
     if older:
         del doc["net"]["faces"]
+        del doc["net"]["families"]
         for c in doc["captures"]:
             del c["ground"]
     return doc
@@ -225,7 +228,10 @@ def test_the_document_is_read_once_into_metres_newtons_and_millimetres(out):
 def test_each_scale_is_the_largest_over_the_whole_run(out):
     # so a colour means the same newtons in every capture (spec section 9)
     assert out["read"]["scales"] == pytest.approx(
-        {"tension": 3000, "wire": 1500, "deviation": 500, "utilisation": 1.2, "push": 900})
+        {"tension": 3000, "wire": 1500, "deviation": 500, "utilisation": 1.2, "push": 900,
+         # each family's largest (spec 2026-10-11 across tendons, section 6):
+         # with no tendons, along and across are their ropes alone
+         "along": 200, "across": 3000, "both": 3000})
 
 
 def test_the_push_scale_is_the_95th_percentile_so_one_spike_does_not_set_it(out):
