@@ -310,8 +310,12 @@ def test_a_recorded_frame_carries_the_labels_and_the_key(out):
     # the page's labels and key are HTML, which never reach the canvas the
     # recorder reads, so they are drawn over each frame
     texts = [text for text, _, _ in out["overlayBands"]["texts"]]
-    # the key: its title, its limit at its place on the bar, its two ends
-    assert texts == [out["caption"], "3.0 kN", "offset, mm", "tolerance 20 mm", "0", "500 mm"]
+    # the key: its title, its two ends, and its limit on a line of its own
+    # under them, as the page's legend has it (found in the video of 11
+    # October: drawn over the bar, it sat on the title)
+    assert texts == [out["caption"], "3.0 kN", "offset, mm", "0", "500 mm", "tolerance 20 mm"]
+    at = {text: y for text, _, y in out["overlayBands"]["texts"]}
+    assert at["offset, mm"] < at["0"] < at["tolerance 20 mm"]
     label = next(t for t in out["overlayBands"]["texts"] if t[0] == "3.0 kN")
     # standing on its point, as the page's labels do
     assert abs(label[1] - 500) < 30 and label[2] < 400

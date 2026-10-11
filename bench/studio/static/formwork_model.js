@@ -677,12 +677,12 @@ export function paintOverlay(ctx, { width, height, caption, labels, key }) {
   }
   if (key) {
     const bw = px(220);
-    const bh = px(70);
+    const bh = px(74);
     const x0 = width - bw - px(16);
     const y0 = height - bh - px(16);
     const barX = x0 + px(10);
     const barW = bw - px(20);
-    const barY = y0 + px(28);
+    const barY = y0 + px(24);
     const barH = px(14);
     ctx.fillStyle = OVERLAY_GROUND;
     ctx.fillRect(x0, y0, bw, bh);
@@ -693,25 +693,17 @@ export function paintOverlay(ctx, { width, height, caption, labels, key }) {
     RAMP_STOPS.forEach((stop, i) => gradient.addColorStop(i / (RAMP_STOPS.length - 1), stop));
     ctx.fillStyle = gradient;
     ctx.fillRect(barX, barY, barW, barH);
-    if (key.limitText) {
-      // the limit at its place on the bar, or named beside the title when it
-      // is past the run's largest
-      ctx.font = px(10) + "px sans-serif";
-      if (key.fraction != null) {
-        const at = barX + key.fraction * barW;
-        ctx.fillStyle = OVERLAY_INK;
-        ctx.fillRect(at - px(1), barY - px(3), px(2), barH + px(6));
-        ctx.fillText(key.limitText, Math.min(at + px(3), barX + barW - ctx.measureText(key.limitText).width),
-                     barY - px(7));
-      } else {
-        ctx.fillStyle = OVERLAY_INK;
-        ctx.fillText(key.limitText, barX + barW - ctx.measureText(key.limitText).width, y0 + px(14));
-      }
+    // the limit marked at its place on the bar, when it is within the run
+    if (key.limitText && key.fraction != null) {
+      ctx.fillStyle = OVERLAY_INK;
+      ctx.fillRect(barX + key.fraction * barW - px(1), barY - px(3), px(2), barH + px(6));
     }
     ctx.fillStyle = OVERLAY_INK;
     ctx.font = px(11) + "px sans-serif";
     ctx.fillText(key.min, barX, barY + barH + px(12));
     ctx.fillText(key.max, barX + barW - ctx.measureText(key.max).width, barY + barH + px(12));
+    // and named on a line of its own under the ends, as the page's legend
+    if (key.limitText) ctx.fillText(key.limitText, barX, barY + barH + px(27));
   }
   ctx.restore();
 }
