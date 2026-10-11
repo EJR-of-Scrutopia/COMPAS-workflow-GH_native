@@ -194,12 +194,19 @@ def _line_lengths(model, points):
 
 
 def _held_to(model, net, target):
-    """The net with its tendons reeled to these lengths (spec 2026-10-11 across
-    tendons, section 3); as it is with none."""
+    """The net with its tendons reeled to these lengths, never shorter than
+    each line's ropes unstretched (spec 2026-10-11 across tendons, section 3,
+    as amended: early in the raise the animation draws the lines shorter than
+    their ropes, and a reel holding that would bunch the line's nodes until two
+    met); as it is with none."""
 
     if not model.tendons:
         return net
-    return net._replace(tendons=ne.tendons(model.tendons, target))
+    edge_of = {(int(min(a, b)), int(max(a, b))): i for i, (a, b) in enumerate(net.edges)}
+    ropes = np.array([sum(float(net.rest[edge_of[(min(a, b), max(a, b))]])
+                          for a, b in zip(path, path[1:]) if (min(a, b), max(a, b)) in edge_of)
+                      for path in model.tendons])
+    return net._replace(tendons=ne.tendons(model.tendons, np.maximum(target, ropes)))
 
 
 def _count(model):

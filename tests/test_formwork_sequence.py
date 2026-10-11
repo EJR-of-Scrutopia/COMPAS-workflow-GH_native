@@ -363,13 +363,16 @@ def test_the_tendons_hold_each_lines_length_through_the_raise_and_from_the_hold_
     model = _toy()._replace(tendons=TENDONS)
     result = fs.simulate(model)
     frames = {frame.time: frame for frame in model.frames}
+    edge_of = {tuple(sorted(map(int, e))): i for i, e in enumerate(model.edges)}
     for c in result.captures:
         assert c.tendon_tension.shape == (4,)
         # through the raise each reel holds its line to the frame's length; from
-        # the hold on, to the design's; a slack tendon is no longer than that
+        # the hold on, to the design's; never shorter than the line's ropes
+        # unstretched; a slack tendon is no longer than that
         points = frames[c.time].net if c.phase in ("raise", "finish", "hold") else model.design
         for path, pull in zip(TENDONS, c.tendon_tension):
-            length, target = _line_length(c.x, path), _line_length(points, path)
+            ropes = sum(result.rest_lengths[edge_of[tuple(sorted(s))]] for s in zip(path, path[1:]))
+            length, target = _line_length(c.x, path), max(_line_length(points, path), ropes)
             if pull > 0.0:
                 assert abs(length - target) < 1.0, (c.phase, path, length, target)
             else:
@@ -403,3 +406,25 @@ def test_a_run_from_the_state_at_the_hold_with_tendons_is_the_full_run(wires_per
     assert again.holds == full.holds
     for mine, theirs in zip(again.captures, full.captures):
         _same_capture(mine, theirs)
+
+
+
+def test_a_reel_never_holds_its_line_shorter_than_its_ropes():
+    # found running the real 5 sided form: early in the raise the animation
+    # draws the across lines at 0.82 of their design length, shorter than their
+    # ropes, and a tendon held to that bunched its nodes until two met. Here
+    # the first frame draws each line at 0.8 of its length about the head
+    model = _toy()._replace(tendons=TENDONS)
+    first = model.frames[0]
+    gathered = first.net.copy()
+    centre = gathered[4].copy()
+    for node in (1, 3, 5, 7):
+        gathered[node] = centre + 0.8 * (gathered[node] - centre)
+    model = model._replace(frames=[first._replace(net=gathered)] + list(model.frames[1:]))
+    result = fs.simulate(model)
+    edge_of = {tuple(sorted(map(int, e))): i for i, e in enumerate(model.edges)}
+    for c in result.captures:
+        for path, pull in zip(TENDONS, c.tendon_tension):
+            ropes = sum(result.rest_lengths[edge_of[tuple(sorted(s))]] for s in zip(path, path[1:]))
+            if pull > 0.0:
+                assert _line_length(c.x, path) > ropes - 1.0, (c.phase, path)

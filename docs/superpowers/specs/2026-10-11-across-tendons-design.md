@@ -30,7 +30,8 @@ A net whose quads do not sort into the two families, or that has no principal li
 - Its reel sits on the column head; the tendon's pull at the head goes into that head's tree, so the trees' forces and utilisation include it.
 - The reel holds the length of the tendon's path:
   - from the layout and through the raise, to the line's length in the animation's frame at that moment, interpolated between the frame before and the frame after as the heads are;
-  - from the hold on, through the rods' jacking and the tiling, to the line's length at the design.
+  - from the hold on, through the rods' jacking and the tiling, to the line's length at the design;
+  - never shorter than the line's ropes unstretched (amended 2026-10-11, found running the real study: early in the raise the animation draws the across lines at as little as 0.82 of their design length, shorter than their ropes, and a reel holding that bunched a line's nodes until two met).
 - It holds it to within 1 mm, as a stiff servo. The tension that takes is the run's result.
 
 A tendon's force on its nodes: at the free edge, its tension along the last segment toward the head; at each ring, its tension along both its segments, pressing the node toward the inside of the line; at the head, its tension along the first segment, taken by the head.
@@ -97,7 +98,7 @@ A run made before the tendons reads as before: Across shows the across ropes alo
 - The tendon's EA is the chosen net rope's. Cost if wrong: one figure.
 - No friction at the rings. Cost if wrong: tensions that fall along a real tendon.
 - The reel holds its length to within 1 mm. Cost if wrong: a looser hold.
-- Through the raise the target is the frame's line length, interpolated between frames as the heads are. Cost if wrong: a different reel schedule.
+- Through the raise the target is the frame's line length, interpolated between frames as the heads are, and never shorter than the line's ropes unstretched (the amendment of section 3). Cost if wrong: a different reel schedule.
 - Lines are named by their column head and side. Cost if wrong: a name.
 - Across marks no limit; Weakest judges ropes only; the Cost tab leaves the tendons out, all until their mechanism is chosen. Cost if wrong: three lines.
 - A net without a principal line runs without tendons rather than being refused. Cost if wrong: a refusal instead.
