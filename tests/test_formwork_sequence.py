@@ -347,3 +347,57 @@ def test_a_run_from_the_state_at_the_hold_is_the_full_run_with_the_same_holds(wi
     assert again.thinnest_wall == full.thinnest_wall
     # only the jacking and the tiling are worked out again
     assert told[-1] == (5, 5) and {total for _, total in told} == {5}
+
+
+# spec 2026-10-11 across tendons, section 3 (amended): in the toy the column
+# head is the centre node, and its four across lines run out to the edge
+# midpoints; each tendon is pulled in with the same dialled tension
+TENDONS = ((4, 1), (4, 3), (4, 5), (4, 7))
+
+
+def test_the_net_is_laid_out_unpulled_and_pulled_from_the_raise_on(monkeypatch):
+    seen = []
+    real = ne.settle
+
+    def spy(x, net, *args, **kwargs):
+        seen.append((kwargs.get("slide", False), net.tendons))
+        return real(x, net, *args, **kwargs)
+
+    monkeypatch.setattr(ne, "settle", spy)
+    result = fs.simulate(_toy()._replace(tendons=TENDONS, tendon_pull=50.0))
+    assert seen[0][0] is True and seen[0][1] is None          # the layout, by hand
+    assert all(t is not None and t.pull == 50.0 for _, t in seen[1:])
+    for c in result.captures:
+        assert c.tendon_tension.tolist() == [50.0] * 4
+    # no pull, or no lines: none
+    monkeypatch.setattr(ne, "settle", real)
+    assert all(c.tendon_tension.shape == (0,)
+               for c in fs.simulate(_toy()._replace(tendons=TENDONS)).captures)
+    assert all(c.tendon_tension.shape == (0,)
+               for c in fs.simulate(_toy()._replace(tendon_pull=50.0)).captures)
+
+
+def test_the_tendons_pull_reaches_the_tree_at_the_head():
+    model = _toy()._replace(tendons=TENDONS, tendon_pull=50.0)
+    result = fs.simulate(model)
+    net = ne.ropes(model.edges, result.rest_lengths, model.ea)
+    for c in result.captures:
+        # the head holds the centre node against everything on it: its ropes,
+        # its tendons and its weight (a tiling quarter's skin is nought there)
+        on = ne.rope_forces(c.x, net)[0][4] + model.weight[4]
+        for path in TENDONS:
+            unit = (c.x[path[1]] - c.x[path[0]]) / np.linalg.norm(c.x[path[1]] - c.x[path[0]])
+            on = on + 50.0 * unit
+        assert c.head_push[0] == pytest.approx(-on, abs=0.05), c.phase
+
+
+@pytest.mark.parametrize("wires_per_motor", [1, 2])
+def test_a_run_from_the_state_at_the_hold_with_tendons_is_the_full_run(wires_per_motor):
+    pulled = _toy(wires_per_motor)._replace(sides=SIDES, tendons=TENDONS, tendon_pull=50.0)
+    base = fs.simulate(pulled)
+    model = pulled._replace(holds_per_side=1)
+    full = fs.simulate(model)
+    again = fs.simulate(model, state=base.state)
+    assert again.holds == full.holds
+    for mine, theirs in zip(again.captures, full.captures):
+        _same_capture(mine, theirs)
