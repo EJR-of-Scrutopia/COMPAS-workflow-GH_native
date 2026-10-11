@@ -1057,6 +1057,22 @@
   </div>
   <div id="formwork-worst"></div>
 </div><!-- the end of the formwork pop-up -->
+<div id="mechanism-popup" class="hidden">
+  <!-- The one Cable net tab's mechanism (spec 2026-10-11 one Cable net tab,
+       section 8.1): one dropdown of whole spooling mechanisms, strongest
+       first, and under it one spool's pull, the part that sets it and the
+       run's drum and carriage. Filled by mechanism_pick.js. -->
+  <div id="mechanism-popup-head">
+    <div id="mechanism-tabs">
+      <button data-mech-tab="mech-choose" class="active" type="button" title="Mechanism">Mechanism</button>
+    </div>
+    <button id="mechanism-popup-close" type="button" title="Close">Close</button>
+  </div>
+  <div id="mech-choose" class="mech-tab">
+    <select id="mechanism-preset" title="The whole spooling mechanism: its parts and one spool's pull"></select>
+    <div id="mechanism-have" class="cablenet-readout"></div>
+  </div>
+</div><!-- the end of the mechanism pop-up -->
 <!-- Two checks that must not live in studio.js, because the fault they
      exist for is a studio.js the browser is serving from its own cache. The
      page is read from disk by every server on every request, so this is the

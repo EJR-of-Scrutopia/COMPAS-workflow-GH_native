@@ -1508,7 +1508,8 @@ def test_the_formwork_modules_are_remapped_to_their_versioned_addresses(
     # its own cache entry
     client, _ = make_client(tmp_path, monkeypatch)
     page = client.get("/").text
-    for module in ("formwork.js", "formwork_model.js", "formwork_view.js"):
+    for module in ("formwork.js", "formwork_model.js", "formwork_view.js", "mechanism_pick.js",
+                   "mechanism_pick_model.js"):
         escaped = re.escape(module)
         assert re.search(
             r'"/static/' + escaped + r'": "/static/' + escaped + r'\?v=[0-9a-f]{6,}"',
