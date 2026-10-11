@@ -1548,7 +1548,10 @@ def create_app(runner=None, cra_runner=None, formwork_runner=None) -> FastAPI:
         if not path.is_file():
             raise HTTPException(404, "This study has no formwork run for these options yet; "
                                      "a formwork run writes one.")
-        return FileResponse(path, media_type="application/json")
+        # asked again every time: a rerun rewrites the file in place, and a
+        # browser left to guess kept the run before it on screen
+        return FileResponse(path, media_type="application/json",
+                            headers={"Cache-Control": "no-cache"})
 
     @app.get("/api/runs/{run_id}")
     def run_state(run_id: str):
