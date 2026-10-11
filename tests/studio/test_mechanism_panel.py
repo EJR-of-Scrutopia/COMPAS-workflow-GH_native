@@ -104,7 +104,8 @@ def test_the_pop_up_has_three_tabs_mechanism_cost_and_graphs():
     for pane in ("mech-choose", "mech-cost", "mech-graphs"):
         assert 'id="{}" class="mech-tab'.format(pane) in popup, pane
     assert '<button id="cost-export" type="button"' in popup and ">Export BOM</button>" in popup
-    for ident in ("cost-body", "cost-export-status", "graphs-body"):
+    for ident in ("cost-body", "cost-export-status", "graphs-body", "cost-folder-choose",
+                  "cost-folder-path"):
         assert 'id="{}"'.format(ident) in popup, ident
 
 

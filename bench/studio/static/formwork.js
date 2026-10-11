@@ -88,6 +88,7 @@ export function mountFormwork({ studyName, studyOptions, mechanism, view, hooks 
     pick: byId("formwork-pick"), record: byId("formwork-record"),
     costBody: byId("cost-body"), costExport: byId("cost-export"),
     costStatus: byId("cost-export-status"), graphs: byId("graphs-body"),
+    costFolderChoose: byId("cost-folder-choose"), costFolderPath: byId("cost-folder-path"),
   };
   const api = { active: () => false, setActive: () => {}, tick: () => {}, place: () => {},
                 pick: () => {}, clear: () => {}, reload: () => {}, refresh: () => {},
@@ -453,7 +454,7 @@ export function mountFormwork({ studyName, studyOptions, mechanism, view, hooks 
       const written = await getJson(`/api/studies/${encodeURIComponent(studyName())}/formwork/bom`,
         { method: "POST", headers: { "Content-Type": "application/json" },
           body: JSON.stringify(sentOptions(options)) });
-      el.costStatus.textContent = "saved: " + written.name;
+      el.costStatus.textContent = "saved: " + written.path;
     } catch (error) {
       el.costStatus.textContent = error.message;
     } finally {
@@ -461,6 +462,33 @@ export function mountFormwork({ studyName, studyOptions, mechanism, view, hooks 
     }
   }
   el.costExport.addEventListener("click", exportBom);
+
+  // Where Export BOM writes, and the choice of it (the export folder routes).
+  function showFolder(row) {
+    el.costFolderPath.textContent = row && row.path ? row.path : "no folder chosen";
+    el.costFolderPath.title = row && row.path
+      ? (row.exists ? row.path : `${row.path} (this folder is not there)`) : "";
+  }
+  async function loadFolder() {
+    try { showFolder(await getJson("/api/cablenet/exports/folder")); }
+    catch (error) { el.costFolderPath.textContent = error.message; }
+  }
+  el.costFolderChoose.addEventListener("click", async () => {
+    el.costFolderChoose.disabled = true;
+    try {
+      const browsed = await getJson("/api/cablenet/exports/folder/browse", { method: "POST" });
+      if (browsed && browsed.path) {
+        showFolder(await getJson("/api/cablenet/exports/folder", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ path: browsed.path }) }));
+      }
+    } catch (error) {
+      el.costStatus.textContent = error.message;
+    } finally {
+      el.costFolderChoose.disabled = false;
+    }
+  });
+  loadFolder();
 
   function stopWatching() {
     if (tab.watcher != null) clearInterval(tab.watcher);

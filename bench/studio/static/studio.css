@@ -1696,6 +1696,9 @@ body.stilling
 #mechanism-popup .mech-tab.hidden { display: none; }
 #mechanism-popup td:nth-child(2) { white-space: nowrap; }
 #cost-export { margin-top: var(--s2); }
+#mech-cost .folder-line { display: flex; align-items: center; gap: var(--s2); margin-top: var(--s1); }
+#mech-cost .folder-line span { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap; color: var(--ink-3); font-size: var(--t-2); }
 #cost-export-status { font-size: var(--t-2); color: var(--ink-3); margin-top: var(--s1); }
 .run-graph { display: block; margin-bottom: var(--s2); }
 .run-graph .graph-title, .run-graph .graph-scale, .run-graph .graph-limit-text {

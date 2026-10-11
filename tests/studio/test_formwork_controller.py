@@ -129,6 +129,13 @@ def test_the_cost_and_the_graphs_follow_the_run_and_export_bom_writes_it():
     assert ("el.graphs.innerHTML = graphsHtml(tab.judged, have == null ? null : Number(have), "
             "Number(el.tolerance.value));") in graphs
     assert "/formwork/bom" in JS and 'el.costExport.addEventListener("click", exportBom);' in JS
+    # where it is written, on screen and chosen there (found by the final
+    # review: the folder could no longer be seen or changed from the page)
+    assert 'el.costStatus.textContent = "saved: " + written.path;' in JS
+    assert 'await getJson("/api/cablenet/exports/folder")' in _inner(JS, "loadFolder")
+    choose = JS[JS.index('el.costFolderChoose.addEventListener("click"'):]
+    assert choose.index('"/api/cablenet/exports/folder/browse"') < choose.index(
+        'showFolder(await getJson("/api/cablenet/exports/folder", {')
     # a study going takes the cost and the graphs with it, and no rerun it
     # had waiting is merged into the next
     clear = _inner(JS, "clear")
