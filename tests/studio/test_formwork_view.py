@@ -107,6 +107,14 @@ out.skinNone = parts.skin.visible;
 view.show({ from: 2, to: 2, blend: 0, nearer: 2 }, { show: every, colour: "off", tolerance: 20,
   weakest: [], skinOpacity: 1 });
 out.skinFull = [parts.skin.visible, parts.skin.material.opacity, parts.skin.material.transparent];
+// the same run judged in a thinner wall, without being built again (found by
+// the final review of 11 October 2026: the Wall dial left the tubes coloured
+// for the run's own wall while the key, labels and answer moved on)
+const thinner = m.withWall(m.readSim(%(doc)s), 2.0);
+view.rejudge(thinner);
+view.show({ from: 2, to: 2, blend: 0, nearer: 2 }, { show: every, colour: "utilisation", tolerance: 20 });
+out.rejudged = [colourAt(parts.trees, 0), thinner.captures[2].treeUtilisation[0], view.parts() === parts];
+view.rejudge(m.readSim(%(doc)s));
 // Compare (section 5.4), half way through the lift: the design as translucent
 // formwork, and each node's line from where it should be to where it is
 view.show({ from: 0, to: 1, blend: 0.5, nearer: 1 }, { show: every, colour: "off", tolerance: 20,
@@ -242,6 +250,12 @@ def test_the_skin_slider_sets_how_opaque_the_skin_is(out):
     assert out["skinNone"] is False
     # all the way to opaque, drawn as a solid then
     assert out["skinFull"] == [True, 1.0, False]
+
+
+def test_a_new_wall_colours_the_tubes_drawn_without_building_them_again(out):
+    colour, utilisation, same = out["rejudged"]
+    assert same is True
+    assert colour == pytest.approx(judged(utilisation), abs=1e-6)
 
 
 def test_each_wire_runs_from_its_node_the_way_it_runs_in(out):

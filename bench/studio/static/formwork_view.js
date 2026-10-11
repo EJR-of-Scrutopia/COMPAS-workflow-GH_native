@@ -99,6 +99,13 @@ export function createFormworkView(THREE) {
     return object;
   }
 
+  // The same run judged again for a new wall, which changes only the trees'
+  // utilisation: drawn from it without building anything again (found by the
+  // final review of 11 October 2026: the tubes kept the run's own wall).
+  function rejudge(next) {
+    if (sim && next) sim = next;
+  }
+
   // Everything the document draws, once; the design and the anchors stand
   // still, the rest moves with the captures.
   function build(next) {
@@ -444,5 +451,5 @@ export function createFormworkView(THREE) {
     edgeIndex = null;
   }
 
-  return { group, build, show, point, project, nearestNode, clear, parts: () => parts };
+  return { group, build, rejudge, show, point, project, nearestNode, clear, parts: () => parts };
 }

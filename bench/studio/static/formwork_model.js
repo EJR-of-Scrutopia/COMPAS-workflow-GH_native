@@ -474,8 +474,11 @@ function textFor(by, value) {
 // column head, so each side of a principal line is a line of its own.
 function familyLines(edges, families, family, nodes, heads) {
   const at = Array.from({ length: nodes }, () => []);
+  // an edge naming a node the net does not have is in no line (found by the
+  // final review of 11 October 2026: it threw, and the run could not be read)
+  const fits = ([a, b]) => a >= 0 && b >= 0 && a < nodes && b < nodes;
   edges.forEach(([a, b], e) => {
-    if (families[e] === family && a < nodes && b < nodes) {
+    if (families[e] === family && fits(edges[e])) {
       at[a].push(e);
       at[b].push(e);
     }
@@ -490,7 +493,8 @@ function familyLines(edges, families, family, nodes, heads) {
       seen[e] = 1;
       line.push(e);
       node = edges[e][0] === node ? edges[e][1] : edges[e][0];
-      e = at[node].length === 2 && !ends.has(node) ? at[node].find((other) => other !== e) : null;
+      const next = at[node];
+      e = next && next.length === 2 && !ends.has(node) ? next.find((other) => other !== e) : null;
     }
     return line;
   };
@@ -501,7 +505,9 @@ function familyLines(edges, families, family, nodes, heads) {
     }
   }
   // what is left runs round in a loop
-  edges.forEach(([a], e) => { if (families[e] === family && !seen[e]) lines.push(walk(a, e)); });
+  edges.forEach((edge, e) => {
+    if (families[e] === family && !seen[e] && fits(edge)) lines.push(walk(edge[0], e));
+  });
   return lines;
 }
 

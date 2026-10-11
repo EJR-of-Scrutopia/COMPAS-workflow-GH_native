@@ -249,7 +249,9 @@ export function mountFormwork({ studyName, studyOptions, mechanism, view, hooks 
   el.wall.addEventListener("input", () => {
     el.wallValue.textContent = Number(el.wall.value).toFixed(1);
     judge();
+    view.rejudge(tab.judged);
     renderAnswer();
+    renderGraphs();
     draw(true);
   });
   el.tolerance.addEventListener("input", () => {
@@ -407,7 +409,7 @@ export function mountFormwork({ studyName, studyOptions, mechanism, view, hooks 
     el.scrub.value = "1";
     el.scrubValue.textContent = "1";
     el.scrubValue.nextElementSibling.textContent = `of ${Math.max(1, tab.times.length)}`;
-    view.build(sim);
+    view.build(tab.judged);
     if (!sim) {
       el.label.textContent = "";
       el.line.innerHTML = "";

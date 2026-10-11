@@ -46,6 +46,19 @@ out.labels = {
 const unsorted = m.readSim({ ...%(doc)s, net: { ...%(doc)s.net, families: null } });
 out.unsortedLabels = m.colourLabels(unsorted, 2, "deviation", 2).map((l) => [l.kind, l.index, l.text]);
 out.lines = [sim.lines, unsorted.lines, sim.treeGroups];
+// an edge naming a node the net does not have is left out of every line, and
+// the run is still read (found by the final review of 11 October 2026: the
+// tracing threw and the tab said "No run yet")
+{
+  const doc = %(doc)s;
+  const net = { ...doc.net, edges: [...doc.net.edges, [2, 99], [-1, 0]],
+                families: [...doc.net.families, "across", "along"] };
+  try {
+    out.malformed = m.readSim({ ...doc, net }).lines;
+  } catch (error) {
+    out.malformed = String(error);
+  }
+}
 out.shown = [m.labelsShown("wire", { wires: true }), m.labelsShown("wire", { net: true }),
              m.labelsShown("deviation", { net: true }), m.labelsShown("utilisation", { trees: true }),
              m.labelsShown("off", { heads: true }), m.labelsShown("off", { net: true })];
@@ -140,6 +153,7 @@ def test_the_lines_are_each_familys_split_at_the_column_heads(out):
     assert lines == {"along": [[0, 3]], "across": [[1], [2]]}
     assert unsorted is None
     assert trees == [[0]]
+    assert out["malformed"] == {"along": [[0, 3]], "across": [[1], [2]]}
 
 
 def test_the_values_on_the_model_are_the_worst_of_every_line(out):

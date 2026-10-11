@@ -222,7 +222,7 @@ def test_the_player_draws_blended_values_the_weakest_and_its_key():
     tick = _inner(JS, "tick")
     assert "tab.at = Math.min(tab.at + seconds * tab.speed, end());" in tick
     load = _inner(JS, "load")
-    assert "tab.times = sim ? captureTimes(sim.captures) : [];" in load and "view.build(sim);" in load
+    assert "tab.times = sim ? captureTimes(sim.captures) : [];" in load and "view.build(tab.judged);" in load
     assert "mechanism.setChecks(sim ? sim.checks : null);" in load
 
 
@@ -347,6 +347,27 @@ def test_the_tab_records_the_raise_through_the_studio_s_recorder():
 
 def test_the_studio_labels_and_card_stand_down_while_the_tab_is_open():
     assert 'document.body.classList.toggle("formwork-open", on);' in _inner(JS, "setActive")
+
+
+def test_the_wall_judges_the_trees_drawn_and_the_graphs_again():
+    # found by the final review of 11 October 2026: the tubes and the Graphs
+    # kept the run's own wall while the answer, labels and key moved on
+    wall = JS[JS.index('el.wall.addEventListener("input"'):]
+    wall = wall[:wall.index("});")]
+    assert wall.index("judge();") < wall.index("view.rejudge(tab.judged);")
+    assert "renderGraphs();" in wall
+    assert "view.build(tab.judged);" in _inner(JS, "load")
+    view = (STATIC / "formwork_view.js").read_text(encoding="utf-8")
+    assert "return { group, build, rejudge, show," in view
+
+
+def test_the_colour_by_titles_say_what_is_coloured():
+    # his answer of 11 October 2026: each rope by its own tension (found by the
+    # final review: the titles still said the tendons' pull was in it)
+    html = (STATIC / "index.html").read_text(encoding="utf-8")
+    assert '<label title="The across ropes\' tension, kN; the along ones grey">' in html
+    assert '<label title="Every rope\'s tension, kN">' in html
+    assert "tendons' pull" not in html and "whole force" not in html
 
 
 def test_a_figure_for_every_line_is_not_cut_short():
