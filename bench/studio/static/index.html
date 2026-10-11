@@ -558,20 +558,23 @@
       <label class="chip" title="The nodes on the ground"><input type="checkbox" data-show="ground" checked><span>Ground</span></label>
       <label class="chip" title="Tendons"><input type="checkbox" data-show="tendons" checked><span>Tendons</span></label>
     </div>
+    <!-- his choice of 11 October 2026: Colour by one dropdown (the seven-way
+         bar cut its labels off), and Values, Compare and Weakest three equal
+         buttons lit when on (Values off read as plain text) -->
+    <label class="named" title="Colour by"><span>Colour by</span> <select id="formwork-colour">
+      <option value="wire" selected>Wires</option>
+      <option value="along">Along</option>
+      <option value="across">Across</option>
+      <option value="both">Both</option>
+      <option value="deviation">Offset</option>
+      <option value="utilisation">Trees</option>
+      <option value="off">Off</option>
+    </select></label>
     <div id="formwork-views">
+      <button id="formwork-values" class="active" type="button" title="Values on the model">Values</button>
       <button id="formwork-compare" type="button" title="Offset vs tolerance">Compare</button>
       <button id="formwork-weakest" type="button" title="Weakest parts">Weakest</button>
     </div>
-    <div id="formwork-colour" class="segmented"><span>Colour by</span>
-      <label title="Wire tension, N"><input type="radio" name="formwork-colour" value="wire" checked><span>Wires</span></label>
-      <label title="Along ropes' tension, kN"><input type="radio" name="formwork-colour" value="along"><span>Along</span></label>
-      <label title="Across ropes' tension, kN"><input type="radio" name="formwork-colour" value="across"><span>Across</span></label>
-      <label title="Every rope's tension, kN"><input type="radio" name="formwork-colour" value="both"><span>Both</span></label>
-      <label title="Offset from the design, mm"><input type="radio" name="formwork-colour" value="deviation"><span>Offset</span></label>
-      <label title="Tree utilisation"><input type="radio" name="formwork-colour" value="utilisation"><span>Trees</span></label>
-      <label title="No colour"><input type="radio" name="formwork-colour" value="off"><span>Off</span></label>
-    </div>
-    <label class="chip" title="Values on the model"><input id="formwork-values" type="checkbox" checked><span>Values</span></label>
     <button id="formwork-record" type="button" title="Record the raise">Record</button>
     <div id="formwork-record-status"></div>
     <div id="formwork-warnings" class="cablenet-readout"></div>

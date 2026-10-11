@@ -63,6 +63,11 @@ out.shown = [m.labelsShown("wire", { wires: true }), m.labelsShown("wire", { net
              m.labelsShown("deviation", { net: true }), m.labelsShown("utilisation", { trees: true }),
              m.labelsShown("off", { heads: true }), m.labelsShown("off", { net: true })];
 out.weakest = m.weakestAt(sim, 2, limits);
+// eight nodes all outside the tolerance: the worst five of the kind, not all
+// eight (his choice of 11 October 2026: every node over ringed the whole net)
+const many = { ...sim, nodes: 8, sides: null,
+  captures: [{ ...sim.captures[2], deviation: Float32Array.from([30, 31, 32, 33, 34, 35, 36, 37]) }] };
+out.manyWeakest = m.weakestAt(many, 0, { tolerance: 20 }).map((w) => [w.kind, w.index]);
 out.closest = m.weakestAt(sim, 1, { have: 5000, rope: 9000, tolerance: 100 });
 out.noLimits = m.weakestAt(sim, 1, { have: null, rope: null, tolerance: 100 });
 const flat = (list) => list.map((l) => [l.kind, l.index, l.text]);
@@ -185,6 +190,10 @@ def test_the_weakest_are_every_part_over_its_limit(out):
         ("node", 3, True), ("member", 1, True), ("wire", 0, True)]
     assert weakest[0]["ratio"] == pytest.approx(2.0) and weakest[0]["text"] == "40 mm"
     assert weakest[1]["text"] == "3.0 kN" and weakest[2]["text"] == "1,500 N"
+
+
+def test_the_weakest_are_at_most_five_of_each_kind(out):
+    assert out["manyWeakest"] == [["node", 7], ["node", 6], ["node", 5], ["node", 4], ["node", 3]]
 
 
 def test_with_none_over_the_weakest_are_the_five_closest(out):

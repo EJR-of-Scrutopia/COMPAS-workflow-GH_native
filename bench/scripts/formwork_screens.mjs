@@ -134,17 +134,16 @@ async function setTicks(page, on) {
 
 async function setColour(page, value) {
   await page.evaluate((v) => {
-    const radio = document.querySelector(`#formwork-colour input[value="${v}"]`);
-    radio.checked = true;
-    radio.dispatchEvent(new Event("change", { bubbles: true }));
+    const select = document.getElementById("formwork-colour");
+    select.value = v;
+    select.dispatchEvent(new Event("change", { bubbles: true }));
   }, value);
 }
 
 async function setValues(page, on) {
   await page.evaluate((wanted) => {
-    const box = document.getElementById("formwork-values");
-    box.checked = wanted;
-    box.dispatchEvent(new Event("change", { bubbles: true }));
+    const button = document.getElementById("formwork-values");
+    if (button.classList.contains("active") !== wanted) button.click();
   }, on);
 }
 
