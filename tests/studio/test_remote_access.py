@@ -2358,7 +2358,8 @@ def test_the_machine_draws_the_way_he_asked():
     assert "const CABLE_BLACK" not in js
     assert "  applyLookTo(wireMaterial, state.wireLook);" in build
     assert "  libraryPins.add(PRINCIPAL_SKIN);" in build, (
-        "the principal bars' metal cannot be evicted while the machine builds")
+        "the polished dark steel frame 1, the anchor and the tie wear cannot "
+        "be evicted while the machine builds")
 
     # THE WIRES ARE THE CABLES: the same steel the net clones, the rope's
     # look on it, transparent from birth (ONE material, so applyMachineAct
@@ -2598,67 +2599,34 @@ def test_props_carry_a_height_and_the_gumball_can_move_it():
     assert "Object.assign(record, before);" in js
 
 
-def test_the_principal_lines_dress_the_column_rows_and_the_net_stays_silver():
-    """His correction of the first attempt: "those arent the principle
-    lines. they are one per leg. they run up the middle and its the row
-    that the columns connect to. the rest of the wires can return to how
-    they were. I dont want it to be competely black either just darker
-    silver but give it a nice metal texture, we have some textures in
-    our library now."
-
-    So: the net is silver tubes again; the principal lines are a
-    SEPARATE instanced mesh of rectangular bars over the rows the column
-    tips thread, walked on down to each leg's springing, wearing the
-    library's polished dark steel (a darker-silver registry fallback
-    until it arrives), following the net's strike, clearance and shadow
-    rules, and stepping aside for the forces lens."""
+def test_the_principal_lines_are_plain_wires_again():
+    """Param, 2026-10-12, superseding the bars of 2026-09-06: "we will remove
+    the metal rods running down the principle lines now back to be wires".
+    Asked, he chose plain wires: the principal lines are drawn as every other
+    wire is, at the chosen rope's size and colour, so nothing is laid over
+    them, nothing steps aside for a lens and nothing is disposed with the
+    net. The polished dark steel stays: the machine's frame 1, anchor and
+    tie still wear it."""
 
     js = STUDIO_JS.read_text(encoding="utf-8")
-    # The net itself is back to how it was.
+    assert "function buildPrincipalBars" not in js
+    assert "function principalEdges" not in js
+    assert "buildPrincipalBars(" not in js
+    assert "state.objects.principal" not in js
+    assert "materials.bar" not in js
+    assert "function wiresPainted" not in js
+    # The net is the rope chosen, every wire of it.
     net = _js_function(js, "function netInstances(edgeCount, vertexCount)")
     assert "wireCylinder()" in net
-    assert "CylinderGeometry" in _js_function(js, "function wireCylinder()")
-    assert net.count("materials.steel.clone()") == 2
     assert "BoxGeometry" not in net
-    wire_lens = _js_function(js, "function applyWireForces()")
-    assert "materials.steel.color" in wire_lens
-
-    # The walk: tips per column TREE, nearest net vertex each, threaded
-    # by shortest path, then down to the leg's own springing.
-    walk = _js_function(js, "function principalEdges()")
-    assert "state.columnMembers" in walk
-    assert "member.from[2] >= member.to[2]" in walk, (
-        "tips are the HIGH degree-one ends; the feet stay on the ground")
-    assert "bundle.supports" in walk
-    assert "dijkstra" in walk
-
-    # The dressing: rectangular bars over the wires' own segments, the
-    # library skin once it arrives, darker silver until then.
-    assert 'const PRINCIPAL_SKIN = "metal/steel-polished-dark";' in js
-    bars = _js_function(js, "function buildPrincipalBars()")
-    assert "new THREE.BoxGeometry(section, 1, section)" in bars
-    assert "Math.max(0.064, 2.2 * state.wireRadius)" in bars, (
-        "64 mm on his word, and still clear of the wires at any slider size")
-    assert "materials.bar.clone()" in bars
-    assert "ensureLibraryMaterial(PRINCIPAL_SKIN)" in bars
-    assert "state.objects.principal !== mesh) return;" in bars, (
-        "a texture landing late must not dress a mesh already replaced")
-    assert ("bar: new THREE.MeshPhysicalMaterial({\n"
-            "    color: 0x787d86, roughness: 0.35, metalness: 1.0") in js, (
-        "darker silver, not black -- his correction")
-
-    # The behaviour hooks: strike fade, rest clearance, forces-lens
-    # yield, and disposal with the rest of the net.
     scene_time = _js_function(js, "function applySceneAtTime(t)")
-    assert '["principal", clearance.wires]' in scene_time
-    show_mode = _js_function(js, "function applyShowMode()")
-    assert "netOn && !wiresPainted()" in show_mode
-    assert "state.layers.forces" in _js_function(js, "function wiresPainted()")
+    assert "principal" not in scene_time
     dispose = _js_function(js, "function disposeWiresAndNodes()")
-    assert '"principal"' in dispose
+    assert '"principal"' not in dispose
+    assert "principal" not in _js_function(js, "function applyShowMode()")
     reload = _js_function(js, "async function reloadColumns(names)")
     assert "state.columnMembers = [];" in reload
-    assert "buildPrincipalBars();" in reload
+    assert 'const PRINCIPAL_SKIN = "metal/steel-polished-dark";' in js
 
 
 def test_a_scene_outranks_the_device_appearance_memory():

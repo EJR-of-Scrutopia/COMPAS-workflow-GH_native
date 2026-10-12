@@ -2150,8 +2150,8 @@ def test_both_mode_and_the_pre_strike_timeline_clear_the_net_of_the_crown_seam()
     assert "netClearance()" in act_body
     # The strike's own drop is additive with the clearance, so the net still
     # lands 1.5 m clear of the shell once fully struck (strikeU = 1).
-    # Re-pinned 2026-09-06: the loop destructures [key, clear] pairs since
-    # the principal bars joined it riding the wires' clearance.
+    # The loop destructures [key, clear] pairs: each object clears the shell
+    # by its own radius.
     assert "clear - 1.5 * strikeU" in scene_body
     assert '["wires", clearance.wires]' in scene_body
 
@@ -4382,10 +4382,11 @@ def test_the_polished_steel_reflects_the_scene_it_stands_in():
     eye = float(re.search(r"const REFLECTION_EYE = ([0-9.]+);", js).group(1))
     assert 0.3 <= eye <= 2.0, "a capture on the ground sees only the floor"
 
-    # Who wears it: the permanent works and the principal bars, metal only.
+    # Who wears it: the permanent works, metal only (the principal bars
+    # went back to wires on 12 October 2026).
     wearers = _function_body(js, "reflectionWearers")
     assert "machineObjects.permanent.traverse(" in wearers
-    assert "if (state.objects.principal) worn.push(state.objects.principal);" in wearers
+    assert "principal" not in wearers
     wear = _function_body(js, "wearReflection")
     assert "if (!one || !one.isMeshStandardMaterial || one.metalness < 0.5) continue;" in wear
     assert "one.envMap = reflectionTarget.texture;" in wear
@@ -4414,7 +4415,6 @@ def test_the_polished_steel_reflects_the_scene_it_stands_in():
     assert "noteReflectionsChanged();" in _function_body(js, "setEnvironmentTexture")
     assert "function noteCastersChanged() { shadowFitPending = true; noteReflectionsChanged(); }" in js
     assert "noteReflectionsChanged();" in _function_body(js, "skinMachine")
-    assert "noteReflectionsChanged();" in _function_body(js, "buildPrincipalBars")
 
     # A STILL AND A TAKE each take one as they begin, once framed.
     for name in ("renderStill", "recordAnimation"):
@@ -4775,19 +4775,6 @@ def test_the_rail_has_a_cable_net_section_and_the_data_popup_lost_its_tab():
     assert ">Formwork</button>" not in rail
     assert 'id="cablenet-section"' not in html
     assert "cablenet-panel" not in html
-
-
-def test_the_principal_bars_step_aside_for_every_lens_that_paints_the_wires():
-    """The bars lie over the wires, so they hid under Wire forces only and stayed
-    drawn over the colours Wire tension and Sag paint. They step aside for all
-    three, the cable net's two while their document can be drawn, which is the
-    test applyCableNetPaint makes before it paints."""
-
-    js = (STATIC / "studio.js").read_text(encoding="utf-8")
-    assert "principal.visible = netOn && !wiresPainted();" in _function_body(js, "applyShowMode")
-    # Wire forces is the one lens left that paints the wires (spec 2026-10-11:
-    # the cable net's Wire tension and Sag went with the old tab)
-    assert "return !!state.layers.forces;" in _function_body(js, "wiresPainted")
 
 
 def test_the_net_nodes_can_be_coloured_and_the_options_are_the_loaded_ones():

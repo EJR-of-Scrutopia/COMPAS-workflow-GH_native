@@ -1143,14 +1143,12 @@ const shadowSphere = new THREE.Sphere();
 function noteCastersChanged() { shadowFitPending = true; noteReflectionsChanged(); }
 
 // The parts that wear the capture: the permanent works, which are the
-// anchor and the tension tie, and the principal bars, which wear the same
-// polished dark steel.
+// anchor and the tension tie, in polished dark steel.
 function reflectionWearers() {
   const worn = [];
   if (machineObjects) {
     machineObjects.permanent.traverse((object) => { if (object.isMesh) worn.push(object); });
   }
-  if (state.objects.principal) worn.push(state.objects.principal);
   return worn;
 }
 
@@ -5402,12 +5400,6 @@ const materials = {
   steel: new THREE.MeshPhysicalMaterial({
     color: 0xb6bac2, roughness: 0.32, metalness: 1.0, envMapIntensity: 1.2,
   }),
-  // The principal lines' metal while the library's polished dark steel
-  // loads (and forever if it cannot): darker silver, not black -- his
-  // correction after the whole net briefly went near-black.
-  bar: new THREE.MeshPhysicalMaterial({
-    color: 0x787d86, roughness: 0.35, metalness: 1.0, envMapIntensity: 1.2,
-  }),
   falsework: new THREE.MeshPhysicalMaterial({
     color: 0x3a3f45, side: THREE.DoubleSide,
     roughness: 0.95, metalness: 0.0, transparent: true, opacity: 0.3,
@@ -5503,14 +5495,10 @@ function syncNetShadow(object) {
   object.castShadow = object.visible && object.material.opacity > 0.6;
 }
 
-// ---------- the principal lines ----------
-// One per leg (Param): "they run up the middle and its the row that the
-// columns connect to". Each exported column TREE is one leg; its branch
-// tips touch the net, and the row of net edges threading those touch
-// points -- walked on down to the leg's own springing -- is that leg's
-// principal line. Dressed as rectangular bars in a darker steel over the
-// ordinary silver net; the library's polished dark steel once it
-// arrives, a plain darker silver until then.
+// The polished dark steel the machine's frame 1, anchor and tension tie
+// wear. The principal lines wore it as bars until 12 October 2026, when he
+// took them back to wires ("remove the metal rods running down the
+// principle lines now back to be wires").
 const PRINCIPAL_SKIN = "metal/steel-polished-dark";
 
 // How far the plant reverses out over the strike. Param: "have the
@@ -5522,160 +5510,6 @@ const PRINCIPAL_SKIN = "metal/steel-polished-dark";
 // total, before reaching 0 opacity"). The fade runs on the same strike
 // fraction, so the last metre is already the faintest.
 const MACHINE_RETREAT = 3;
-
-function principalEdges() {
-  const members = state.columnMembers || [];
-  const bundle = state.bundle;
-  if (!bundle || !members.length) return [];
-  const vertices = bundle.analysis_mesh.vertices;
-  const edges = bundle.analysis_mesh.edges;
-
-  // The column trees, by shared endpoints: one tree is one leg.
-  const keyOf = (p) => p.map((c) => Math.round(c * 1000)).join(",");
-  const parent = new Map();
-  const find = (k) => {
-    let root = k;
-    while (parent.get(root) !== root) root = parent.get(root);
-    parent.set(k, root);
-    return root;
-  };
-  const degree = new Map();
-  for (const member of members) {
-    for (const p of [member.from, member.to]) {
-      const k = keyOf(p);
-      if (!parent.has(k)) parent.set(k, k);
-      degree.set(k, (degree.get(k) || 0) + 1);
-    }
-    parent.set(find(keyOf(member.from)), find(keyOf(member.to)));
-  }
-  // Tips: degree-one endpoints at the HIGH end of their member; the
-  // degree-one LOW ends are the feet on the ground.
-  const tipsByTree = new Map();
-  for (const member of members) {
-    const high = member.from[2] >= member.to[2] ? member.from : member.to;
-    if ((degree.get(keyOf(high)) || 0) !== 1) continue;
-    const tree = find(keyOf(high));
-    if (!tipsByTree.has(tree)) tipsByTree.set(tree, []);
-    tipsByTree.get(tree).push(high);
-  }
-
-  // Each tip lands on its nearest net vertex, within a metre.
-  const nearestVertex = (p) => {
-    let best = -1, bestDistance = 1;
-    for (let i = 0; i < vertices.length; i++) {
-      const v = vertices[i];
-      const d = Math.hypot(v[0] - p[0], v[1] - p[1], v[2] - p[2]);
-      if (d < bestDistance) { bestDistance = d; best = i; }
-    }
-    return best;
-  };
-
-  // The net as a weighted graph, built once.
-  const adjacency = new Map();
-  edges.forEach(([a, b], index) => {
-    if (!adjacency.has(a)) adjacency.set(a, []);
-    if (!adjacency.has(b)) adjacency.set(b, []);
-    adjacency.get(a).push([b, index]);
-    adjacency.get(b).push([a, index]);
-  });
-  const span = (a, b) => {
-    const va = vertices[a], vb = vertices[b];
-    return Math.hypot(va[0] - vb[0], va[1] - vb[1], va[2] - vb[2]);
-  };
-  const dijkstra = (from) => {
-    const dist = new Map([[from, 0]]);
-    const via = new Map();
-    const done = new Set();
-    for (;;) {
-      let node = null, best = Infinity;
-      for (const [k, d] of dist) {
-        if (!done.has(k) && d < best) { best = d; node = k; }
-      }
-      if (node === null) return { dist, via };
-      done.add(node);
-      for (const [next, edge] of adjacency.get(node) || []) {
-        const d = best + span(node, next);
-        if (d < (dist.has(next) ? dist.get(next) : Infinity)) {
-          dist.set(next, d);
-          via.set(next, [node, edge]);
-        }
-      }
-    }
-  };
-  const backtrack = (via, from, to, into) => {
-    let at = to;
-    while (at !== from && via.has(at)) {
-      const [previous, edge] = via.get(at);
-      into.add(edge);
-      at = previous;
-    }
-  };
-
-  const supports = new Set(bundle.supports || []);
-  const principal = new Set();
-  for (const tips of tipsByTree.values()) {
-    const nodes = [...new Set(tips.map(nearestVertex).filter((i) => i >= 0))];
-    if (!nodes.length) continue;
-    nodes.sort((a, b) => vertices[a][2] - vertices[b][2]);
-    // Consecutive touch points, threaded along the net...
-    for (let i = 1; i < nodes.length; i++) {
-      const { via } = dijkstra(nodes[i - 1]);
-      backtrack(via, nodes[i - 1], nodes[i], principal);
-    }
-    // ...and the walk on down from the lowest to this leg's springing.
-    if (supports.size) {
-      const { dist, via } = dijkstra(nodes[0]);
-      let target = null, best = Infinity;
-      for (const support of supports) {
-        const d = dist.has(support) ? dist.get(support) : Infinity;
-        if (d < best) { best = d; target = support; }
-      }
-      if (target !== null) backtrack(via, nodes[0], target, principal);
-    }
-  }
-  return [...principal].map((index) => edges[index]);
-}
-
-function buildPrincipalBars() {
-  const previous = state.objects.principal;
-  if (previous) {
-    scene.remove(previous);
-    previous.geometry.dispose();
-    if (!previous.userData.libraryMaterial) previous.material.dispose();
-    state.objects.principal = null;
-  }
-  if (!state.bundle) return;
-  const pairs = principalEdges();
-  if (!pairs.length) return;
-  // A square section comfortably over the wires' own diameter, so the
-  // tube inside a principal bar never surfaces through its faces -- and
-  // it keeps that margin if the Wire size slider grows the net. 64 mm
-  // on his word ("increase the size by another 20mm" over the 44).
-  const section = Math.max(0.064, 2.2 * state.wireRadius);
-  const geometry = new THREE.BoxGeometry(section, 1, section);
-  geometry.translate(0, 0.5, 0);
-  const mesh = new THREE.InstancedMesh(
-    geometry, materials.bar.clone(), pairs.length);
-  mesh.material.transparent = true;
-  writeInstancedSegments(mesh, pairs, state.bundle.analysis_mesh.vertices);
-  mesh.castShadow = false;
-  state.objects.principal = mesh;
-  scene.add(mesh);
-  // The library texture, asynchronously and only if this build is still
-  // the one on screen when it lands.
-  ensureLibraryMaterial(PRINCIPAL_SKIN).then((set) => {
-    if (!set || state.objects.principal !== mesh) return;
-    const worn = set.material.clone();
-    worn.transparent = true;
-    mesh.material.dispose();
-    mesh.material = worn;
-    mesh.userData.libraryMaterial = true;
-    syncNetShadow(mesh);
-    // A new coat, so it has to be handed the capture afresh.
-    noteReflectionsChanged();
-  });
-  if (state.timeline) applySceneAtTime(state.timeline.t);
-}
 
 // Scratch instances: the two writers below run per edge per frame for the
 // whole formwork act, and allocating inside those loops is what turns a
@@ -5767,7 +5601,7 @@ function buildWiresAndNodes(bundle) {
 }
 
 function disposeWiresAndNodes() {
-  for (const key of ["wires", "nodes", "principal"]) {
+  for (const key of ["wires", "nodes"]) {
     const object = state.objects[key];
     if (object) {
       scene.remove(object);
@@ -5833,8 +5667,7 @@ function columnGeometryFrom(document_) {
 // One bench.columns/1 solid into the columns group. It stamps the radius
 // the exporter swept it along, which the act's animated members read so the
 // two drawings of one set of columns are the same thickness, and its raw
-// members feed the principal-line walk: their tree tips are where the
-// columns meet the net.
+// members carry the forces the Wire forces lens reads.
 function addColumnSolid(group, columnDocument) {
   if (typeof columnDocument.radius === "number" && columnDocument.radius > 0) {
     state.columnRadius = columnDocument.radius;
@@ -5898,9 +5731,6 @@ async function reloadColumns(names) {
     state.objects.columns = await loadColumns(names);
     scene.add(state.objects.columns);
   }
-  // The principal lines are DEFINED by where these columns touch the
-  // net, so they are rebuilt whenever the columns are.
-  buildPrincipalBars();
   // boot() learns which columns file belongs to the study only AFTER the
   // first study load, so the act's members are first built on the fallback
   // radius. A radius that arrives or changes rebuilds them at the width the
@@ -5944,7 +5774,6 @@ function buildScene(bundle, preserve) {
   state.objects.nodes = nodes;
   scene.add(wires); scene.add(nodes);
   applyWireForces();
-  buildPrincipalBars();
 
   rebuildGround();
 
@@ -11900,13 +11729,6 @@ function arrowField(entries, colour, anchor, lengthScale = 1,
   return group;
 }
 
-// Whether a lens is painting the wires' own colours: Wire forces. The
-// principal bars lie over those wires and step aside for it, or they would
-// hide the colours they lie over.
-function wiresPainted() {
-  return !!state.layers.forces;
-}
-
 // Where the view ends on the right: the panel's left edge, or the window's
 // with the panel folded away. The one Cable net tab's card keeps inside it.
 function viewRight() {
@@ -15201,7 +15023,7 @@ function studioFormworkObjects() {
     .map((key) => state.objects[key]);
   // the studio's own formwork act too: its net, nodes and columns
   return [state.objects.shell, state.objects.falsework, state.objects.wires, state.objects.nodes,
-          state.objects.principal, state.objects.columns, ...arrows,
+          state.objects.columns, ...arrows,
           formworkObjects && formworkObjects.group]
     .filter(Boolean);
 }
@@ -16864,8 +16686,8 @@ async function buildMachine() {
   disposeMachine();
   // Cleared HERE, at the top, not after the build: the wire material adds
   // its own pin part way through, and clearing afterwards wiped it --
-  // leaving the cables' metal, which the principal bars wear too, open to
-  // eviction on every build.
+  // leaving the machine's polished dark steel open to eviction on every
+  // build.
   libraryPins.clear();
   // The machine needs the document alone. This used to also wait on
   // state.bundle, and on a fresh page the formwork objects are rebuilt
@@ -17046,7 +16868,8 @@ async function buildMachine() {
   // vaulted the actual wires selected for the mechanism size and colour"):
   // the machines' wires wear the rope's colour and finish, as the net does,
   // which replaces the black of the principal lines he asked for on
-  // 2026-09-15. The principal lines' metal stays pinned, since they wear it.
+  // 2026-09-15. The polished dark steel stays pinned: frame 1, the anchor
+  // and the tie wear it.
   //
   // One material for every wire, not one per mesh: applyMachineAct fades
   // the whole net out on the strike through this single opacity.
@@ -17567,10 +17390,7 @@ function applySceneAtTime(t) {
   // its own radius.
   const clearance = netClearance();
   for (const [key, clear] of [["wires", clearance.wires],
-                              ["nodes", clearance.nodes],
-                              // The principal bars ride the wires' own
-                              // clearance: they dress the same segments.
-                              ["principal", clearance.wires]]) {
+                              ["nodes", clearance.nodes]]) {
     const object = state.objects[key];
     if (!object) continue;
     // Hidden for the whole formwork act: the act's own net IS the net,
@@ -17656,15 +17476,6 @@ function applyShowMode() {
   const lifted = state.showMode === "both";
   state.objects.wires.position.z = lifted ? clearance.wires : 0;
   state.objects.nodes.position.z = lifted ? clearance.nodes : 0;
-  const principal = state.objects.principal;
-  if (principal) {
-    // Net dressing: the bars follow the net, and they step aside while a
-    // lens is painting data on those same segments: Wire forces.
-    principal.visible = netOn && !wiresPainted();
-    principal.material.opacity = 1;
-    principal.position.z = lifted ? clearance.wires : 0;
-    syncNetShadow(principal);
-  }
   const falsework = state.objects.falsework;
   if (falsework) {
     const wanted = state.formworkMode === "always" && state.showMode !== "framework";
