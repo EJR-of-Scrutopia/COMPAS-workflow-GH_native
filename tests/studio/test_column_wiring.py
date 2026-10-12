@@ -21,13 +21,23 @@ def _function(js, signature):
     raise AssertionError(signature)
 
 
-def test_the_cable_net_tab_has_tube_steel_finish_and_marks_beside_the_wall():
+def test_tube_steel_and_finish_sit_in_the_mechanism_pop_up_and_marks_in_the_tab():
+    # his word on seeing them squeezed into the panel (2026-10-12): "i think we
+    # can put these in the mechanism drop down. make sure the drop down can
+    # actually show the information inside"
     html = (STATIC / "index.html").read_text(encoding="utf-8")
-    wall = html.index('id="formwork-wall"')
-    for select in ("column-tube", "column-grade", "column-finish"):
-        assert '<select id="{}"></select>'.format(select) in html, select
-        assert abs(html.index('id="{}"'.format(select)) - wall) < 1200, (
-            select + " sits beside the Wall dial")
+    start = html.index('<div id="mech-choose" class="mech-tab">')
+    pane = html[start:html.index('<div id="mech-cost"', start)]
+    for select, name in (("column-tube", "Tube"), ("column-grade", "Steel"),
+                         ("column-finish", "Finish")):
+        assert html.count('id="{}"'.format(select)) == 1, select
+        assert ('<label class="mechanism-line" title="Column {}"><span>{}</span> '
+                '<select id="{}"></select></label>').format(
+                    {"Tube": "tube", "Steel": "steel", "Finish": "finish"}[name], name, select) in pane
+    assert pane.index("mechanism-have") < pane.index("column-tube")
+    # every dropdown in the pop-up takes the row's width, so its text shows
+    css = (STATIC / "studio.css").read_text(encoding="utf-8")
+    assert "#mech-choose .mechanism-line select { flex: 1; min-width: 0; }" in css
     assert ('<input id="formwork-marks" type="range" min="0.1" max="2" step="0.05" value="1">'
             in html)
     assert '<b id="formwork-marks-value">1</b><em>x</em>' in html
