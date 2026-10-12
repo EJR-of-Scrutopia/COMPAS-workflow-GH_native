@@ -288,7 +288,13 @@ MAX_UPLOAD_BYTES = 64 * 1024 * 1024
 # 2026-09-03 even though the exporter PUTs one on EVERY live TNA solve,
 # so authored Skin cells could never arrive over the live connection at
 # all; frames carries the formwork build animation (bench.frames/1).
-EXPORT_KINDS = ("contract", "compas", "tessellation", "frames")
+# form, skin, formwork and mechanism are the names the plugin has sent since
+# the three-document export (design of 2026-09-04): the reader learned them
+# at cafecc9 but this tuple did not, so every Live push was refused and a
+# re-export never cleared the caches built from the export before it (the
+# 2 sided prototype, 2026-10-12). Each takes its old name's validation.
+EXPORT_KINDS = ("contract", "compas", "tessellation", "frames",
+                "form", "skin", "formwork", "mechanism")
 
 
 def _finite_everywhere(node, path="") -> None:
@@ -847,12 +853,15 @@ def create_app(runner=None, cra_runner=None, formwork_runner=None) -> FastAPI:
 
     def _study_stamp(name: str) -> float:
         """The newest mtime across this study's uploaded kinds: a Live
-        push rewrites at least the contract, so the stamp moves and the
-        browser's poll knows to reload."""
+        push rewrites at least the contract or the form, so the stamp moves
+        and the browser's poll knows to reload. The mechanism is read where
+        the reader finds it, beside the study or in Mechanisms."""
 
         newest = 0.0
-        for kind in ("contract", "compas", "tessellation", "frames"):
-            path = bundle.UPLOAD_DIR / "{}-{}.json".format(name, kind)
+        paths = [bundle.UPLOAD_DIR / "{}-{}.json".format(name, kind)
+                 for kind in EXPORT_KINDS if kind != "mechanism"]
+        paths.append(bundle.mechanism_sidecar(name))
+        for path in paths:
             try:
                 newest = max(newest, path.stat().st_mtime)
             except OSError:
@@ -2556,6 +2565,10 @@ def create_app(runner=None, cra_runner=None, formwork_runner=None) -> FastAPI:
             raise HTTPException(
                 400, "kind must be one of {}".format(", ".join(EXPORT_KINDS)))
         directory = bundle.UPLOAD_DIR
+        if kind == "mechanism":
+            # Where Export files it on disk and where mechanism_sidecar
+            # looks after the export folder itself (plugin 717e501).
+            directory = bundle.UPLOAD_DIR / "Mechanisms"
         filename = "{}-{}.json".format(name, kind)
         if not _contained(directory, filename):
             raise HTTPException(400, "bad export name")
@@ -2596,7 +2609,7 @@ def create_app(runner=None, cra_runner=None, formwork_runner=None) -> FastAPI:
             except json.JSONDecodeError:
                 raise ValueError("not valid JSON")
             _finite_everywhere(parsed)
-            if kind == "contract":
+            if kind in ("contract", "form"):
                 geometry.mesh_arrays(parsed)
                 geometry.support_ids(parsed)
                 geometry.member_forces_newtons(parsed)
@@ -2605,13 +2618,15 @@ def create_app(runner=None, cra_runner=None, formwork_runner=None) -> FastAPI:
             elif kind == "compas":
                 if not isinstance(parsed, dict) or "thrustMesh" not in parsed:
                     raise ValueError("a compas export must contain a thrustMesh key")
-            elif kind == "tessellation":
+            elif kind in ("tessellation", "skin"):
                 # The studio's own reader, so a cut that would be refused
                 # at read time is refused at the door instead of being
                 # stored and silently overriding the generated cut.
                 tessellation.validate_document(parsed)
-            elif kind == "frames":
+            elif kind in ("frames", "formwork"):
                 frames.validate_frames_document(parsed)
+            elif kind == "mechanism":
+                mechanism.validate_mechanism_document(parsed)
             return parsed
 
         try:
@@ -2633,12 +2648,21 @@ def create_app(runner=None, cra_runner=None, formwork_runner=None) -> FastAPI:
 
         # bundle.UPLOAD_DIR, not a module-level copy, so make_client's
         # monkeypatch of bundle.UPLOAD_DIR lands here too.
+        directory.mkdir(parents=True, exist_ok=True)
         bundle.write_json_atomically(directory / filename, document)
         _invalidate_studio_cache(slug)
-        other_kind = "compas" if kind == "contract" else "contract"
-        other = directory / "{}-{}.json".format(name, other_kind)
-        if kind in ("tessellation", "frames"):
-            other = directory / "{}-contract.json".format(name)
+        # Complete when the study can be read: the old pair needs both its
+        # halves, a form stands on its own, and every sidecar needs one of
+        # the two.
+        uploads = bundle.UPLOAD_DIR
+        if kind in ("contract", "compas"):
+            other_kind = "compas" if kind == "contract" else "contract"
+            pair_complete = (uploads / "{}-{}.json".format(name, other_kind)).is_file()
+        elif kind == "form":
+            pair_complete = True
+        else:
+            pair_complete = any((uploads / "{}-{}.json".format(name, base)).is_file()
+                                for base in ("form", "contract"))
         # An authored tessellation sidecar survives a re-upload and keeps
         # winning over the generated cut, so a pattern authored against the
         # PREVIOUS geometry silently stays in force against the new one. It
@@ -2649,7 +2673,7 @@ def create_app(runner=None, cra_runner=None, formwork_runner=None) -> FastAPI:
         sidecar = bundle.tessellation_sidecar(name)
         return {
             "stored": filename,
-            "pair_complete": other.is_file(),
+            "pair_complete": pair_complete,
             "authored_tessellation": sidecar.name if sidecar.is_file() else None,
         }
 

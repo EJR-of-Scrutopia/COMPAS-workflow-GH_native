@@ -1380,3 +1380,118 @@ def test_an_updated_scene_shows_its_new_thumbnail(tmp_path, monkeypatch):
     assert '"/thumbnail?v="' in js, "the address changes when the scene is saved again"
     assert '+ encodeURIComponent(row.saved || "") + "-" + (sceneThumbnailTurns.get(row.id) || 0);' in js
     assert "sceneThumbnailTurns.set(row.id, (sceneThumbnailTurns.get(row.id) || 0) + 1);" in js
+
+
+# ------------------------------------- the four kinds the plugin's Live sends
+
+
+def _tiny_skin():
+    return {
+        "schema": "bench.tessellation/1", "units": "m", "domain": "plan",
+        "pattern": "authored",
+        "cells": [
+            {"key": "a0", "course": 0,
+             "outline": [[0.0, 0.0], [2.0, 0.0], [2.0, 1.0], [0.0, 1.0]]},
+            {"key": "a1", "course": 1,
+             "outline": [[0.0, 1.0], [2.0, 1.0], [2.0, 2.0], [0.0, 2.0]]},
+        ],
+    }
+
+
+def _tiny_study_mechanism():
+    return {
+        "schema": "bench.mechanism/1", "units": "m", "lengthUnitToMetres": 1,
+        "machine": {"schema": "bench.machine/1", "id": "winch 7", "wireCount": 7},
+        "instances": [], "wires": [],
+    }
+
+
+def test_the_four_kinds_the_plugin_sends_are_stored_where_the_reader_looks(
+        tmp_path, monkeypatch):
+    """Since the three-document export (design of 2026-09-04) the plugin's
+    Live sends form, skin, formwork and, with a placed mechanism, mechanism.
+    The reader learned those names at cafecc9, but this route kept the old
+    four, so every Live push was refused ("kind must be one of contract,
+    compas, tessellation, frames") and a re-export never reached the
+    studio's caches: Param's 2 sided prototype, 2026-10-12, kept drawing
+    the formwork of the export before it."""
+
+    from conftest_data import tiny_formwork
+
+    client, uploads, _ = make_client(tmp_path, monkeypatch)
+    sent = (
+        ("form", tiny_contract(), uploads / "Tiny-form.json"),
+        ("skin", _tiny_skin(), uploads / "Tiny-skin.json"),
+        ("formwork", tiny_formwork(), uploads / "Tiny-formwork.json"),
+        ("mechanism", _tiny_study_mechanism(),
+         uploads / "Mechanisms" / "Tiny-mechanism.json"),
+    )
+    for kind, document, where in sent:
+        answer = client.put("/api/uploads/exports/Tiny/{}".format(kind),
+                            content=json.dumps(document).encode())
+        assert answer.status_code == 200, (kind, answer.text)
+        assert where.is_file(), kind
+    listed = [row["export"] for row in client.get("/api/studies").json()["studies"]]
+    assert listed == ["Tiny"]
+
+
+def test_a_new_kind_is_checked_at_the_door_like_its_old_name(tmp_path, monkeypatch):
+    """Each new name takes its old name's validation: a bad document is a
+    400 naming what is wrong, and nothing is stored."""
+
+    client, uploads, _ = make_client(tmp_path, monkeypatch)
+    refused = (
+        ("form", {"no": "equilibrium"}, uploads / "Bad-form.json"),
+        ("skin", dict(_tiny_skin(), units="mm"), uploads / "Bad-skin.json"),
+        ("formwork", {"schema": "bench.formwork/1"}, uploads / "Bad-formwork.json"),
+        ("mechanism", dict(_tiny_study_mechanism(), schema="bench.other/1"),
+         uploads / "Mechanisms" / "Bad-mechanism.json"),
+    )
+    for kind, document, where in refused:
+        answer = client.put("/api/uploads/exports/Bad/{}".format(kind),
+                            content=json.dumps(document).encode())
+        assert answer.status_code == 400, (kind, answer.text)
+        assert not where.exists(), kind
+
+
+def test_a_live_form_drops_the_cached_bundle_and_formwork_run(tmp_path, monkeypatch):
+    """The user-visible half of the refusal: a re-export under the new
+    names must clear what the studio cached from the export before it,
+    the formwork run included, exactly as a contract re-upload does."""
+
+    client, uploads, studies = make_client(tmp_path, monkeypatch)
+    studio_dir = studies / "tiny" / "studio"
+    studio_dir.mkdir(parents=True)
+    stale = (studio_dir / "bundle-timber-authored-s500-t40-d500.json",
+             studio_dir / "formwork-sim-timber-authored-s500-t40-d500.json")
+    for path in stale:
+        path.write_text("{}", encoding="utf-8")
+    kept = studio_dir / "recording.mp4"
+    kept.write_bytes(b"kept")
+    answer = client.put("/api/uploads/exports/Tiny/form",
+                        content=json.dumps(tiny_contract()).encode())
+    assert answer.status_code == 200, answer.text
+    for path in stale:
+        assert not path.exists(), path.name
+    assert kept.is_file()
+
+
+def test_the_new_kinds_move_the_study_stamp_the_page_polls(tmp_path, monkeypatch):
+    """The stamp the browser polls read only the old four names, so a study
+    exported under the new ones never told an open page to reload."""
+
+    import os
+
+    client, uploads, _ = make_client(tmp_path, monkeypatch)
+    assert client.put("/api/uploads/exports/Tiny/form",
+                      content=json.dumps(tiny_contract()).encode()).status_code == 200
+    os.utime(uploads / "Tiny-form.json", (1000.0, 1000.0))
+
+    def stamp():
+        rows = client.get("/api/studies").json()["studies"]
+        return [row for row in rows if row["export"] == "Tiny"][0]["stamp"]
+
+    assert stamp() == 1000.0
+    assert client.put("/api/uploads/exports/Tiny/mechanism",
+                      content=json.dumps(_tiny_study_mechanism()).encode()).status_code == 200
+    assert stamp() > 1000.0
