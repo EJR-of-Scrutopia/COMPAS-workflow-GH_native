@@ -214,6 +214,43 @@ def test_every_mechanism_he_can_build_for_the_wire_is_offered(tmp_path, monkeypa
     assert body["options"] and all(option["choices"]["rope"] == "rope-6mm" for option in body["options"])
 
 
+def test_each_mechanism_says_how_finely_it_places_its_wire():
+    # Param, 2026-10-12, of the mechanism built by hand: "and the precision".
+    # At the net, a wire moves by one encoder count of its motor, through the
+    # gearbox, on the drum, through the reeving; and the gearbox's backlash
+    # is lost motion on the drum, through the reeving too
+    import math
+
+    parts = catalogue.load_parts()
+    for key in machine.offered_motors(parts):
+        assert parts["motor"][key]["encoder_counts_per_rev"] > 0, key
+        assert parts["motor"][key]["encoder_source"], key
+    for key, gearbox in parts["gearbox"].items():
+        if key != "direct":
+            assert gearbox["backlash_arcmin"] >= 0 and gearbox["backlash_source"], key
+    # the supplier prints 1000PPR(4000CPR), and <=15arcmin for the EG23 10:1
+    assert parts["motor"]["23HS45-4204D-E1000"]["encoder_counts_per_rev"] == 4000
+    assert parts["gearbox"]["EG23-G10-D8"]["backlash_arcmin"] == 15
+    # a 17-bit encoder is 2^17 counts
+    assert parts["motor"]["A6-RS400H2A1-M17"]["encoder_counts_per_rev"] == 131072
+    # the EG34 pages print 10 arcmin at 5:1 and 10:1, against their own links
+    assert parts["gearbox"]["EG34-G5"]["backlash_arcmin"] == 10
+    small = {"winding_radius_mm": 8.8, "reeve_factor": 4, "spools": 7}
+    geared = machine.derive(parts, {"motor": "23HS45-4204D-E1000", "ratio": 10.0, "pulley": "GPS-SS-100",
+                                    "rope": "rope-6mm", "wires_per_motor": 1}, small, ANGLE)
+    count = 2 * math.pi * 8.8 / (4000 * 10) / 4
+    lost = 8.8 * math.radians(15 / 60) / 4
+    assert machine.precision_mm(parts, geared) == pytest.approx(count + lost)
+    # direct, no pulley: one count on the drum, no backlash
+    direct = machine.derive(parts, {"motor": "23HS45-4204D-E1000", "ratio": None, "pulley": None,
+                                    "rope": "rope-6mm", "wires_per_motor": 1}, small, ANGLE)
+    assert machine.precision_mm(parts, direct) == pytest.approx(2 * math.pi * 8.8 / 4000)
+    # every mechanism offered says it
+    for entry in machine.options(parts, small, ANGLE, 1, "rope-6mm"):
+        built = machine.derive(parts, entry["choices"], small, ANGLE)
+        assert entry["precision_mm"] == pytest.approx(machine.precision_mm(parts, built))
+
+
 def test_the_route_says_in_one_line_why_it_lists_none(tmp_path, monkeypatch):
     client, _ = make_client(tmp_path, monkeypatch)
     for bad in ("0", "8", "two"):

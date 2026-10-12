@@ -32,7 +32,7 @@ OPTIONS = [
     _option("A", None, None, 900.0, 900.0, "motor torque"),
     _option("A", None, "P1", 2000.0, 2000.0, "motor torque"),
     _option("A", 5.0, None, 3000.0, 3500.0),
-    _option("A", 5.0, "P1", 3760.0, 4100.0),
+    {**_option("A", 5.0, "P1", 3760.0, 4100.0), "precision_mm": 0.01234},
     _option("A", 5.0, "P2", 3760.0, 4300.0),
     _option("B", 10.0, None, 3100.0, 3200.0, "motor torque"),
 ]
@@ -112,10 +112,10 @@ def test_the_dropdowns_offer_what_the_motor_and_ratio_can_take(out):
     assert out["ratioKey"] == ["direct", "5", None, 5]
 
 
-def test_the_readout_ends_with_the_most_the_drive_pulls(out):
+def test_the_readout_ends_with_the_most_the_drive_pulls_and_its_precision(out):
     rows = re.findall(r"<tr><th>([^<]*)</th><td>([^<]*)</td></tr>", out["html"])
     assert rows[0] == ("Have", "3,760 N")
-    assert rows[-1] == ("Max", "4,100 N")
+    assert rows[-2:] == [("Max", "4,100 N"), ("Precision", "0.012 mm")]
 
 
 def test_the_controller_keeps_its_face(out):

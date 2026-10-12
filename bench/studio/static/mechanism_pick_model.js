@@ -145,6 +145,9 @@ export function mechanismHtml(entry, checks) {
                   + esc(entry.part_name || entry.part)]];
   checkLines(checks).forEach((line, i) => rows.push([i === 0 ? "Checks" : "", line]));
   if (Number.isFinite(entry.drive_newtons)) rows.push(["Max", newtons(entry.drive_newtons)]);
+  // how finely it places the wire at the net: one encoder count and the
+  // gearbox's backlash, through the reeving ("and the precision")
+  if (Number.isFinite(entry.precision_mm)) rows.push(["Precision", entry.precision_mm.toFixed(3) + " mm"]);
   return "<table>" + rows.map(([name, value]) => `<tr><th>${name}</th><td>${value}</td></tr>`).join("")
     + "</table>";
 }

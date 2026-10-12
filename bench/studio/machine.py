@@ -412,6 +412,29 @@ def drive_newtons(terms):
     return min(term["newtons"] for term in terms if term["name"] in DRIVE_LIMITS)
 
 
+def precision_mm(parts, configuration):
+    """How finely the mechanism places its wire at the net, mm (Param,
+    2026-10-12: "and the precision"): one count of its motor's encoder, through
+    the gearbox, on the drum, and the gearbox's backlash as lost motion on the
+    drum, each through the reeving. None when the catalogue lacks either."""
+
+    motor = _part(parts, "motor", configuration["motor"])
+    counts = motor.get("encoder_counts_per_rev")
+    gearbox = configuration["gearbox"]
+    if gearbox == "direct":
+        ratio, backlash = 1.0, 0.0
+    else:
+        entry = _part(parts, "gearbox", gearbox)
+        ratio, backlash = float(entry["gear_ratio"]), entry.get("backlash_arcmin")
+    if not counts or backlash is None:
+        return None
+    radius = float(configuration["winding_radius_mm"])
+    reeve = float(configuration["reeve_factor"])
+    count = 2.0 * math.pi * radius / (float(counts) * ratio)
+    lost = radius * math.radians(float(backlash) / 60.0)
+    return (count + lost) / reeve
+
+
 def preset_label(parts, configuration, newtons, limit=None, drive=None):
     """A whole mechanism by its real names, its pull and what limits it, and
     what its drive pulls when the drive is not what limits it: "34HS31-6004D-
@@ -506,6 +529,7 @@ def options(parts, facts, angle_degrees, wires_per_motor, rope):
                     "ratio_label": ("direct" if option["ratio"] is None
                                     else "{:g}:1".format(float(option["ratio"]))),
                     "pulley_label": None if pulley is None else part_name(parts, pulley),
+                    "precision_mm": precision_mm(parts, built),
                     "described": describe(parts, built),
                     "label": preset_label(parts, built, pull["newtons"], pull["limit"], drive)})
     return found
