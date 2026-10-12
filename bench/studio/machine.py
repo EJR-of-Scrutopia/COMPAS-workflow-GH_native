@@ -398,9 +398,24 @@ def part_name(parts, key):
     return key
 
 
-def preset_label(parts, configuration, newtons):
-    """A whole mechanism by its real names and its pull: "ES-MH342200, 50:1,
-    190 mm pulleys, 8 mm 7x19: 3,411 N"."""
+# What limits a spool, in a word each (Param, 2026-10-12: "the mechanisms are
+# all showing the same amount of newtons, they should be different").
+LIMIT_WORDS = {"rope tension": "rope", "spool rope tension": "rope on drum",
+               "anchor": "anchor", "sheave": "pulley", "gearbox torque": "drive",
+               "motor torque": "drive"}
+DRIVE_LIMITS = ("motor torque", "gearbox torque")
+
+
+def drive_newtons(terms):
+    """What the motor and its gearbox pull a spool, N: the lower of the two."""
+
+    return min(term["newtons"] for term in terms if term["name"] in DRIVE_LIMITS)
+
+
+def preset_label(parts, configuration, newtons, limit=None, drive=None):
+    """A whole mechanism by its real names, its pull and what limits it, and
+    what its drive pulls when the drive is not what limits it: "34HS31-6004D-
+    E1000, 5:1, 100 mm pulleys, 6 mm 7x19: 3,760 N rope, 4,351 N drive"."""
 
     gearbox = configuration["gearbox"]
     ratio = ("direct" if gearbox == "direct" else
@@ -409,9 +424,14 @@ def preset_label(parts, configuration, newtons):
     pulleys = ("no pulleys" if pulley is None else
                "{:g} mm pulleys".format(float(_part(parts, "sheave", pulley)["diameter_mm"])))
     rope = _part(parts, "rope", configuration["rope"])
-    return "{}, {}, {}, {:g} mm {}: {:,.0f} N".format(
+    label = "{}, {}, {}, {:g} mm {}: {:,.0f} N".format(
         configuration["motor"], ratio, pulleys, float(rope["diameter_mm"]),
         rope.get("construction", "").strip(), float(newtons))
+    if limit is not None:
+        label += " " + LIMIT_WORDS.get(limit, limit)
+        if limit not in DRIVE_LIMITS and drive is not None:
+            label += ", {:,.0f} N drive".format(float(drive))
+    return label
 
 
 def presets(parts, facts, angle_degrees, wires_per_motor=1, rope=None):
@@ -436,18 +456,21 @@ def presets(parts, facts, angle_degrees, wires_per_motor=1, rope=None):
                     try:
                         built = derive(parts, choices, facts, angle_degrees)
                         pull = have(parts, built, angle_degrees)
+                        drive = drive_newtons(limit_terms(parts, built, angle_degrees))
                     except (MachineError, catalogue.CatalogueError):
                         continue
-                    if best is None or pull["newtons"] > best[0]["newtons"]:
-                        best = (pull, built, choices)
+                    # among the ones that pull alike, the strongest drive
+                    if best is None or (pull["newtons"], drive) > (best[0]["newtons"], best[3]):
+                        best = (pull, built, choices, drive)
         if best is None:
             continue
-        pull, built, choices = best
+        pull, built, choices, drive = best
         found.append({"choices": choices, "have_newtons": pull["newtons"],
                       "limit": pull["limit"], "part": pull["part"],
                       "part_name": part_name(parts, pull["part"]),
+                      "drive_newtons": drive,
                       "described": describe(parts, built),
-                      "label": preset_label(parts, built, pull["newtons"])})
+                      "label": preset_label(parts, built, pull["newtons"], pull["limit"], drive)})
     found.sort(key=lambda entry: -entry["have_newtons"])
     return found
 

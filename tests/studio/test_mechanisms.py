@@ -63,12 +63,56 @@ def test_the_list_holds_one_whole_mechanism_a_buildable_motor_strongest_first():
         built = machine.derive(parts, entry["choices"], FACTS, ANGLE)
         assert machine.have(parts, built, ANGLE)["newtons"] == pytest.approx(entry["have_newtons"])
         assert entry["described"] == machine.describe(parts, built)
-        # by real names and its pull: motor, ratio, pulleys, rope, newtons a spool
+        # by real names and its pull: motor, ratio, pulleys, rope, newtons a
+        # spool and what limits it, and the drive's own pull when the drive is
+        # not what limits it
         assert re.fullmatch(r"[\w-]+, (direct|\d+:1), (\d+ mm pulleys|no pulleys), "
-                            r"\d+ mm [\w ]+: [\d,]+ N", entry["label"]), entry["label"]
+                            r"\d+ mm [\w ]+: [\d,]+ N [a-z ]+(, [\d,]+ N drive)?",
+                            entry["label"]), entry["label"]
     top = listed[0]
-    assert top["label"].endswith(": {:,.0f} N".format(top["have_newtons"]))
+    assert top["label"].split(": ")[1].startswith("{:,.0f} N ".format(top["have_newtons"]))
     assert top["limit"] and top["part"]
+
+
+def test_each_mechanism_says_what_limits_it_and_what_its_drive_pulls():
+    # Param, 2026-10-12, on the 2 sided prototype's 8.8 mm drum: "the
+    # mechanisms are all showing the same amount of newtons, they should be
+    # different". Every motor there out-pulls a 6 mm rope, so the rope's working
+    # load is every one's pull; what differs is the drive behind it, said
+    small = {"winding_radius_mm": 8.8, "reeve_factor": 4, "spools": 7}
+    parts = catalogue.load_parts()
+    listed = machine.presets(parts, small, ANGLE, 1, rope="rope-6mm")
+    assert all(abs(entry["have_newtons"] - 3760.0) < 1.0 for entry in listed)
+    drives = []
+    for entry in listed:
+        built = machine.derive(parts, entry["choices"], small, ANGLE)
+        terms = {term["name"]: term["newtons"] for term in machine.limit_terms(parts, built, ANGLE)}
+        # a direct drive has no gearbox
+        drive = min(value for name, value in terms.items() if name in ("motor torque", "gearbox torque"))
+        assert entry["drive_newtons"] == pytest.approx(drive)
+        assert entry["label"].endswith(": 3,760 N rope, {:,.0f} N drive".format(drive)), entry["label"]
+        drives.append(round(drive))
+    assert len(set(drives)) > 1, "the drives differ, and the list says so"
+    # among ratios that pull alike, the one with the strongest drive is listed
+    for entry in listed:
+        motor = entry["choices"]["motor"]
+        alike = [machine.derive(parts, {**entry["choices"], "ratio": option["ratio"]}, small, ANGLE)
+                 for option in machine.ratio_options(parts, motor)]
+        best = 0.0
+        for built in alike:
+            try:
+                terms = {t["name"]: t["newtons"] for t in machine.limit_terms(parts, built, ANGLE)}
+            except Exception:
+                continue
+            if min(terms.values()) >= entry["have_newtons"] - 1e-6:
+                best = max(best, min(value for name, value in terms.items()
+                                     if name in ("motor torque", "gearbox torque")))
+        assert entry["drive_newtons"] == pytest.approx(best), motor
+    # where the drive itself limits, it is said once
+    plain = machine.presets(parts, FACTS, ANGLE, 1, rope="rope-6mm")
+    weak = [entry for entry in plain if entry["limit"] in ("motor torque", "gearbox torque")]
+    assert weak and all(entry["label"].endswith(" N drive") and ", " not in entry["label"].split(": ")[1]
+                        for entry in weak)
 
 
 def test_the_part_that_limits_a_spool_is_named_as_it_is_bought():
