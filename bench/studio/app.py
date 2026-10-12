@@ -217,6 +217,12 @@ def _ffmpeg_present() -> bool:
     return shutil.which("ffmpeg") is not None
 
 
+# Every file in a study's studio folder built from its geometry; frames and
+# recording.mp4 are not among them.
+STUDIO_CACHES = ("bundle-*.json", "staging-*.json", "cablenet-*.json",
+                 "formwork-sim-*.json", "formwork-state-*.json.gz")
+
+
 def _invalidate_studio_cache(slug: str) -> None:
     """Drop every cached bundle, staging and formwork file for a study after
     re-import, and any document the old cable net left, which nothing reads.
@@ -232,8 +238,7 @@ def _invalidate_studio_cache(slug: str) -> None:
     studio_dir = bundle.STUDIES_DIR / slug / "studio"
     if not studio_dir.is_dir():
         return
-    for pattern in ("bundle-*.json", "staging-*.json", "cablenet-*.json",
-                    "formwork-sim-*.json", "formwork-state-*.json.gz"):
+    for pattern in STUDIO_CACHES:
         for stale in studio_dir.glob(pattern):
             stale.unlink()
 
@@ -868,6 +873,34 @@ def create_app(runner=None, cra_runner=None, formwork_runner=None) -> FastAPI:
                 continue
         return newest
 
+    seen_stamps = {}
+
+    def _drop_caches_older_than_export(export: str) -> None:
+        """Param, 2026-10-12: "they dont update when i press write ... it
+        keeps holding onto an old version". Grasshopper's Write rewrites
+        the export's files with no live push, so nothing invalidated the
+        caches, and a cache is judged fresh by its shape alone. A cache
+        older than the export's newest file was built from the export
+        before: all of them go, as a live upload drops them, and the cut
+        memo with them, since its key has no geometry in it."""
+
+        slug = geometry.slugify(export)
+        newest = _study_stamp(export)
+        if seen_stamps.get(slug) == newest:
+            return
+        seen_stamps[slug] = newest
+        studio_dir = bundle.STUDIES_DIR / slug / "studio"
+        for pattern in STUDIO_CACHES if studio_dir.is_dir() else ():
+            for cached in studio_dir.glob(pattern):
+                try:
+                    built = cached.stat().st_mtime
+                except OSError:
+                    continue
+                if built < newest:
+                    _invalidate_studio_cache(slug)
+                    return
+        bundle.clear_cut_memo(slug)
+
     @app.get("/api/studies")
     def studies():
         pairs = geometry.available_exports(bundle.UPLOAD_DIR)
@@ -905,6 +938,7 @@ def create_app(runner=None, cra_runner=None, formwork_runner=None) -> FastAPI:
         source: str = Query(None), density: float = Query(None),
     ):
         _validate(export, material, pattern, size, thickness)
+        _drop_caches_older_than_export(export)
         try:
             # A fresh cache hit answers with the file's own bytes: the
             # freshness gate still runs on the parsed document inside
@@ -1594,6 +1628,7 @@ def create_app(runner=None, cra_runner=None, formwork_runner=None) -> FastAPI:
             raise HTTPException(404, "There is no export named {!r}, so no formwork run has "
                                      "been made for it.".format(export))
         _known_material(material)
+        _drop_caches_older_than_export(export)
         try:
             slot = staging.cut_slot(pairs[export], pattern, source)
         except ValueError as error:

@@ -1495,3 +1495,80 @@ def test_the_new_kinds_move_the_study_stamp_the_page_polls(tmp_path, monkeypatch
     assert client.put("/api/uploads/exports/Tiny/mechanism",
                       content=json.dumps(_tiny_study_mechanism()).encode()).status_code == 200
     assert stamp() > 1000.0
+
+
+# ------------------------------------------------ a Write with no live push
+
+
+def _bundle_cache(studies):
+    found = sorted((studies / "tiny" / "studio").glob("bundle-*.json"))
+    assert found, "the bundle was cached"
+    return found[0]
+
+
+def test_a_write_on_disk_rebuilds_the_bundle_cached_before_it(tmp_path, monkeypatch):
+    """Param, 2026-10-12: "they dont update when i press write ... it keeps
+    holding onto an old version". Grasshopper's Write rewrites the export's
+    files with no live push, and the cached bundle was judged fresh by its
+    shape alone, so the studio went on drawing the cut of the export before.
+    A cache older than the export's newest file is the export before."""
+
+    import os
+
+    client, uploads, studies = make_client(tmp_path, monkeypatch)
+    (uploads / "Tiny-form.json").write_text(json.dumps(tiny_contract()), encoding="utf-8")
+    first = client.get("/api/studies/Tiny/bundle", params=BUNDLE_PARAMS)
+    assert first.status_code == 200, first.text
+    cache = _bundle_cache(studies)
+    built = cache.stat().st_mtime
+
+    moved = tiny_contract()
+    moved["equilibrium"]["vertices"][4]["z"] = 1.5
+    (uploads / "Tiny-form.json").write_text(json.dumps(moved), encoding="utf-8")
+    os.utime(uploads / "Tiny-form.json", (built + 10, built + 10))
+
+    second = client.get("/api/studies/Tiny/bundle", params=BUNDLE_PARAMS)
+    assert second.status_code == 200, second.text
+    assert second.json()["analysis_mesh"]["vertices"][4][2] == 1.5
+
+
+def test_a_write_on_disk_drops_the_formwork_run_made_before_it(tmp_path, monkeypatch):
+    """The formwork run is keyed by the cut's options, not the geometry: a
+    run made before a Write would be drawn on the new net, so it goes, and
+    the tab is told there is no run for these options yet. A recording is
+    not a geometry snapshot and stays."""
+
+    import os
+
+    client, uploads, studies = make_client(tmp_path, monkeypatch)
+    (uploads / "Tiny-form.json").write_text(json.dumps(tiny_contract()), encoding="utf-8")
+    studio_dir = studies / "tiny" / "studio"
+    studio_dir.mkdir(parents=True)
+    run = studio_dir / "formwork-sim-concrete-bonded-courses-s1200-t200.json"
+    run.write_text("{}", encoding="utf-8")
+    kept = studio_dir / "recording.mp4"
+    kept.write_bytes(b"kept")
+    params = dict(BUNDLE_PARAMS, thickness=0.2)
+    assert client.get("/api/studies/Tiny/formwork/sim", params=params).status_code == 200
+
+    made = run.stat().st_mtime
+    os.utime(uploads / "Tiny-form.json", (made + 10, made + 10))
+    assert client.get("/api/studies/Tiny/formwork/sim", params=params).status_code == 404
+    assert not run.exists()
+    assert kept.is_file()
+
+
+def test_caches_built_after_the_last_write_are_kept(tmp_path, monkeypatch):
+    """No rebuild for nothing: a cache newer than every file of the export
+    is served as it is."""
+
+    import os
+
+    client, uploads, studies = make_client(tmp_path, monkeypatch)
+    (uploads / "Tiny-form.json").write_text(json.dumps(tiny_contract()), encoding="utf-8")
+    os.utime(uploads / "Tiny-form.json", (1000.0, 1000.0))
+    assert client.get("/api/studies/Tiny/bundle", params=BUNDLE_PARAMS).status_code == 200
+    cache = _bundle_cache(studies)
+    built = cache.stat().st_mtime_ns
+    assert client.get("/api/studies/Tiny/bundle", params=BUNDLE_PARAMS).status_code == 200
+    assert cache.is_file() and cache.stat().st_mtime_ns == built
