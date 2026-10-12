@@ -383,17 +383,51 @@ def test_the_net_is_laid_out_unpulled_and_pulled_from_the_raise_on(monkeypatch):
                for c in fs.simulate(_toy()._replace(tendon_pull=50.0)).captures)
 
 
+def _along_tendons(model):
+    index = {tuple(sorted(int(n) for n in edge)): k for k, edge in enumerate(model.edges)}
+    return [index[tuple(sorted(path))] for path in TENDONS]
+
+
+def test_a_pulled_lines_across_wire_is_its_tendon_not_a_rope_beside_it():
+    # Param, 2026-10-12: "the tendons should just be the wires that are already
+    # there in that direction not overlayed lines"; asked, the across wire IS
+    # the tendon: one wire on each across line, clamped at the crossings as a
+    # rope until its line lifts off and pulls, then released to run free
+    # through a ring at each crossing with the dialled pull, no rope beside it
+    model = _toy()._replace(tendons=TENDONS, tendon_pull=50.0)
+    result = fs.simulate(model)
+    along = _along_tendons(model)
+    net = fs.ropes_of(model, result.rest_lengths, pulling={0, 1, 2, 3})
+    assert net.ea[along].tolist() == [0.0] * 4
+    others = [k for k in range(len(model.edges)) if k not in along]
+    assert net.ea[others].tolist() == [model.ea] * len(others)
+    # a line not yet pulling is its rope
+    assert fs.ropes_of(model, result.rest_lengths, pulling={1}).ea[along].tolist() == [
+        model.ea, 0.0, model.ea, model.ea]
+    pulled = [c for c in result.captures if c.tendon_tension.max() > 0.0]
+    assert pulled, "the toy's lines lift off and pull"
+    for c in pulled:
+        # the tension on a pulling line's wire is the tendon's
+        assert c.tension[along].tolist() == c.tendon_tension.tolist(), c.phase
+    # a run that pulls nothing keeps every rope
+    plain = _toy()._replace(tendons=TENDONS)
+    assert fs.ropes_of(plain, result.rest_lengths, pulling={0, 1, 2, 3}).ea.tolist() == [
+        model.ea] * len(model.edges)
+
+
 def test_the_tendons_pull_reaches_the_tree_at_the_head():
     model = _toy()._replace(tendons=TENDONS, tendon_pull=50.0)
     result = fs.simulate(model)
-    net = ne.ropes(model.edges, result.rest_lengths, model.ea)
     for c in result.captures:
         # the head holds the centre node against everything on it: its ropes,
-        # its tendons and its weight (a tiling quarter's skin is nought there)
+        # its tendons and its weight (a tiling quarter's skin is nought there);
+        # a pulling line's wire is its tendon, not a rope as well
+        pulling = {k for k, pull in enumerate(c.tendon_tension) if pull > 0.0}
+        net = fs.ropes_of(model, result.rest_lengths, pulling)
         on = ne.rope_forces(c.x, net)[0][4] + model.weight[4]
-        for path in TENDONS:
+        for k, path in enumerate(TENDONS):
             unit = (c.x[path[1]] - c.x[path[0]]) / np.linalg.norm(c.x[path[1]] - c.x[path[0]])
-            on = on + 50.0 * unit
+            on = on + c.tendon_tension[k] * unit
         assert c.head_push[0] == pytest.approx(-on, abs=0.05), c.phase
 
 

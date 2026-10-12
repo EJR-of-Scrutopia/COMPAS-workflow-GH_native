@@ -188,6 +188,41 @@ def _places(model):
     return bool(model.holds) or (int(model.holds_per_side) > 0 and len(model.sides) > 0)
 
 
+def tendon_edges(model):
+    """Each edge a tendon runs along on a pulled run, with the tendon it is part
+    of, as (edge, tendon) pairs; none on a run that pulls nothing."""
+
+    if not model.tendons or float(model.tendon_pull) <= 0.0:
+        return []
+    index = {tuple(sorted((int(u), int(v)))): k
+             for k, (u, v) in enumerate(np.asarray(model.edges, dtype=int).reshape(-1, 2))}
+    found = []
+    for line, path in enumerate(model.tendons):
+        for a, b in zip(path, path[1:]):
+            edge = index.get(tuple(sorted((int(a), int(b)))))
+            if edge is not None:
+                found.append((edge, line))
+    return found
+
+
+def ropes_of(model, rest_lengths, pulling=()):
+    """The net's ropes, with the tendons in pulling pulling. The across wire
+    along each tendon IS the tendon (Param, 2026-10-12: "the tendons should just
+    be the wires that are already there in that direction not overlayed
+    lines"): clamped at the crossings, a rope like any other, until its line
+    lifts off and pulls; then released to run free through a ring at each
+    crossing with the dialled pull, so no rope of its own beside the tendon,
+    its EA nought. One wire on each across line, never two."""
+
+    net = ne.ropes(model.edges, rest_lengths, model.ea)
+    along = [edge for edge, line in tendon_edges(model) if line in pulling]
+    if not along:
+        return net
+    ea = np.array(net.ea, dtype=float)
+    ea[along] = 0.0
+    return net._replace(ea=ea)
+
+
 def _pulled(model, net, contacts):
     """The net with its tendons pulled in (spec 2026-10-11 across tendons,
     section 3, as amended), each line's once none of its nodes rests on the
@@ -199,7 +234,9 @@ def _pulled(model, net, contacts):
     resting = set(int(node) for node in contacts.resting)
     pull = [0.0 if resting.intersection(path) else float(model.tendon_pull)
             for path in model.tendons]
-    return net._replace(tendons=ne.tendons(model.tendons, pull))
+    pulling = {line for line, value in enumerate(pull) if value > 0.0}
+    released = ropes_of(model, net.rest, pulling)
+    return released._replace(tendons=ne.tendons(model.tendons, pull))
 
 
 def _count(model):
@@ -227,6 +264,19 @@ def _wires(model, reel):
             for node, wire in model.rim.items()}
 
 
+def _wire_tension(model, rest):
+    """Each edge's tension: its rope's, and the tendon's on the across wire of a
+    line that is pulling, which is that tendon."""
+
+    tension = np.array(rest.tension, dtype=float)
+    pulls = rest.tendon_tension
+    if pulls is not None and len(pulls):
+        for edge, line in tendon_edges(model):
+            if float(pulls[line]) > 0.0:
+                tension[edge] = float(pulls[line])
+    return tension
+
+
 def _capture(model, rest, contacts, reel, target, tree_x, phase, time, row, quarter):
     rim = sorted(model.rim)
     heads = [int(net) for net, _ in model.heads]
@@ -239,7 +289,7 @@ def _capture(model, rest, contacts, reel, target, tree_x, phase, time, row, quar
     stiffness = np.array([model.rim[n].stiffness for n in rim], dtype=float)
     return Capture(
         phase=phase, time=time, row=row, quarter=quarter,
-        x=rest.x, tension=rest.tension,
+        x=rest.x, tension=_wire_tension(model, rest),
         deviation=np.linalg.norm(rest.x - np.asarray(target, dtype=float), axis=1),
         head_push=np.array([rest.reaction[n] if n in contacts.engaged else np.zeros(3)
                             for n in heads]).reshape(-1, 3),
@@ -456,13 +506,13 @@ def simulate(model, progress=None, state=None, figures=None):
     per_run = _count(model)
     if state is not None:
         rest_lengths, cut_force, groups = state.rest_lengths, state.cut_force, state.groups
-        net = ne.ropes(model.edges, rest_lengths, model.ea)
+        net = ropes_of(model, rest_lengths)
         kept = len(state.captures)
         told = _reporter(progress, figures, -kept, per_run - kept, True)
         captures, _, state, holds = _run(model, net, None, told, start=state)
     else:
         rest_lengths, cut_force = cut(model)
-        net = ne.ropes(model.edges, rest_lengths, model.ea)
+        net = ropes_of(model, rest_lengths)
         # with motors shared the first pass is the raise alone: the pairing is
         # the raise's, whatever rods go on after it
         total = per_run + (len(model.frames) if shared else 0)

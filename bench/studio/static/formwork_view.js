@@ -12,14 +12,15 @@ const MARK_M = 0.05;            // an anchor's mark, and twice a ground contact'
 const HEAD_M = 0.08;            // a head's mark
 const RING_M = 0.12;            // the ring round a weakest part (spec 2026-10-11 section 5.3)
 const RING_TUBE_M = 0.015;
-// the Tendons chip (spec 2026-10-11 across tendons, section 6): each tendon
-// drawn this far above its net, and a reel this big this far out along it from
-// its column head, so the reels of a head's two sides stand apart
-const TENDON_PROUD_M = 0.02;
+// the Tendons chip (spec 2026-10-11 across tendons, section 6): a reel this
+// big this far out along its wire from its column head, so the reels of a
+// head's two sides stand apart. The tendons ARE the across wires (Param,
+// 2026-10-12: "the tendons should just be the wires that are already there in
+// that direction not overlayed lines"), so no line of their own is drawn.
 const REEL_M = 0.04;
 const REEL_WIDTH_M = 0.03;
 const REEL_ALONG_M = 0.06;
-const TENDON_PLAIN = [1, 1, 1];
+const REEL_PLAIN = [1, 1, 1];
 const OVER = [0xc2 / 255, 0x49 / 255, 0x36 / 255];
 const CLOSE = [0xc9 / 255, 0x9a / 255, 0x2e / 255];
 const DESIGN_FACE = 0x9cc4ff;   // Compare's design: pale blue formwork, seen through
@@ -176,12 +177,10 @@ export function createFormworkView(THREE) {
                    new THREE.MeshBasicMaterial({ color: 0xffffff })),
       designFaces: designFaces(),
       offsets: lines(sim.nodes, new THREE.LineBasicMaterial({ vertexColors: true }), true),
-      tendons: lines(tendonSegments(), new THREE.LineBasicMaterial({ vertexColors: true }), true),
       reels: marks(markGeometry("reels"),
                    sim.tendons ? sim.tendons.lines.length : 0,
                    new THREE.MeshBasicMaterial({ color: 0xffffff })),
     };
-    parts.tendons.geometry.setDrawRange(0, 2 * tendonSegments());
     const design = parts.design.geometry.attributes.position;
     sim.edges.forEach(([u, v], e) => {
       for (let k = 0; k < 3; k++) {
@@ -200,12 +199,6 @@ export function createFormworkView(THREE) {
     at = new Float32Array(sim.nodes * 3);
     treeAt = new Float32Array(sim.captures[0].treeX ? sim.captures[0].treeX.length : 0);
     skinFor = -1;
-  }
-
-  // every segment of every tendon, in its lines' order
-  function tendonSegments() {
-    const lines = sim && sim.tendons ? sim.tendons.lines : [];
-    return lines.reduce((sum, line) => sum + Math.max(0, (line.path || []).length - 1), 0);
   }
 
   function put(array, offset, values) {
@@ -299,36 +292,20 @@ export function createFormworkView(THREE) {
     parts.heads.instanceMatrix.needsUpdate = true;
     if (parts.heads.instanceColor) parts.heads.instanceColor.needsUpdate = true;
 
-    // the tendons, proud of the net, each in the colours of the member it
-    // runs along wherever the net is coloured, and white where the net is
-    // plain (found on screen: white tendons hid the colours of their members
-    // under Along and Offset), each with its reel by its head
-    const tendons = parts.tendons.geometry.attributes;
-    const proud = (i) => { const p = node(i); p[2] += TENDON_PROUD_M; return p; };
-    let segment = 0;
+    // each tendon's reel by its head, on the net, out along the wire it pulls
+    // and in that wire's colour wherever the net is coloured, white where it
+    // is plain
     (sim.tendons ? sim.tendons.lines : []).forEach((line, t) => {
       const path = line.path || [];
-      let first = null;
-      for (let k = 1; k < path.length; k++) {
-        put(tendons.position.array, 6 * segment, proud(path[k - 1]));
-        put(tendons.position.array, 6 * segment + 3, proud(path[k]));
-        const e = edgeOf(path[k - 1], path[k]);
-        const pair = e >= 0 && tinted[e] ? tinted[e] : [TENDON_PLAIN, TENDON_PLAIN];
-        const [from, to] = e >= 0 && sim.edges[e][0] === path[k - 1] ? pair : [pair[1], pair[0]];
-        putColour(tendons.color.array, 6 * segment, from);
-        putColour(tendons.color.array, 6 * segment + 3, to);
-        if (first === null) first = from;
-        segment += 1;
-      }
-      const head = proud(path[0]);
-      const next = path.length > 1 ? proud(path[1]) : head;
+      const head = node(path[0]);
+      const next = path.length > 1 ? node(path[1]) : head;
+      const e = path.length > 1 ? edgeOf(path[0], path[1]) : -1;
+      const tint = e >= 0 && tinted[e] ? tinted[e][sim.edges[e][0] === path[0] ? 0 : 1] : REEL_PLAIN;
       const along = Math.hypot(next[0] - head[0], next[1] - head[1], next[2] - head[2]) || 1;
       matrix.makeTranslation(...head.map((value, k) => value + (next[k] - value) / along * REEL_ALONG_M * markScale));
       parts.reels.setMatrixAt(t, matrix);
-      parts.reels.setColorAt(t, tone(first || TENDON_PLAIN));
+      parts.reels.setColorAt(t, tone(tint));
     });
-    tendons.position.needsUpdate = true;
-    tendons.color.needsUpdate = true;
     parts.reels.count = sim.tendons ? sim.tendons.lines.length : 0;
     parts.reels.instanceMatrix.needsUpdate = true;
     if (parts.reels.instanceColor) parts.reels.instanceColor.needsUpdate = true;
@@ -431,8 +408,7 @@ export function createFormworkView(THREE) {
     parts.ground.visible = !!on.ground;
     parts.skin.visible = (opacity != null ? Number(opacity) > 0 : !!on.skin)
       && !!(surface.index && surface.index.count);
-    parts.tendons.visible = !!on.tendons && segment > 0;
-    parts.reels.visible = parts.tendons.visible;
+    parts.reels.visible = !!on.tendons && parts.reels.count > 0;
   }
 
   // The net member joining two nodes, or -1.

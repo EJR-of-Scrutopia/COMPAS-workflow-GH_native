@@ -186,10 +186,11 @@ def out(tmp_path_factory):
 
 def test_the_view_builds_its_own_objects_and_the_still_ones_once(out):
     # net, design, wires, trees, heads, anchors, ground, skin, the weakest's
-    # rings, Compare's design faces and offset lines, and the tendons and
-    # their reels (spec 2026-10-11 across tendons, section 6); no holds' rods
-    # (they went on 11 October 2026)
-    assert out["children"] == 13
+    # rings, Compare's design faces and offset lines, and the tendons' reels
+    # (spec 2026-10-11 across tendons, section 6; no lines of their own, since
+    # 12 October 2026 the tendons ARE the across wires); no holds' rods (they
+    # went on 11 October 2026)
+    assert out["children"] == 12
     # the designed form as a light line net: the second member, node 1 to 2
     assert out["design"] == pytest.approx([1.0, 0.0, 0.0, 1.0, 1.0, 0.5])
     first, second, count = out["anchors"]
@@ -322,4 +323,4 @@ GREY = linear([0x9a / 255, 0xa4 / 255, 0xb2 / 255])
 def test_a_run_made_with_holds_draws_no_rods(out):
     # the holds went on 11 October 2026 (his word: "it doesnt work for what i
     # am thinking"): no rods part, even for a run made with them
-    assert out["held"] == [13, False]
+    assert out["held"] == [12, False]
