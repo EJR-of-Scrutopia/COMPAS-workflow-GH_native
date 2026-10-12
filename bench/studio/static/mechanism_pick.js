@@ -1,10 +1,16 @@
 // The mechanism pop-up's controller (spec 2026-10-11 one Cable net tab,
-// section 8.1): it fetches the study's whole spooling mechanisms at the tab's
-// wires a motor, remembers the one chosen for each study in this browser, and
-// tells the tab when the choice changes. Every line comes from
-// mechanism_pick_model.js. A tool, not a text: one dropdown and three lines.
+// section 8.1): it fetches every mechanism the study's machine can be built as
+// for the wire chosen, at the tab's wires a motor; he builds his own from
+// Motor, Ratio, Pulleys and Pulley (Param, 2026-10-12: "i also want to be able
+// to create my own mechanism, choose whether there is pulley or not should
+// just be a toggle"); the one built is remembered for each study in this
+// browser, and the tab is told when it changes. Every line comes from
+// mechanism_pick_model.js. A tool, not a text.
 
-import { mechanismHtml, mechanismsUrl, optionsHtml, pickIndex } from "./mechanism_pick_model.js";
+import {
+  builderPick, hasPulleys, mechanismHtml, mechanismsUrl, motorOptionsHtml, pulleyOptionsHtml,
+  ratioFromKey, ratioKey, ratioOptionsHtml,
+} from "./mechanism_pick_model.js";
 
 const REMEMBERED_PREFIX = "vaulted-mechanism:";
 
@@ -29,7 +35,9 @@ async function getJson(url) {
 export function mountMechanism({ studyName, onChange, onPopup = () => {}, rope = () => null }) {
   const el = {
     popup: byId("mechanism-popup"), close: byId("mechanism-popup-close"),
-    select: byId("mechanism-preset"), have: byId("mechanism-have"),
+    motor: byId("mechanism-motor"), ratio: byId("mechanism-ratio"),
+    pulleys: byId("mechanism-pulleys"), pulley: byId("mechanism-pulley"),
+    have: byId("mechanism-have"),
   };
   const missing = Object.keys(el).filter((name) => !el[name]);
   if (missing.length) {
@@ -52,19 +60,33 @@ export function mountMechanism({ studyName, onChange, onPopup = () => {}, rope =
     return e ? e.choices : null;
   }
 
+  // the mechanism this browser built for the study: { motor, ratio, pulley },
+  // or its motor alone as it was kept before he could build his own
   function remembered() {
-    try { return localStorage.getItem(REMEMBERED_PREFIX + studyName()) || null; } catch (_) { return null; }
+    let kept = null;
+    try { kept = localStorage.getItem(REMEMBERED_PREFIX + studyName()); } catch (_) { return null; }
+    if (!kept) return null;
+    try {
+      const parsed = JSON.parse(kept);
+      return parsed && typeof parsed === "object" ? parsed : kept;
+    } catch (_) { return kept; }
   }
 
-  function remember() {
-    const e = entry();
-    if (!e) return;
-    try { localStorage.setItem(REMEMBERED_PREFIX + studyName(), e.choices.motor); } catch (_) { /* private */ }
+  function keep(wanted) {
+    try { localStorage.setItem(REMEMBERED_PREFIX + studyName(), JSON.stringify(wanted)); } catch (_) { /* private */ }
   }
 
   function render() {
-    el.select.innerHTML = optionsHtml(state.list, state.index);
-    el.have.innerHTML = mechanismHtml(entry(), state.checks);
+    const e = entry();
+    const c = e ? e.choices : { motor: null, ratio: null, pulley: null };
+    el.motor.innerHTML = motorOptionsHtml(state.list, c.motor);
+    el.ratio.innerHTML = e ? ratioOptionsHtml(state.list, c.motor, c.ratio) : "";
+    const can = e ? hasPulleys(state.list, c.motor, c.ratio) : false;
+    el.pulleys.checked = c.pulley !== null;
+    el.pulleys.disabled = !can;
+    el.pulley.innerHTML = c.pulley !== null ? pulleyOptionsHtml(state.list, c.motor, c.ratio, c.pulley) : "";
+    el.pulley.disabled = c.pulley === null;
+    el.have.innerHTML = mechanismHtml(e, state.checks);
   }
 
   // The study's mechanisms at the wires a motor, read again: the choice kept
@@ -76,14 +98,14 @@ export function mountMechanism({ studyName, onChange, onPopup = () => {}, rope =
     let list = [];
     let note = null;
     try {
-      list = (await getJson(mechanismsUrl(name, state.wires, rope()))).mechanisms || [];
+      list = (await getJson(mechanismsUrl(name, state.wires, rope()))).options || [];
     } catch (error) {
       note = error.message;
     }
     if (mine !== state.ticket) return;
     const before = JSON.stringify(chosen());
     state.list = list;
-    state.index = pickIndex(list, remembered());
+    state.index = builderPick(list, remembered());
     render();
     if (note) el.have.innerHTML = `<div class="cablenet-warning">${note.replace(/[<>&]/g, "")}</div>`;
     if (JSON.stringify(chosen()) !== before) onChange(chosen(), false);
@@ -97,11 +119,29 @@ export function mountMechanism({ studyName, onChange, onPopup = () => {}, rope =
     render();
   }
 
-  el.select.addEventListener("change", () => {
-    state.index = Number(el.select.value);
-    remember();
+  // His hand on any of the four: what he asked for, or the nearest the motor
+  // can make; Pulleys on picks the strongest pulley, off takes none.
+  function built(wanted) {
+    state.index = builderPick(state.list, wanted);
+    const e = entry();
+    if (e) keep({ motor: e.choices.motor, ratio: e.choices.ratio, pulley: e.choices.pulley });
     render();
     onChange(chosen(), true);
+  }
+  el.motor.addEventListener("change", () => built({ motor: el.motor.value }));
+  el.ratio.addEventListener("change", () => {
+    const e = entry();
+    built({ motor: e.choices.motor, ratio: ratioFromKey(el.ratio.value),
+            pulley: e.choices.pulley === null ? null : e.choices.pulley });
+  });
+  el.pulleys.addEventListener("change", () => {
+    const e = entry();
+    built({ motor: e.choices.motor, ratio: e.choices.ratio,
+            pulley: el.pulleys.checked ? "" : null });
+  });
+  el.pulley.addEventListener("change", () => {
+    const e = entry();
+    built({ motor: e.choices.motor, ratio: e.choices.ratio, pulley: el.pulley.value });
   });
 
   function setPopup(open) {
@@ -133,7 +173,7 @@ export function mountMechanism({ studyName, onChange, onPopup = () => {}, rope =
     // choice, so the run on screen is not out of date when nothing changed
     adopt(choices) {
       if (!choices || !choices.motor) return Promise.resolve();
-      try { localStorage.setItem(REMEMBERED_PREFIX + studyName(), choices.motor); } catch (_) { /* private */ }
+      keep({ motor: choices.motor, ratio: choices.ratio ?? null, pulley: choices.pulley ?? null });
       state.wires = Number(choices.wires_per_motor) || state.wires;
       return reload();
     },

@@ -1268,9 +1268,13 @@ def create_app(runner=None, cra_runner=None, formwork_runner=None) -> FastAPI:
                wires_per_motor, rope, MECHANISM_ANGLE_DEGREES,
                catalogue.PARTS_PATH.stat().st_mtime_ns)
         if key not in _mechanisms_cache:
-            _mechanisms_cache[key] = machine.presets(parts, facts, MECHANISM_ANGLE_DEGREES,
-                                                     wires_per_motor, rope=rope)
-        return {"mechanisms": _mechanisms_cache[key], "wires_per_motor": wires_per_motor,
+            _mechanisms_cache[key] = (
+                machine.presets(parts, facts, MECHANISM_ANGLE_DEGREES, wires_per_motor, rope=rope),
+                # every one he can build for the rope (Param, 2026-10-12)
+                [] if rope is None else machine.options(parts, facts, MECHANISM_ANGLE_DEGREES,
+                                                        wires_per_motor, rope))
+        mechanisms, offered = _mechanisms_cache[key]
+        return {"mechanisms": mechanisms, "options": offered, "wires_per_motor": wires_per_motor,
                 "rope": rope, "angle_degrees": MECHANISM_ANGLE_DEGREES}
 
     def _default_rope(ropes) -> str:

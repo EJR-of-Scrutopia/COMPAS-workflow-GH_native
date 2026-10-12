@@ -182,7 +182,8 @@ def test_a_studys_run_read_first_gives_the_mechanism_its_wires_and_its_motor():
     assert "tab.again" not in adopt                      # not his hand: no run follows
     assert "adopt(choices) {" in PICK
     assert "state.wires = Number(choices.wires_per_motor) || state.wires;" in PICK
-    assert "localStorage.setItem(REMEMBERED_PREFIX + studyName(), choices.motor);" in PICK
+    # the whole mechanism the run was made with, now that he builds his own
+    assert "keep({ motor: choices.motor, ratio: choices.ratio ?? null, pulley: choices.pulley ?? null });" in PICK
 
 
 def test_a_rerun_keeps_the_players_place_and_a_new_study_starts_at_the_raise():

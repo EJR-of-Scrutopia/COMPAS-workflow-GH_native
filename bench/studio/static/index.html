@@ -996,9 +996,10 @@
 </div>
 <div id="mechanism-popup" class="hidden">
   <!-- The one Cable net tab's mechanism (spec 2026-10-11 one Cable net tab,
-       section 8.1): one dropdown of whole spooling mechanisms, strongest
-       first, and under it one spool's pull, the part that sets it and the
-       run's drum and carriage. Filled by mechanism_pick.js; its Cost and
+       section 8.1): the mechanism built from Motor, Ratio, Pulleys and
+       Pulley (Param, 2026-10-12), and under it one spool's pull, the part
+       that sets it, the run's drum and carriage and the most its drive
+       pulls. Filled by mechanism_pick.js; its Cost and
        Graphs (sections 8.2 and 8.3) by formwork.js. -->
   <div id="mechanism-popup-head">
     <div id="mechanism-tabs">
@@ -1009,7 +1010,10 @@
     <button id="mechanism-popup-close" type="button" title="Close">Close</button>
   </div>
   <div id="mech-choose" class="mech-tab">
-    <select id="mechanism-preset" title="Spooling mechanism"></select>
+    <label class="mechanism-line" title="Motor"><span>Motor</span> <select id="mechanism-motor"></select></label>
+    <label class="mechanism-line" title="Gearbox ratio"><span>Ratio</span> <select id="mechanism-ratio"></select></label>
+    <label class="mechanism-line" title="Pulleys"><span>Pulleys</span> <input id="mechanism-pulleys" type="checkbox"></label>
+    <label class="mechanism-line" title="Pulley"><span>Pulley</span> <select id="mechanism-pulley"></select></label>
     <div id="mechanism-have" class="cablenet-readout"></div>
   </div>
   <div id="mech-cost" class="mech-tab hidden">

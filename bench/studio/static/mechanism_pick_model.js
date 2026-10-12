@@ -31,17 +31,89 @@ export function mechanismsUrl(study, wiresPerMotor, rope) {
   return rope ? `${base}&rope=${encodeURIComponent(rope)}` : base;
 }
 
-// The entry chosen: the motor this browser last chose for the study, else the
-// strongest, which is the first; -1 for an empty list.
-export function pickIndex(list, motor) {
-  if (!Array.isArray(list) || !list.length) return -1;
-  const found = motor ? list.findIndex((entry) => entry.choices.motor === motor) : -1;
-  return found >= 0 ? found : 0;
+// ---------- the mechanism built by hand ----------
+// Param, 2026-10-12: "this mechanisms tab i also want to be able to create my
+// own mechanism, choose whether there is pulley or not should just be a toggle
+// on this pop up too". options: every mechanism the machine can be built as
+// for the wire chosen (machine.options), each motor, ratio and pulley or none.
+
+// The stronger of two: the more pull, and among equals the stronger drive.
+function stronger(a, b) {
+  return a.have_newtons > b.have_newtons
+    || (a.have_newtons === b.have_newtons && (a.drive_newtons || 0) > (b.drive_newtons || 0));
 }
 
-export function optionsHtml(list, chosen) {
-  return (list || []).map((entry, i) =>
-    `<option value="${i}"${i === chosen ? " selected" : ""}>${esc(entry.label)}</option>`).join("");
+// A ratio as a dropdown value and back: direct drive has none.
+export function ratioKey(ratio) {
+  return ratio === null || ratio === undefined ? "direct" : String(ratio);
+}
+
+export function ratioFromKey(key) {
+  return key === "direct" ? null : Number(key);
+}
+
+// The option built: wanted is { motor, ratio, pulley } (pulley null with
+// Pulleys off), or a study's motor alone as it was remembered before he could
+// build his own. What the motor cannot make falls to its strongest: a ratio it
+// has not, its strongest ratio; a pulley no longer offered with Pulleys on,
+// the strongest pulley there. Nothing wanted: the strongest of all. -1 for
+// none.
+export function builderPick(options, wanted) {
+  if (!Array.isArray(options) || !options.length) return -1;
+  const want = typeof wanted === "string" ? { motor: wanted } : (wanted || {});
+  const best = (indices) => indices.reduce(
+    (found, i) => (found < 0 || stronger(options[i], options[found]) ? i : found), -1);
+  const all = options.map((_, i) => i);
+  const mine = all.filter((i) => options[i].choices.motor === want.motor);
+  if (!mine.length) return best(all);
+  const geared = "ratio" in want ? mine.filter((i) => options[i].choices.ratio === want.ratio) : [];
+  if (!geared.length) return best(mine);
+  if (want.pulley === null) {
+    const off = geared.find((i) => options[i].choices.pulley === null);
+    return off !== undefined ? off : best(geared);
+  }
+  const exact = geared.find((i) => options[i].choices.pulley === want.pulley);
+  if (exact !== undefined) return exact;
+  const on = geared.filter((i) => options[i].choices.pulley !== null);
+  return best(on.length ? on : geared);
+}
+
+function unique(values) {
+  return values.filter((value, i) => values.indexOf(value) === i);
+}
+
+function option(value, label, selected) {
+  return `<option value="${esc(value)}"${selected ? " selected" : ""}>${esc(label)}</option>`;
+}
+
+export function motorOptionsHtml(options, motor) {
+  return unique(options.map((entry) => entry.choices.motor))
+    .map((key) => option(key, key, key === motor)).join("");
+}
+
+export function ratioOptionsHtml(options, motor, ratio) {
+  const mine = options.filter((entry) => entry.choices.motor === motor);
+  const keys = unique(mine.map((entry) => ratioKey(entry.choices.ratio)));
+  return keys.map((key) => {
+    const entry = mine.find((one) => ratioKey(one.choices.ratio) === key);
+    return option(key, entry.ratio_label, key === ratioKey(ratio));
+  }).join("");
+}
+
+function geared(options, motor, ratio) {
+  return options.filter((entry) => entry.choices.motor === motor
+    && ratioKey(entry.choices.ratio) === ratioKey(ratio) && entry.choices.pulley !== null);
+}
+
+export function pulleyOptionsHtml(options, motor, ratio, pulley) {
+  return geared(options, motor, ratio)
+    .map((entry) => option(entry.choices.pulley, entry.pulley_label, entry.choices.pulley === pulley))
+    .join("");
+}
+
+// Whether the motor at this ratio can take a pulley for the wire at all.
+export function hasPulleys(options, motor, ratio) {
+  return geared(options, motor, ratio).length > 0;
 }
 
 // Checks: the run's drum and carriage (formwork_sim.travel_checks), only what
@@ -63,13 +135,16 @@ function checkLines(checks) {
   return failing;
 }
 
-// The lines under the dropdown: Have, Limited by, and Checks when one fails.
+// The lines under the dropdowns: Have, Limited by, Checks when one fails, and
+// at the end the most its drive pulls ("we should at the end of that also
+// have it show the newtons max the mechanisms can produce").
 export function mechanismHtml(entry, checks) {
   if (!entry) return "";
   const rows = [["Have", newtons(entry.have_newtons)],
                 ["Limited by", esc(LIMIT_NAMES[entry.limit] || entry.limit) + ", "
                   + esc(entry.part_name || entry.part)]];
   checkLines(checks).forEach((line, i) => rows.push([i === 0 ? "Checks" : "", line]));
+  if (Number.isFinite(entry.drive_newtons)) rows.push(["Max", newtons(entry.drive_newtons)]);
   return "<table>" + rows.map(([name, value]) => `<tr><th>${name}</th><td>${value}</td></tr>`).join("")
     + "</table>";
 }

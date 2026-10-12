@@ -475,6 +475,42 @@ def presets(parts, facts, angle_degrees, wires_per_motor=1, rope=None):
     return found
 
 
+def options(parts, facts, angle_degrees, wires_per_motor, rope):
+    """Every mechanism he can build on this machine for the rope chosen (Param,
+    2026-10-12: "this mechanisms tab i also want to be able to create my own
+    mechanism, choose whether there is pulley or not should just be a
+    toggle"): each motor the catalogue offers, each of its ratios, and no
+    pulley or each pulley whose groove takes the rope, in that order; each with
+    its pull a spool, what limits it, and the most its drive pulls ("we should
+    at the end of that also have it show the newtons max the mechanisms can
+    produce"). What the catalogue cannot build is left out."""
+
+    if rope not in parts["rope"]:
+        raise MachineError("rope: no rope {!r} in the catalogue".format(rope))
+    found = []
+    for motor in offered_motors(parts):
+        for option in ratio_options(parts, motor):
+            for pulley in [None] + pulleys_for(parts, rope):
+                choices = {"motor": motor, "ratio": option["ratio"], "pulley": pulley,
+                           "rope": rope, "wires_per_motor": int(wires_per_motor)}
+                try:
+                    built = derive(parts, choices, facts, angle_degrees)
+                    pull = have(parts, built, angle_degrees)
+                    drive = drive_newtons(limit_terms(parts, built, angle_degrees))
+                except (MachineError, catalogue.CatalogueError):
+                    continue
+                found.append({
+                    "choices": choices, "have_newtons": pull["newtons"],
+                    "limit": pull["limit"], "part": pull["part"],
+                    "part_name": part_name(parts, pull["part"]), "drive_newtons": drive,
+                    "ratio_label": ("direct" if option["ratio"] is None
+                                    else "{:g}:1".format(float(option["ratio"]))),
+                    "pulley_label": None if pulley is None else part_name(parts, pulley),
+                    "described": describe(parts, built),
+                    "label": preset_label(parts, built, pull["newtons"], pull["limit"], drive)})
+    return found
+
+
 def travel(parts, configuration, take_ups, reeves=None):
     """The drum and the carriage of each wire (spec section 4.5): the most rope
     ever on the drum at once against its single layer, the carriage's travel

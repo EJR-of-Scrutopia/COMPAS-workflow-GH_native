@@ -166,6 +166,54 @@ def test_the_route_lists_the_mechanisms_at_the_wires_a_motor_asked(tmp_path, mon
                client.get("/api/studies/Tiny/mechanisms").json()["mechanisms"])
 
 
+def test_every_mechanism_he_can_build_for_the_wire_is_offered(tmp_path, monkeypatch):
+    # Param, 2026-10-12: "this mechanisms tab i also want to be able to create
+    # my own mechanism, choose whether there is pulley or not should just be a
+    # toggle"; asked, the pop-up becomes Motor, Ratio, Pulleys on or off and
+    # Pulley. Every motor, each of its ratios, and no pulley or each pulley
+    # that takes the rope, each with its pull, what limits it and the most its
+    # drive pulls ("we should at the end of that also have it show the newtons
+    # max the mechanisms can produce")
+    parts = catalogue.load_parts()
+    offered = machine.options(parts, FACTS, ANGLE, 1, "rope-6mm")
+    expected = []
+    for motor in machine.offered_motors(parts):
+        for option in machine.ratio_options(parts, motor):
+            for pulley in [None] + machine.pulleys_for(parts, "rope-6mm"):
+                choices = {"motor": motor, "ratio": option["ratio"], "pulley": pulley,
+                           "rope": "rope-6mm", "wires_per_motor": 1}
+                try:
+                    built = machine.derive(parts, choices, FACTS, ANGLE)
+                    terms = machine.limit_terms(parts, built, ANGLE)
+                except (machine.MachineError, catalogue.CatalogueError):
+                    continue
+                expected.append((choices, built, terms))
+    assert [entry["choices"] for entry in offered] == [choices for choices, _, _ in expected]
+    assert any(entry["choices"]["pulley"] is None for entry in offered)
+    assert any(entry["choices"]["pulley"] is not None for entry in offered)
+    for entry, (choices, built, terms) in zip(offered, expected):
+        have = machine.have(parts, built, ANGLE)
+        assert entry["have_newtons"] == pytest.approx(have["newtons"])
+        assert entry["limit"] == have["limit"]
+        assert entry["drive_newtons"] == pytest.approx(machine.drive_newtons(terms))
+        assert entry["ratio_label"] == ("direct" if choices["ratio"] is None
+                                        else "{:g}:1".format(choices["ratio"]))
+        assert entry["pulley_label"] == (None if choices["pulley"] is None
+                                         else machine.part_name(parts, choices["pulley"]))
+        assert entry["described"] == machine.describe(parts, built)
+    # each motor's strongest is the one the list of mechanisms leads with
+    best = {entry["choices"]["motor"]: entry
+            for entry in machine.presets(parts, FACTS, ANGLE, 1, rope="rope-6mm")}
+    for motor, entry in best.items():
+        mine = [option for option in offered if option["choices"]["motor"] == motor]
+        assert max(option["have_newtons"] for option in mine) == pytest.approx(entry["have_newtons"])
+    # and the route carries them beside the mechanisms
+    client, _ = make_client(tmp_path, monkeypatch)
+    _plant(tmp_path)
+    body = client.get("/api/studies/Tiny/mechanisms", params={"rope": "rope-6mm"}).json()
+    assert body["options"] and all(option["choices"]["rope"] == "rope-6mm" for option in body["options"])
+
+
 def test_the_route_says_in_one_line_why_it_lists_none(tmp_path, monkeypatch):
     client, _ = make_client(tmp_path, monkeypatch)
     for bad in ("0", "8", "two"):

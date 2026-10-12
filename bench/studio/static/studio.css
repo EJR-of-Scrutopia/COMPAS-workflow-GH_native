@@ -1687,7 +1687,9 @@ body.stilling
   border: 1px solid var(--line); border-radius: var(--radius); color: var(--ink); width: auto; }
 #mechanism-tabs button.active { background: var(--accent-bg); color: var(--accent-ink);
   border-color: var(--accent); }
-#mechanism-preset { width: 100%; margin-bottom: var(--s2); }
+#mech-choose .mechanism-line { display: flex; align-items: center; gap: var(--s2); margin: 0 0 var(--s2); }
+#mech-choose .mechanism-line span { min-width: 4.5em; }
+#mech-choose .mechanism-line select { flex: 1; min-width: 0; }
 #mechanism-popup table { width: 100%; border-collapse: collapse; }
 #mechanism-popup th, #mechanism-popup td { text-align: left; padding: 2px 6px 2px 0;
   font-size: var(--t-2); }

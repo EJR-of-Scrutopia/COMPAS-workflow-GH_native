@@ -30,9 +30,6 @@ HARNESS = """
 import * as m from %(model)r;
 const list = %(list)s;
 const out = {};
-out.picked = [m.pickIndex(list, "23HS45-4204D-E1000"), m.pickIndex(list, "gone"), m.pickIndex(list, null),
-              m.pickIndex([], "x")];
-out.options = m.optionsHtml(list, 1);
 const pass = { drum: { value_mm: 900, limit_mm: 3616.4, fits: true, wire: 0 },
                carriage: { value_mm: 12, limit_mm: 300, fits: true, wire: 1 } };
 const fail = { drum: { value_mm: 4000, limit_mm: 3616.4, fits: false, wire: 3 },
@@ -58,17 +55,6 @@ def out(tmp_path_factory):
                             encoding="utf-8")
     assert result.returncode == 0, result.stderr
     return json.loads(result.stdout)
-
-
-def test_the_choice_is_the_motor_this_browser_left_else_the_strongest(out):
-    assert out["picked"] == [1, 0, 0, -1]
-
-
-def test_the_dropdown_lists_each_mechanism_by_its_label(out):
-    options = out["options"]
-    assert options == ('<option value="0">ES-MH342200, 7:1, 185 mm pulleys, 8 mm 7x19: '
-                       '6,660 N</option><option value="1" selected>23HS45-4204D-E1000, '
-                       '20:1, 90 mm pulleys, 6 mm 7x19: 3,229 N</option>')
 
 
 def test_under_it_three_lines_have_limited_by_and_checks(out):
@@ -113,12 +99,3 @@ def test_the_pop_up_has_three_tabs_mechanism_cost_and_graphs():
         assert 'id="{}"'.format(ident) in popup, ident
 
 
-def test_the_page_carries_the_pop_up_with_one_dropdown():
-    html = (STATIC / "index.html").read_text(encoding="utf-8")
-    opening = '<div id="mechanism-popup" class="hidden">'
-    assert opening in html
-    popup = html[html.index(opening):]
-    popup = popup[:popup.index("<!-- the end of the mechanism pop-up -->")]
-    for ident in ("mechanism-popup-close", "mechanism-preset", "mechanism-have"):
-        assert 'id="{}"'.format(ident) in popup, ident
-    assert popup.count("<select") == 1
