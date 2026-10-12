@@ -23,6 +23,14 @@ const LIMIT_NAMES = {
   "sheave": "pulleys", "gearbox torque": "gearbox", "motor torque": "motor",
 };
 
+// Where the study's mechanisms are read: at its wires a motor, and held to the
+// rope it wears when one is named (Param, 2026-10-12: the wire on screen is
+// the wire the run is made with).
+export function mechanismsUrl(study, wiresPerMotor, rope) {
+  const base = `/api/studies/${encodeURIComponent(study)}/mechanisms?wires_per_motor=${wiresPerMotor}`;
+  return rope ? `${base}&rope=${encodeURIComponent(rope)}` : base;
+}
+
 // The entry chosen: the motor this browser last chose for the study, else the
 // strongest, which is the first; -1 for an empty list.
 export function pickIndex(list, motor) {

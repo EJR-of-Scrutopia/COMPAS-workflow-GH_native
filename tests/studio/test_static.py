@@ -2688,19 +2688,20 @@ def test_formwork_and_both_draw_the_formwork_documents_own_columns():
     assert "addColumnSolid(group, await fetchJson(" in _function_body(js, "loadColumns")
 
 
-def test_the_machine_wears_his_cable_mesh_instead_of_lofted_tubes():
-    """Param, 2026-09-15: "the recreation in the app is really bad ... bring
-    my cable mesh into the vaulted app". A cable part is stamped on every
-    instance in the wires' own material, and no tube is lofted from the
-    route frames while one is there; the frames still drive the reels."""
+def test_the_machine_lofts_its_wires_at_the_rope_chosen_not_his_cable_mesh():
+    """Param, 2026-10-12, superseding his cable mesh of 2026-09-15: the wires
+    drawn are the rope chosen, and asked what his modelled mesh should do he
+    answered "Redraw at the rope's size". The cable part is still not drawn
+    as a part; every wire is lofted along its routing frames at the rope's
+    radius, in the wires' own material; the frames still drive the reels."""
 
     js = (STATIC / "studio.js").read_text(encoding="utf-8")
     body = _function_body(js, "buildMachine")
     assert 'if (part.kind === "cable") continue;' in body
-    stamp = body.index('const cableParts = model.parts.filter((part) => part.kind === "cable");')
-    assert body.index("const wireMaterial = materials.steel.clone();") < stamp
-    assert "const mesh = new THREE.Mesh(geometry, wireMaterial);" in body[stamp:]
-    assert "const routed = cableParts.length ? null : loftWire(" in body
+    assert "cableParts" not in body
+    assert body.index("const wireMaterial = materials.steel.clone();") \
+        < body.index("const routed = loftWire(")
+    assert "wireCentreline(wire.route, reelAxes, routingOffset), state.wireRadius);" in body
 
 
 def test_a_columns_reload_settles_the_scene_it_joins():

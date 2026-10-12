@@ -382,6 +382,7 @@
          mechanism and this can be a toggle". Hidden until the vault
          actually carries a mechanism, so it is never a dead control. -->
     <label id="machine-row" class="hidden" title="Show mechanism"><input id="show-machine" type="checkbox" checked> Mechanism</label>
+    <label id="default-rope-row" class="mechanism-line" title="Default wire"><span>Default wire</span> <select id="default-rope"></select></label>
     <div id="vault-tools">
       <button id="live-toggle" class="on" title="Live: follow Grasshopper"><span class="beacon"></span>LIVE</button>
       <button id="delete-study" class="danger" title="Delete vault JSON">Delete</button>
@@ -519,7 +520,11 @@
       <button id="mechanism-toggle" type="button" title="Choose the spooling mechanism">Mechanism</button>
       <span id="formwork-mechanism-name"></span>
     </div>
+    <label id="formwork-rope" class="mechanism-line" title="Wire"><span>Wire</span> <select id="rope-select"></select></label>
     <div class="dial-block" id="formwork-dials">
+    <label title="Wire size on screen"><span>Wire size</span>
+      <input id="wire-scale" type="range" min="1" max="10" step="0.5" value="1">
+      <b id="wire-scale-value">1</b><em>x</em></label>
     <label title="Tolerance, mm"><span>Tolerance</span>
       <input id="formwork-tolerance" type="range" min="1" max="100" step="1" value="20">
       <b id="formwork-tolerance-value">20</b><em>mm</em></label>

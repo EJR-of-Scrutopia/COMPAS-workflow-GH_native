@@ -4,7 +4,7 @@
 // tells the tab when the choice changes. Every line comes from
 // mechanism_pick_model.js. A tool, not a text: one dropdown and three lines.
 
-import { mechanismHtml, optionsHtml, pickIndex } from "./mechanism_pick_model.js";
+import { mechanismHtml, mechanismsUrl, optionsHtml, pickIndex } from "./mechanism_pick_model.js";
 
 const REMEMBERED_PREFIX = "vaulted-mechanism:";
 
@@ -25,7 +25,8 @@ async function getJson(url) {
 // onChange(choices, byHand): the five choices of the mechanism now chosen, or
 // null, and whether his hand chose it (a list read again did not).
 // onPopup(): the pop-up has opened, so the others on the left close.
-export function mountMechanism({ studyName, onChange, onPopup = () => {} }) {
+// rope(): the rope the study wears, which holds every mechanism listed.
+export function mountMechanism({ studyName, onChange, onPopup = () => {}, rope = () => null }) {
   const el = {
     popup: byId("mechanism-popup"), close: byId("mechanism-popup-close"),
     select: byId("mechanism-preset"), have: byId("mechanism-have"),
@@ -75,8 +76,7 @@ export function mountMechanism({ studyName, onChange, onPopup = () => {} }) {
     let list = [];
     let note = null;
     try {
-      list = (await getJson(`/api/studies/${encodeURIComponent(name)}/mechanisms?wires_per_motor=${state.wires}`))
-        .mechanisms || [];
+      list = (await getJson(mechanismsUrl(name, state.wires, rope()))).mechanisms || [];
     } catch (error) {
       note = error.message;
     }

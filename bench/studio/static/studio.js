@@ -8,6 +8,7 @@ import { buildLiveSeries, liveSpecs, liveCut, seriesToCsv } from "./live_graphs.
 import { mountFormwork } from "./formwork.js";
 import { mountMechanism } from "./mechanism_pick.js";
 import { createFormworkView } from "./formwork_view.js";
+import { clampScale, ropeFor, ropeOptionsHtml, wireLook } from "./wire_look_model.js";
 import {
   upgradeSliders, paintScrub, repaintScrubs, settleRangeFills,
   buildSegmented, paintSegmented,
@@ -269,10 +270,14 @@ const state = {
   // taper) until it can drive the thickness the analysis actually uses.
   taper: 0,
   segmentIndex: null,  // Task 11
-  // Fixed 2026-09-04 with the View panel: 30 mm nodes and 20 mm wires are
-  // the sizes Param settled on, so they are the sizes, not a control.
+  // Fixed 2026-09-04 with the View panel: 30 mm nodes and 20 mm wires were
+  // the sizes Param settled on. From 2026-10-12 they are the rope chosen,
+  // its own radius and a clamp 2.5 diameters across, times Wire size
+  // (applyWireLook); these stand until the ropes are read.
   nodeRadius: 0.03,
   wireRadius: 0.02,
+  // the rope's colour, metalness and roughness (wire_look_model.wireLook)
+  wireLook: null,
   // Task 9: filled from /api/studies at boot, so the pattern control knows
   // which patterns are actually selectable and what each material's own
   // default is.
@@ -5431,11 +5436,30 @@ function meshGeometry(meshData) {
 // so the two are literally the same drawing and the handover at the end of
 // the raise shows nothing. Flat LineSegments, which the act used to draw,
 // read as another medium entirely: no thickness, no material, no nodes.
-function netInstances(edgeCount, vertexCount) {
+// One wire of the net: a unit-length open tube at the wire radius, standing
+// on its base so an instance matrix stretches it from node to node.
+function wireCylinder() {
   const cylinder = new THREE.CylinderGeometry(
     state.wireRadius, state.wireRadius, 1, 8, 1, true);
   cylinder.translate(0, 0.5, 0);
+  return cylinder;
+}
+
+// The rope's colour and finish on a wire or node material (Param,
+// 2026-10-12: the wires drawn are the rope chosen). No look yet keeps the
+// material as it was made.
+function applyLookTo(material, look) {
+  if (!look) return;
+  if (look.colour) material.color.set(look.colour);
+  if (look.metalness !== null && look.metalness !== undefined) material.metalness = look.metalness;
+  if (look.roughness !== null && look.roughness !== undefined) material.roughness = look.roughness;
+  material.needsUpdate = true;
+}
+
+function netInstances(edgeCount, vertexCount) {
+  const cylinder = wireCylinder();
   const wireMaterial = materials.steel.clone();
+  applyLookTo(wireMaterial, state.wireLook);
   // Task 6 fix: InstancedMesh.setColorAt writes the instanceColor buffer,
   // but per-instance colour only reaches the fragment shader when the
   // material also opts into the vertex-colour path. vertexColors stays
@@ -5450,6 +5474,7 @@ function netInstances(edgeCount, vertexCount) {
   // all leaves it null.
   if (wires.instanceColor) wires.instanceColor.needsUpdate = true;
   const nodeMaterial = materials.steel.clone();
+  applyLookTo(nodeMaterial, state.wireLook);
   nodeMaterial.transparent = true;
   const nodes = new THREE.InstancedMesh(
     new THREE.SphereGeometry(state.nodeRadius, 12, 8), nodeMaterial, vertexCount);
@@ -5487,12 +5512,6 @@ function syncNetShadow(object) {
 // ordinary silver net; the library's polished dark steel once it
 // arrives, a plain darker silver until then.
 const PRINCIPAL_SKIN = "metal/steel-polished-dark";
-
-// What a cable is: near-black, not the net's bright silver. Param, on
-// seeing the machine's wires against his formwork: "the cables should be
-// black to match the cables used on formwork". It multiplies the polished
-// dark steel above, so the metal's own grain still reads through.
-const CABLE_BLACK = 0x24262a;
 
 // How far the plant reverses out over the strike. Param: "have the
 // mechanism go backwards from its position on each side (backwards
@@ -11460,6 +11479,8 @@ function applyWireForces() {
     wires.instanceColor.needsUpdate = true;
     if (wires.userData.baseMaterial) wires.material = wires.userData.baseMaterial;
     wires.material.color.copy(materials.steel.color);
+    // and the rope chosen over the plain steel (Param, 2026-10-12)
+    applyLookTo(wires.material, state.wireLook);
     return;
   }
   const forces = state.bundle.member_forces;
@@ -12630,6 +12651,10 @@ async function loadStudy(exportName) {
     // The bundle, the formwork and the columns are all new: so are the
     // graphs' series.
     invalidateLiveGraphs();
+    // This study's rope: its wires drawn as that rope, and its mechanisms
+    // read for it by the tab's reload below.
+    paintRopeSelects();
+    applyWireLook();
     // The scene is built: the one Cable net tab reads this study's run under
     // the options just recorded.
     if (formworkTab) formworkTab.reload();
@@ -15267,9 +15292,126 @@ function aimFormworkAt(point) {
   controls.update();
 }
 
+// ---------- the wires drawn as the rope chosen ----------
+// Param, 2026-10-12: "make the wires we render in vaulted the actual wires
+// selected for the mechanism size and colour. so we can set a default up and
+// then if i chnage the wire type then it changes the rendered wires". His
+// answers: one Default wire (Import) until a study picks its own Wire (Cable
+// net tab), the nodes following the rope, Wire size a viewing multiplier at
+// 1x, and the machines' wires lofted at the rope's size. The rope a study
+// wears also holds the mechanisms it can be run with, so the run is made
+// with the wire on screen.
+const ROPE_PREFIX = "vaulted-rope:";
+const WIRE_SCALE_KEY = "vaulted-wire-scale";
+const ropeState = { list: [], defaultKey: null, scale: 1 };
+
+function studyRopeKey() {
+  let picked = null;
+  try { picked = localStorage.getItem(ROPE_PREFIX + cablenetStudyName()); } catch (_) { /* private */ }
+  return ropeFor(ropeState.list, picked, ropeState.defaultKey);
+}
+
+function currentRope() {
+  const key = studyRopeKey();
+  return ropeState.list.find((rope) => rope.key === key) || null;
+}
+
+function paintRopeSelects() {
+  document.getElementById("rope-select").innerHTML = ropeOptionsHtml(ropeState.list, studyRopeKey());
+  document.getElementById("default-rope").innerHTML =
+    ropeOptionsHtml(ropeState.list, ropeState.defaultKey);
+  document.getElementById("wire-scale-value").textContent = String(ropeState.scale);
+}
+
+// The look on everything drawn as wire: the net on the vault, the net the
+// machine raises, and the machines' own wires. The tubes and spheres are
+// swapped in place, so every toggle, lift and lens they carry stays.
+function applyWireLook() {
+  const look = wireLook(currentRope(), ropeState.scale);
+  state.wireLook = look;
+  state.wireRadius = look.wireRadius;
+  state.nodeRadius = look.nodeRadius;
+  const nets = [[state.objects.wires, state.objects.nodes]];
+  if (formworkObjects) nets.push([formworkObjects.net, formworkObjects.nodes]);
+  for (const [wires, nodes] of nets) {
+    if (wires) {
+      wires.geometry.dispose();
+      wires.geometry = wireCylinder();
+      // a lens on wears its own unlit material and keeps the steel aside:
+      // the rope's look goes on the steel it gives back
+      applyLookTo(wires.userData.baseMaterial || wires.material, look);
+    }
+    if (nodes) {
+      nodes.geometry.dispose();
+      nodes.geometry = new THREE.SphereGeometry(state.nodeRadius, 12, 8);
+      applyLookTo(nodes.userData.baseMaterial || nodes.material, look);
+    }
+  }
+  buildMachine();
+  renderView();
+}
+
+async function loadRopes() {
+  try {
+    const response = await fetch("/api/ropes");
+    if (!response.ok) throw new Error(String(response.status));
+    const body = await response.json();
+    ropeState.list = body.ropes || [];
+    ropeState.defaultKey = body.default || null;
+  } catch (error) {
+    logStudio("the ropes were not read: " + error.message);
+    return;
+  }
+  try { ropeState.scale = clampScale(localStorage.getItem(WIRE_SCALE_KEY)); } catch (_) { /* private */ }
+  document.getElementById("wire-scale").value = String(ropeState.scale);
+  paintRopeSelects();
+  applyWireLook();
+  // the mechanisms were read before the ropes were known: read them again,
+  // held to the rope the study wears
+  if (cablenetStudyName()) mechanismPick.reload();
+}
+
+document.getElementById("default-rope").addEventListener("change", async (event) => {
+  const before = studyRopeKey();
+  const key = event.target.value;
+  const response = await fetch("/api/ropes/default", {
+    method: "PUT", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ rope: key }),
+  });
+  if (!response.ok) {
+    paintRopeSelects();
+    return;
+  }
+  ropeState.defaultKey = key;
+  paintRopeSelects();
+  if (studyRopeKey() !== before) {
+    mechanismPick.reload();
+    applyWireLook();
+  }
+});
+
+document.getElementById("rope-select").addEventListener("change", (event) => {
+  try { localStorage.setItem(ROPE_PREFIX + cablenetStudyName(), event.target.value); } catch (_) { /* private */ }
+  mechanismPick.reload();
+  applyWireLook();
+});
+
+// The figure follows the slider; the wires are redrawn when it is let go,
+// since the machines' wires are lofted again each time.
+document.getElementById("wire-scale").addEventListener("input", (event) => {
+  document.getElementById("wire-scale-value").textContent = String(clampScale(event.target.value));
+});
+document.getElementById("wire-scale").addEventListener("change", (event) => {
+  ropeState.scale = clampScale(event.target.value);
+  try { localStorage.setItem(WIRE_SCALE_KEY, String(ropeState.scale)); } catch (_) { /* private */ }
+  paintRopeSelects();
+  applyWireLook();
+});
+
 // The mechanism pop-up (spec 2026-10-11 section 8.1): its choice runs the tab.
 const mechanismPick = mountMechanism({
   studyName: cablenetStudyName,
+  rope: () => studyRopeKey(),
   onChange: (choices, byHand) => { if (formworkTab) formworkTab.mechanismChanged(choices, byHand); },
   onPopup: () => {
     // the mechanism takes the left: the data sheet shuts
@@ -16900,30 +17042,18 @@ async function buildMachine() {
   // per wire from the corrected centreline and stamped with its instance;
   // the free span from the net vertex to the first frame is redrawn every
   // frame.
-  // "the cables should be black to match the cables used on formwork."
-  // The formwork's cables read black because the principal lines wear the
-  // library's polished dark steel, so the machine's wires are given THE
-  // SAME KEY rather than a colour chosen to imitate it -- match by
-  // sharing, so a re-skin of one is a re-skin of both.
+  // THE ROPE CHOSEN (Param, 2026-10-12: "make the wires we render in
+  // vaulted the actual wires selected for the mechanism size and colour"):
+  // the machines' wires wear the rope's colour and finish, as the net does,
+  // which replaces the black of the principal lines he asked for on
+  // 2026-09-15. The principal lines' metal stays pinned, since they wear it.
   //
   // One material for every wire, not one per mesh: applyMachineAct fades
-  // the whole net out on the strike through this single opacity, and a
-  // per-mesh re-skin would break that. So the library's maps are copied
-  // ONTO it when they land instead of replacing it.
+  // the whole net out on the strike through this single opacity.
   const wireMaterial = materials.steel.clone();
-  wireMaterial.color.set(CABLE_BLACK);
+  applyLookTo(wireMaterial, state.wireLook);
   wireMaterial.transparent = true;
   libraryPins.add(PRINCIPAL_SKIN);
-  ensureLibraryMaterial(PRINCIPAL_SKIN).then((set) => {
-    if (!set || mine !== machineBuild) return;
-    wireMaterial.map = set.material.map;
-    wireMaterial.normalMap = set.material.normalMap;
-    wireMaterial.roughnessMap = set.material.roughnessMap;
-    wireMaterial.roughness = set.material.roughness;
-    wireMaterial.metalness = set.material.metalness;
-    wireMaterial.needsUpdate = true;
-    renderView();
-  });
   // "yes i offset and you use it as centerline": he offsets the routing
   // planes himself, so nothing is added here. The other two readings stay
   // reachable because the document declares which it means, and his
@@ -16934,25 +17064,13 @@ async function buildMachine() {
   const routingOffset = model.routingFrameMeaning === "centreline" ? 0
     : model.routingFrameMeaning === "contact" ? state.wireRadius
     : -state.wireRadius;
-  // HIS CABLES, AS HE MODELLED THEM (Param, 2026-09-15: "the recreation
-  // in the app is really bad ... bring my cable mesh into the vaulted
-  // app"). One mesh, authored on the mechanism he built, stamped on every
-  // instance the way Frame 1 is, in the wires' black steel. The route
-  // frames still turn the reels and hold the free span to the net; only
-  // the tube lofted from them gives way.
-  const cableParts = model.parts.filter((part) => part.kind === "cable");
-  if (cableParts.length && instances.some((instance) => instance.mirrored)) {
+  // His modelled cable mesh (2026-09-15, drawn at the radius he modelled)
+  // gives way to wires lofted along his routing frames at the rope's own
+  // radius (his answer of 2026-10-12: "Redraw at the rope's size"), so every
+  // wire on screen is the rope chosen. A mirrored instance turns a lofted
+  // tube inside out, so both faces are drawn when any is mirrored.
+  if (instances.some((instance) => instance.mirrored)) {
     wireMaterial.side = THREE.DoubleSide;
-  }
-  for (const part of cableParts) {
-    const geometry = geometryFromPart(part);
-    for (const instance of instances) {
-      const mesh = new THREE.Mesh(geometry, wireMaterial);
-      mesh.castShadow = mesh.receiveShadow = true;
-      mesh.matrixAutoUpdate = false;
-      if (instance.matrix) mesh.matrix.fromArray(instance.matrix);
-      sides[instances.indexOf(instance)].add(mesh);
-    }
   }
   const wires = [];
   for (const wire of model.wires) {
@@ -16967,7 +17085,7 @@ async function buildMachine() {
     // The wire travels with the machine that pulls it, so it retreats
     // with that side rather than being left stretched across the site.
     const side = sides[instances.indexOf(instance)] || temporary;
-    const routed = cableParts.length ? null : loftWire(
+    const routed = loftWire(
       wireCentreline(wire.route, reelAxes, routingOffset), state.wireRadius);
     let mesh = null;
     if (routed) {
@@ -18636,6 +18754,7 @@ refreshHdriList(null).catch(() => {});
 showLibraryFolder("hdri", "hdri-folder-path", "skies");
 showLibraryFolder("props", "props-folder-path", "models");
 showLibraryFolder("ground-materials", "ground-folder-path", "materials");
+loadRopes();
 boot();
 requestAnimationFrame(frame);
 

@@ -2350,28 +2350,21 @@ def test_the_machine_draws_the_way_he_asked():
     # And the permanent works do not move: they are cast in.
     assert "permanent.position" not in act
 
-    # THE CABLES ARE BLACK, and black by WEARING THE FORMWORK'S OWN
-    # METAL rather than a colour picked to imitate it: the principal
-    # lines' polished dark steel is what reads black on his formwork.
-    # Param: "the cables should be black to match the cables used on
-    # formwork".
-    assert "const CABLE_BLACK = 0x24262a;" in js
-    assert "  wireMaterial.color.set(CABLE_BLACK);" in build
-    assert "  ensureLibraryMaterial(PRINCIPAL_SKIN).then((set) => {" in build, (
-        "the same key the principal bars wear, so a re-skin of one is a "
-        "re-skin of both")
+    # THE CABLES ARE THE ROPE CHOSEN (Param, 2026-10-12, superseding the
+    # black of 2026-09-15: "make the wires we render in vaulted the actual
+    # wires selected for the mechanism size and colour"): the rope's colour
+    # and finish, as the net wears it. The principal lines' metal stays
+    # pinned, since they wear it.
+    assert "const CABLE_BLACK" not in js
+    assert "  applyLookTo(wireMaterial, state.wireLook);" in build
     assert "  libraryPins.add(PRINCIPAL_SKIN);" in build, (
-        "and it cannot be evicted from under the wires")
-    # ONE material for every wire, with the library's maps copied ONTO it:
-    # applyMachineAct fades the whole net through this single opacity, so
-    # a per-mesh re-skin would break the strike.
-    assert "    wireMaterial.map = set.material.map;" in build
-    assert "    wireMaterial.needsUpdate = true;" in build
+        "the principal bars' metal cannot be evicted while the machine builds")
 
-    # THE WIRES ARE THE CABLES: the same steel the net clones, transparent
-    # from birth, and never vertexColors.
+    # THE WIRES ARE THE CABLES: the same steel the net clones, the rope's
+    # look on it, transparent from birth (ONE material, so applyMachineAct
+    # fades the whole net through one opacity), and never vertexColors.
     assert "  const wireMaterial = materials.steel.clone();\n" \
-        "  wireMaterial.color.set(CABLE_BLACK);\n" \
+        "  applyLookTo(wireMaterial, state.wireLook);\n" \
         "  wireMaterial.transparent = true;" in build
     assert "vertexColors = true" not in build, (
         "the net needs that for setColorAt; a plain Mesh with no colour "
@@ -2623,7 +2616,8 @@ def test_the_principal_lines_dress_the_column_rows_and_the_net_stays_silver():
     js = STUDIO_JS.read_text(encoding="utf-8")
     # The net itself is back to how it was.
     net = _js_function(js, "function netInstances(edgeCount, vertexCount)")
-    assert "CylinderGeometry" in net
+    assert "wireCylinder()" in net
+    assert "CylinderGeometry" in _js_function(js, "function wireCylinder()")
     assert net.count("materials.steel.clone()") == 2
     assert "BoxGeometry" not in net
     wire_lens = _js_function(js, "function applyWireForces()")
