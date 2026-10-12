@@ -2725,7 +2725,13 @@ def create_app(runner=None, cra_runner=None, formwork_runner=None) -> FastAPI:
         # bundle.UPLOAD_DIR, not a module-level copy, so make_client's
         # monkeypatch of bundle.UPLOAD_DIR lands here too.
         directory.mkdir(parents=True, exist_ok=True)
-        bundle.write_json_atomically(directory / filename, document)
+        # Off the event loop, since a held file is waited out; held past
+        # the wait it is a 409, which the plugin retries, not a 500 it
+        # latches as sent.
+        try:
+            await run_in_threadpool(bundle.write_json_atomically, directory / filename, document)
+        except PermissionError:
+            raise HTTPException(409, "{} is held by another program; send again".format(filename))
         _invalidate_studio_cache(slug)
         # Complete when the study can be read: the old pair needs both its
         # halves, a form stands on its own, and every sidecar needs one of

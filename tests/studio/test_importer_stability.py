@@ -1572,3 +1572,60 @@ def test_caches_built_after_the_last_write_are_kept(tmp_path, monkeypatch):
     built = cache.stat().st_mtime_ns
     assert client.get("/api/studies/Tiny/bundle", params=BUNDLE_PARAMS).status_code == 200
     assert cache.is_file() and cache.stat().st_mtime_ns == built
+
+
+# ------------------------------------------- a file another program holds
+
+
+def test_a_live_push_waits_out_a_file_another_program_holds(tmp_path, monkeypatch):
+    """Measured 2026-10-12 12:19:19: with Live on, Grasshopper's Write puts
+    the form in the export folder itself AND pushes it live, so the studio
+    went to replace a file Grasshopper (or OneDrive) still held, Windows
+    said Access is denied, and the push died a 500 that Grasshopper latched
+    as sent. A hold is brief, so the studio waits it out."""
+
+    client, uploads, _ = make_client(tmp_path, monkeypatch)
+    _, bundle, _ = studio()
+    upload_pair(client)
+    real_replace = bundle.os.replace
+    refusals = []
+
+    def held_twice(src, dst):
+        if len(refusals) < 2:
+            refusals.append(dst)
+            raise PermissionError(5, "Access is denied", str(dst))
+        return real_replace(src, dst)
+
+    monkeypatch.setattr(bundle.os, "replace", held_twice)
+    changed = tiny_contract()
+    changed["equilibrium"]["vertices"][4]["z"] = 7.0
+    answer = client.put("/api/uploads/exports/Tiny/contract", content=json.dumps(changed).encode())
+    assert answer.status_code == 200, answer.text
+    assert len(refusals) == 2
+    stored = json.loads((uploads / "Tiny-contract.json").read_text(encoding="utf-8"))
+    assert stored["equilibrium"]["vertices"][4]["z"] == 7.0
+    assert not list(uploads.glob("*.tmp*")), "no temporary file may survive"
+
+
+def test_a_file_held_past_the_wait_is_a_409_grasshopper_retries(tmp_path, monkeypatch):
+    """Held for longer than the wait, the push is answered 409, which the
+    plugin's Outcome() retries at 2, 4 and 8 s, rather than a 500 it would
+    latch as sent and never send again. The old document stands whole."""
+
+    client, uploads, _ = make_client(tmp_path, monkeypatch)
+    _, bundle, _ = studio()
+    upload_pair(client)
+    monkeypatch.setattr(bundle, "HELD_FILE_WAIT", 0.05)
+
+    def always_held(src, dst):
+        raise PermissionError(5, "Access is denied", str(dst))
+
+    monkeypatch.setattr(bundle.os, "replace", always_held)
+    changed = tiny_contract()
+    changed["equilibrium"]["vertices"][4]["z"] = 7.0
+    answer = client.put("/api/uploads/exports/Tiny/contract", content=json.dumps(changed).encode())
+    assert answer.status_code == 409, answer.text
+    assert "Tiny-contract.json" in answer.json()["detail"]
+    stored = json.loads((uploads / "Tiny-contract.json").read_text(encoding="utf-8"))
+    assert stored["equilibrium"]["vertices"][4]["z"] == 1.0
+    assert not list(uploads.glob("*.tmp*")), "no temporary file may survive"

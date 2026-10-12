@@ -16,6 +16,7 @@ import json
 import math
 import os
 import threading
+import time
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -172,6 +173,13 @@ def tessellation_sidecar(export_name: str) -> Path:
 
 _temporary_serial = itertools.count()
 
+# A destination another program holds open refuses os.replace on Windows
+# with Access is denied for as long as it is held: Grasshopper's own Write
+# putting the same file in the export folder as its live push (measured
+# 2026-10-12 12:19:19), or OneDrive syncing it. A hold is a moment, so the
+# swap is tried again for this long before the refusal stands.
+HELD_FILE_WAIT = 3.0
+
 
 def write_json_atomically(path: Path, document) -> None:
     """Write a JSON document so no reader ever sees a prefix of it.
@@ -195,7 +203,15 @@ def write_json_atomically(path: Path, document) -> None:
         os.getpid(), threading.get_ident(), next(_temporary_serial)))
     try:
         temporary.write_text(json.dumps(document), encoding="utf-8")
-        os.replace(temporary, path)
+        deadline = time.monotonic() + HELD_FILE_WAIT
+        while True:
+            try:
+                os.replace(temporary, path)
+                break
+            except PermissionError:
+                if time.monotonic() >= deadline:
+                    raise
+                time.sleep(0.1)
     except BaseException:
         try:
             temporary.unlink()
