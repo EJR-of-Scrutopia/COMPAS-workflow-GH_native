@@ -160,8 +160,31 @@ def load_parts(path=None):
                 reel["price_gbp"] = price_gbp(parts, key, dict(entry, unit_price=reel["price"]))
     for entry in (parts.get("load_cell") or {}).values():
         entry["capacity_newtons"] = float(entry["capacity_kg"]) * gravity
+    for key, entry in (parts.get("rope") or {}).items():
+        _check_rope_look(key, entry)
     _check_offered(parts)
     return parts
+
+
+def _check_rope_look(key, rope):
+    """How a rope is drawn (Param, 2026-10-12: the wires on screen are the
+    rope chosen, its size and its colour): a colour as #rrggbb and a
+    metalness and roughness from 0 to 1, each rope its own so a finish can
+    be retuned in this file."""
+
+    look = rope.get("render")
+    try:
+        colour = str(look["colour"])
+        valid = (len(colour) == 7 and colour[0] == "#"
+                 and all(c in "0123456789abcdef" for c in colour[1:])
+                 and 0.0 <= float(look["metalness"]) <= 1.0
+                 and 0.0 <= float(look["roughness"]) <= 1.0)
+    except (KeyError, TypeError, ValueError):
+        valid = False
+    if not valid:
+        raise CatalogueError(
+            "rope {!r} needs a render look: a colour as #rrggbb and a metalness "
+            "and roughness from 0 to 1.".format(key))
 
 
 def _part(parts, kind, key):

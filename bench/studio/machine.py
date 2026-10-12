@@ -414,18 +414,22 @@ def preset_label(parts, configuration, newtons):
         rope.get("construction", "").strip(), float(newtons))
 
 
-def presets(parts, facts, angle_degrees, wires_per_motor=1):
+def presets(parts, facts, angle_degrees, wires_per_motor=1, rope=None):
     """The dropdown's whole spooling mechanisms (spec 2026-10-11 one Cable net
     tab, section 8.1): for each motor the catalogue builds on this machine, the
     ratio, rope and pulley that give it the most pull a spool at these wires a
     motor, strongest first; among equals the catalogue's order. Motors the
-    catalogue cannot build are left out."""
+    catalogue cannot build are left out. A rope named holds every mechanism to
+    that rope, the wire chosen in the Cable net tab (Param, 2026-10-12)."""
 
+    if rope is not None and rope not in parts["rope"]:
+        raise MachineError("rope: no rope {!r} in the catalogue".format(rope))
+    ropes = [rope] if rope is not None else list(parts["rope"])
     found = []
     for motor in offered_motors(parts):
         best = None
         for option in ratio_options(parts, motor):
-            for rope in parts["rope"]:
+            for rope in ropes:
                 for pulley in [None] + pulleys_for(parts, rope):
                     choices = {"motor": motor, "ratio": option["ratio"], "pulley": pulley,
                                "rope": rope, "wires_per_motor": int(wires_per_motor)}

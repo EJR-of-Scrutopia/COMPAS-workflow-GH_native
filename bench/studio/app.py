@@ -1208,11 +1208,12 @@ def create_app(runner=None, cra_runner=None, formwork_runner=None) -> FastAPI:
     _mechanisms_cache = {}
 
     @app.get("/api/studies/{export}/mechanisms")
-    def study_mechanisms(export: str, wires_per_motor: int = 1):
+    def study_mechanisms(export: str, wires_per_motor: int = 1, rope: Optional[str] = None):
         """The whole spooling mechanisms the Cable net tab chooses from (spec
         2026-10-11 one Cable net tab, section 8.1): one a motor the catalogue
         builds on this study's machine, at these wires a motor, strongest
-        first, each with one spool's pull and the part that sets it."""
+        first, each with one spool's pull and the part that sets it. A rope
+        named holds them to the wire chosen (Param, 2026-10-12)."""
 
         import catalogue
         import machine
@@ -1222,14 +1223,54 @@ def create_app(runner=None, cra_runner=None, formwork_runner=None) -> FastAPI:
                 400, "wires_per_motor must be a whole number of wires from 1 to {}, the "
                      "spools a machine carries, not {!r}".format(machine.SPOOLS, wires_per_motor))
         parts = catalogue.load_parts()
+        if rope is not None and rope not in parts["rope"]:
+            raise HTTPException(400, "rope: no rope {!r} in the catalogue".format(rope))
         facts = _machine_facts(export, parts)
         key = (facts["winding_radius_mm"], facts["reeve_factor"], facts["spools"],
-               wires_per_motor, MECHANISM_ANGLE_DEGREES, catalogue.PARTS_PATH.stat().st_mtime_ns)
+               wires_per_motor, rope, MECHANISM_ANGLE_DEGREES,
+               catalogue.PARTS_PATH.stat().st_mtime_ns)
         if key not in _mechanisms_cache:
             _mechanisms_cache[key] = machine.presets(parts, facts, MECHANISM_ANGLE_DEGREES,
-                                                     wires_per_motor)
+                                                     wires_per_motor, rope=rope)
         return {"mechanisms": _mechanisms_cache[key], "wires_per_motor": wires_per_motor,
-                "angle_degrees": MECHANISM_ANGLE_DEGREES}
+                "rope": rope, "angle_degrees": MECHANISM_ANGLE_DEGREES}
+
+    def _default_rope(ropes) -> str:
+        """The rope a study wears until the Cable net tab picks another: the one
+        saved, else the heaviest the catalogue holds (the one the mechanisms
+        favour when none is named)."""
+
+        saved = read_settings().get("default_rope")
+        if saved in ropes:
+            return saved
+        return max(ropes, key=lambda key: float(ropes[key]["diameter_mm"]))
+
+    @app.get("/api/ropes")
+    def ropes_list():
+        """Every rope the catalogue holds, as bought and as drawn, and the
+        default (Param, 2026-10-12: the wires on screen are the rope chosen)."""
+
+        import catalogue
+        import machine
+
+        parts = catalogue.load_parts()
+        ropes = parts["rope"]
+        rows = [{"key": key,
+                 "label": "{} {}".format(machine.part_name(parts, key), rope["material"]),
+                 "diameter_mm": rope["diameter_mm"], "material": rope["material"],
+                 "render": rope["render"]} for key, rope in ropes.items()]
+        return {"ropes": rows, "default": _default_rope(ropes)}
+
+    @app.put("/api/ropes/default")
+    def ropes_default(body: dict):
+        import catalogue
+
+        ropes = catalogue.load_parts()["rope"]
+        chosen = str((body or {}).get("rope") or "")
+        if chosen not in ropes:
+            raise HTTPException(400, "rope: no rope {!r} in the catalogue".format(chosen))
+        remember_setting("default_rope", chosen)
+        return {"default": chosen}
 
     # where Export BOM writes (spec 2026-10-11 one Cable net tab, section 8.2),
     # chosen through the folder routes further down
