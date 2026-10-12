@@ -9,6 +9,8 @@ import { mountFormwork } from "./formwork.js";
 import { mountMechanism } from "./mechanism_pick.js";
 import { createFormworkView } from "./formwork_view.js";
 import { clampScale, ropeFor, ropeOptionsHtml, wireLook } from "./wire_look_model.js";
+import { columnChoice, columnLook, columnOptionsHtml, columnTube } from "./column_look_model.js";
+import { tubeGeometry } from "./tube_geometry.js";
 import {
   upgradeSliders, paintScrub, repaintScrubs, settleRangeFills,
   buildSegmented, paintSegmented,
@@ -160,6 +162,8 @@ const state = {
   formwork: null,      // bench.frames/1 payload for this study, or null: frames, edges, columns.members (see applyFormworkAct)
   mechanism: null,     // bench.mechanism/1 payload, or null: the machine's SHAPE (see buildMachine)
   showMachine: true,   // Param's ruling: the machine rides with the formwork, with its own toggle
+  columnDocuments: [],  // the column documents drawn, kept to draw again in another tube
+  columnLook: null,  // the study's column tube as drawn (column_look_model.columnLook), null before the catalogue
   columnRadius: null,  // bench.columns/1 "radius" from the loaded study's columns file: the width the exporter swept the column solids along, and the width the act's animated members take (see columnRadius())
   propLibrary: [],     // the manifest entries that loaded, from /api/props
   propCredits: null,   // what the library as a whole is, and where it came from
@@ -5675,9 +5679,64 @@ function addColumnSolid(group, columnDocument) {
   if (Array.isArray(columnDocument.members)) {
     state.columnMembers.push(...columnDocument.members);
   }
-  const mesh = new THREE.Mesh(columnGeometryFrom(columnDocument), materials.steel);
+  state.columnDocuments.push(columnDocument);
+  group.add(columnMeshFor(columnDocument));
+}
+
+// THE COLUMN AS SPECCED (Param, 2026-10-12: "i also would like the column to
+// have a thickness and shape to have what we have specced also"): the study's
+// tube along every member, in its finish, in place of the solid the exporter
+// swept; a document with no members still draws its solid.
+function columnMeshFor(columnDocument) {
+  const members = (columnDocument.members || [])
+    .filter((member) => member && Array.isArray(member.from) && Array.isArray(member.to));
+  let mesh;
+  if (members.length) {
+    const material = materials.steel.clone();
+    applyLookTo(material, columnRender());
+    mesh = new THREE.InstancedMesh(columnTubeGeometry(), material, members.length);
+    writeInstancedSegments(mesh, members.map((_, i) => [2 * i, 2 * i + 1]),
+                           members.flatMap((member) => [member.from, member.to]));
+    mesh.instanceMatrix.needsUpdate = true;
+  } else {
+    mesh = new THREE.Mesh(columnGeometryFrom(columnDocument), materials.steel);
+  }
   mesh.castShadow = mesh.receiveShadow = true;
-  group.add(mesh);
+  return mesh;
+}
+
+// The study's tube, one unit long up y from its foot; the export's own radius,
+// solid, until the catalogue is read.
+function columnTubeGeometry() {
+  const look = state.columnLook;
+  return look ? tubeGeometry(THREE, look.outer, look.inner) : tubeGeometry(THREE, columnRadius(), 0);
+}
+
+function columnRender() {
+  return state.columnLook ? state.columnLook.render : null;
+}
+
+// The exported columns drawn again from their documents, in the tube chosen.
+function redrawColumnSolids() {
+  const group = state.objects.columns;
+  if (!group) return;
+  for (const child of [...group.children]) {
+    group.remove(child);
+    child.geometry.dispose();
+    if (child.material !== materials.steel) child.material.dispose();
+    if (child.isInstancedMesh) child.dispose();
+  }
+  for (const columnDocument of state.columnDocuments) group.add(columnMeshFor(columnDocument));
+}
+
+// The act's columns in the tube chosen: their geometry and finish alone, since
+// rebuilding the act builds the machine again.
+function restyleActColumns() {
+  const bars = formworkObjects && formworkObjects.members;
+  if (!bars) return;
+  bars.geometry.dispose();
+  bars.geometry = columnTubeGeometry();
+  applyLookTo(bars.material, columnRender());
 }
 
 async function loadColumns(names) {
@@ -5713,6 +5772,7 @@ async function reloadColumns(names) {
   const previousRadius = state.columnRadius;
   state.columnRadius = null;
   state.columnMembers = [];
+  state.columnDocuments = [];
   // ONE FORMAT (Param, 2026-09-15): the formwork document carries its own
   // column solid, served as columns.solid, and that is what Formwork and
   // Both draw. A separate columns file stands in only for a study
@@ -12477,6 +12537,9 @@ async function loadStudy(exportName) {
     // read for it by the tab's reload below.
     paintRopeSelects();
     applyWireLook();
+    // This study's column, now its columns say how wide the export swept them.
+    paintColumnSelects();
+    applyColumnLook();
     // The scene is built: the one Cable net tab reads this study's run under
     // the options just recorded.
     if (formworkTab) formworkTab.reload();
@@ -15230,6 +15293,91 @@ document.getElementById("wire-scale").addEventListener("change", (event) => {
   applyWireLook();
 });
 
+// THE COLUMN AS SPECCED, IN THE STEEL CHOSEN (Param, 2026-10-12: "i also would
+// like the column to have a thickness and shape to have what we have specced
+// also. if we can choose different steel for that would be good too"). His
+// answers: a round tube at the chosen size, its wall showing; Tube, Steel and
+// Finish chosen in the Cable net tab and kept per study in this browser,
+// starting at the tube nearest the one the export swept, in the spec's S355,
+// galvanised; the run judging the trees in it.
+const COLUMN_PREFIX = "vaulted-column:";
+const columnState = { catalogue: null };
+
+function exportColumnDiameterMm() {
+  return state.columnRadius > 0 ? state.columnRadius * 2000 : null;
+}
+
+function studyColumn() {
+  if (!columnState.catalogue) return null;
+  let stored = null;
+  try {
+    stored = JSON.parse(localStorage.getItem(COLUMN_PREFIX + cablenetStudyName()) || "null");
+  } catch (_) { stored = null; }
+  return columnChoice(stored, columnState.catalogue, exportColumnDiameterMm());
+}
+
+function columnWallMm() {
+  return Number(document.getElementById("formwork-wall").value);
+}
+
+// The tube the Cable net tab judges and runs in, or null before the catalogue.
+function currentColumnTube() {
+  const choice = studyColumn();
+  return choice ? columnTube(columnState.catalogue, choice, columnWallMm()) : null;
+}
+
+function paintColumnSelects() {
+  const choice = studyColumn();
+  if (!choice) return;
+  const catalogue = columnState.catalogue;
+  document.getElementById("column-tube").innerHTML = columnOptionsHtml(catalogue.tubes, choice.tube);
+  document.getElementById("column-grade").innerHTML = columnOptionsHtml(catalogue.grades, choice.grade);
+  const finish = document.getElementById("column-finish");
+  finish.innerHTML = columnOptionsHtml(catalogue.finishes, choice.finish);
+  // stainless wears its own finish
+  finish.disabled = !!catalogue.grades.find((grade) => grade.key === choice.grade).finish;
+}
+
+// Every column drawn in the study's tube, and the run judged again in it.
+function applyColumnLook() {
+  const choice = studyColumn();
+  state.columnLook = choice ? columnLook(columnState.catalogue, choice, columnWallMm()) : null;
+  restyleActColumns();
+  redrawColumnSolids();
+  if (formworkTab) formworkTab.columnChanged();
+  renderView();
+}
+
+async function loadColumnSteel() {
+  try {
+    const response = await fetch("/api/column-steel");
+    if (!response.ok) throw new Error(String(response.status));
+    columnState.catalogue = await response.json();
+  } catch (error) {
+    logStudio("the column steel was not read: " + error.message);
+    return;
+  }
+  paintColumnSelects();
+  applyColumnLook();
+}
+
+function keepColumn() {
+  const choice = {
+    tube: document.getElementById("column-tube").value,
+    grade: document.getElementById("column-grade").value,
+    finish: document.getElementById("column-finish").value,
+  };
+  try { localStorage.setItem(COLUMN_PREFIX + cablenetStudyName(), JSON.stringify(choice)); } catch (_) { /* private */ }
+  paintColumnSelects();
+  applyColumnLook();
+}
+
+document.getElementById("column-tube").addEventListener("change", keepColumn);
+document.getElementById("column-grade").addEventListener("change", keepColumn);
+document.getElementById("column-finish").addEventListener("change", keepColumn);
+// the wall shows at the tube's open ends
+document.getElementById("formwork-wall").addEventListener("input", applyColumnLook);
+
 // The mechanism pop-up (spec 2026-10-11 section 8.1): its choice runs the tab.
 const mechanismPick = mountMechanism({
   studyName: cablenetStudyName,
@@ -15248,6 +15396,7 @@ formworkTab = mountFormwork({
   studyOptions: cablenetStudyOptions,
   mechanism: mechanismPick,
   view: formworkView,
+  column: () => currentColumnTube(),
   hooks: {
     enter: enterFormworkTab,
     leave: leaveFormworkTab,
@@ -16176,10 +16325,10 @@ function rebuildFormworkObjects() {
     group.add(net.nodes);
   }
   if (members.length) {
-    const radius = columnRadius();
-    const cylinder = new THREE.CylinderGeometry(radius, radius, 1, 8, 1, true);
-    cylinder.translate(0, 0.5, 0);
+    // the study's tube, in its finish (Param, 2026-10-12)
+    const cylinder = columnTubeGeometry();
     const barMaterial = materials.steel.clone();
+    applyLookTo(barMaterial, columnRender());
     // Transparent so the columns can fade out with the rest of the machine
     // on the strike, the same way the finished net's material does.
     barMaterial.transparent = true;
@@ -18566,6 +18715,7 @@ showLibraryFolder("hdri", "hdri-folder-path", "skies");
 showLibraryFolder("props", "props-folder-path", "models");
 showLibraryFolder("ground-materials", "ground-folder-path", "materials");
 loadRopes();
+loadColumnSteel();
 boot();
 requestAnimationFrame(frame);
 

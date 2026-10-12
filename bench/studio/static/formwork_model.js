@@ -137,7 +137,8 @@ export function readSim(doc) {
     rim: { nodes: rim.nodes || [], names: rim.names || [], anchors: metres(decodeF32(rim.anchors)),
            into: decodeF32(rim.into), machines: rim.machines || [] },
     trees: { members: trees.members || [], heads: trees.heads || [], feet: trees.feet || [],
-             diameter: Number(trees.diameter) || 60.3, wall: trees.wall },
+             diameter: Number(trees.diameter) || 60.3, wall: trees.wall,
+             grade: trees.grade || "S355", steel: steelOf(trees) },
     captures,
     // a run made with holds, which went on 11 October 2026 (his word: "it
     // doesnt work for what i am thinking"): its rods are not shown, and it is
@@ -835,7 +836,7 @@ function treesLoad(sim) {
   const n = c.treeAxial[worst.member] || 0;
   const wall = Number(sim.trees.wall);
   const capacity = length < FOLDED_MM || !(wall > 0) ? null
-    : resistance(sim.trees.diameter, wall, length, n < 0);
+    : resistance(sim.trees.diameter, wall, length, n < 0, sim.trees.steel);
   return { ...worst, newtons: Math.abs(n), capacity, label: captureLabel(c) };
 }
 
@@ -870,45 +871,60 @@ export function answerHtml(a, { stale = false } = {}) {
   return `<table class="answer${stale ? " stale" : ""}">` + rows.join("") + "</table>";
 }
 
-// ---------- the trees judged again for a new wall ----------
+// ---------- the trees judged again for a new tube ----------
 // trees.resistance, ported (spec 2026-10-11 section 7: a new wall is judged
-// again from the run's own member forces, without a run): EN 1993-1-1 6.3.1,
-// buckling curve a, S355, the member's own length as its buckling length.
-const E_STEEL = 210000.0;
-const FY_S355 = 355.0;
-const ALPHA_CURVE_A = 0.21;
+// again from the run's own member forces, without a run; Param, 2026-10-12: so
+// is a new tube or steel): EN 1993-1-1 6.3.1 on the steel's own curve, the
+// member's own length as its buckling length. The trees' forces come from the
+// net, not from their tube, so no run is needed.
+const S355 = { fy: 355.0, e: 210000.0, alpha: 0.21, lambda0: 0.2 };
 const FOLDED_MM = 1.0e-6;
 
-function resistance(diameter, wall, length, compression) {
+// The steel a run judged its trees in; a run made before the steel was chosen
+// is the spec's S355.
+function steelOf(trees) {
+  const steel = { fy: Number(trees.fy), e: Number(trees.e), alpha: Number(trees.alpha),
+                  lambda0: Number(trees.lambda0) };
+  return Object.values(steel).every((value) => Number.isFinite(value)) ? steel : { ...S355 };
+}
+
+function resistance(diameter, wall, length, compression, steel = S355) {
   const inner = diameter - 2 * wall;
   const area = Math.PI / 4 * (diameter ** 2 - inner ** 2);
-  const plastic = area * FY_S355;
+  const plastic = area * steel.fy;
   if (!compression) return plastic;
   const inertia = Math.PI / 64 * (diameter ** 4 - inner ** 4);
-  const critical = Math.PI ** 2 * E_STEEL * inertia / length ** 2;
+  const critical = Math.PI ** 2 * steel.e * inertia / length ** 2;
   const slenderness = Math.sqrt(plastic / critical);
-  const phi = 0.5 * (1 + ALPHA_CURVE_A * (slenderness - 0.2) + slenderness ** 2);
+  const phi = 0.5 * (1 + steel.alpha * (slenderness - steel.lambda0) + slenderness ** 2);
   return Math.min(1, 1 / (phi + Math.sqrt(phi ** 2 - slenderness ** 2))) * plastic;
 }
 
-// The run with its trees judged in a tube of this wall: each capture's
-// utilisation from its members' forces and lengths, and the scale with them.
-// The run read is left as it is.
-export function withWall(sim, wall) {
+// The run with its trees judged in this tube: { diameter, wall, mm, grade,
+// steel }, each left out kept as the run's. Each capture's utilisation from
+// its members' forces and lengths, and the scale with them. The run read is
+// left as it is.
+export function withTube(sim, tube) {
   if (!sim) return sim;
-  const diameter = sim.trees.diameter;
+  const trees = { ...sim.trees, ...tube };
   const captures = sim.captures.map((c) => {
     const utilisation = new Float32Array(sim.trees.members.length);
     sim.trees.members.forEach(([p, q], k) => {
       const length = Math.hypot(c.treeX[3 * q] - c.treeX[3 * p], c.treeX[3 * q + 1] - c.treeX[3 * p + 1],
                                 c.treeX[3 * q + 2] - c.treeX[3 * p + 2]) * 1000;
       const n = c.treeAxial[k] || 0;
-      utilisation[k] = length < FOLDED_MM ? 0 : Math.abs(n) / resistance(diameter, wall, length, n < 0);
+      utilisation[k] = length < FOLDED_MM ? 0
+        : Math.abs(n) / resistance(trees.diameter, trees.wall, length, n < 0, trees.steel);
     });
     return { ...c, treeUtilisation: utilisation };
   });
   const scale = Math.max(0, ...captures.map((c) => largestOf(c.treeUtilisation)));
-  return { ...sim, captures, trees: { ...sim.trees, wall }, scales: { ...sim.scales, utilisation: scale } };
+  return { ...sim, captures, trees, scales: { ...sim.scales, utilisation: scale } };
+}
+
+// The run with its trees judged in a tube of this wall, its own diameter and steel.
+export function withWall(sim, wall) {
+  return withTube(sim, { wall });
 }
 
 // ---------- what a recorded frame carries ----------

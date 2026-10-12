@@ -1313,7 +1313,9 @@ def create_app(runner=None, cra_runner=None, formwork_runner=None) -> FastAPI:
         return {
             "tubes": [{"key": key, "label": "CHS {:g}".format(tube["diameter_mm"]),
                        "diameter_mm": tube["diameter_mm"]} for key, tube in tubes],
-            "grades": [{"key": key, "label": steel["label"], "finish": steel.get("finish")}
+            "grades": [{"key": key, "label": steel["label"], "finish": steel.get("finish"),
+                        **{name: float(steel[name])
+                           for name in ("fy_mpa", "e_mpa", "alpha", "lambda0")}}
                        for key, steel in parts["column_steel"].items()],
             "finishes": [{"key": key, "label": finish["label"], "render": finish["render"]}
                          for key, finish in parts["column_finish"].items()],

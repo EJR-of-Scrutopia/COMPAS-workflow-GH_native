@@ -54,7 +54,9 @@ def test_the_run_sends_the_mechanism_the_wall_and_the_pull_and_never_a_prestress
     assert body.startswith("function startRun() {")
     assert "const choices = mechanism.chosen();" in body
     assert 'if (!choices) { el.runStatus.textContent = "Choose a mechanism"; return; }' in body
+    # and the column's tube and steel (Param, 2026-10-12)
     assert ("const body = { ...sentOptions(options), mechanism: choices, wall: Number(el.wall.value),\n"
+            "                     ...(tube ? { tube: tube.key, grade: tube.grade } : {}),\n"
             "                     pull_in: Number(el.pull.value) };") in body
     assert "/formwork/run" in body and "prestress" not in body and "tolerance" not in body
     assert "holds" not in body and "resume" not in body
@@ -257,9 +259,10 @@ def test_the_player_draws_blended_values_the_weakest_and_its_key():
 
 
 def test_a_new_wall_is_judged_without_a_run():
+    # and a new tube or steel (Param, 2026-10-12), all in one withTube
     judge = _inner(JS, "judge")
-    assert ("tab.judged = tab.sim && tab.sim.trees.wall !== wall ? withWall(tab.sim, wall) : tab.sim;"
-            in judge)
+    assert "tab.judged = same ? tab.sim : withTube(tab.sim, tube);" in judge
+    assert "const tube = { wall: Number(el.wall.value) };" in judge
 
 
 def test_compare_and_weakest_are_buttons_that_stay_lit():
@@ -384,11 +387,14 @@ def test_the_wall_judges_the_trees_drawn_and_the_graphs_again():
     # kept the run's own wall while the answer, labels and key moved on
     wall = JS[JS.index('el.wall.addEventListener("input"'):]
     wall = wall[:wall.index("});")]
-    assert wall.index("judge();") < wall.index("view.rejudge(tab.judged);")
-    assert "renderGraphs();" in wall
+    assert "columnChanged();" in wall
+    # a new wall, tube or steel: judged, the tubes drawn again, the graphs too
+    changed = _inner(JS, "columnChanged")
+    assert changed.index("judge();") < changed.index("view.rejudge(tab.judged);")
+    assert "renderGraphs();" in changed
     assert "view.build(tab.judged);" in _inner(JS, "load")
     view = (STATIC / "formwork_view.js").read_text(encoding="utf-8")
-    assert "return { group, build, rejudge, show," in view
+    assert "return { group, build, rejudge, setMarks, show," in view
 
 
 def test_the_colour_by_titles_say_what_is_coloured():

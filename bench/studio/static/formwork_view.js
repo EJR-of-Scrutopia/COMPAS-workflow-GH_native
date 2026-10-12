@@ -5,6 +5,7 @@
 // the tests as it does in the page.
 
 import { bandColour, colourOf, memberColour, placedFaces, targetPoint } from "./formwork_model.js";
+import { tubeGeometry } from "./tube_geometry.js";
 
 const WIRE_STUB_M = 0.3;        // each rim wire drawn 300 mm along the way it runs in
 const MARK_M = 0.05;            // an anchor's mark, and twice a ground contact's
@@ -38,6 +39,9 @@ export function createFormworkView(THREE) {
   let parts = null;
   let at = null;            // the blended node positions on screen, metres
   let treeAt = null;        // the blended tree nodes, metres
+  // the marks' size (Param, 2026-10-12, on the 3 m prototype: "the coloured
+  // dots and the columns are way too big. maybe there can be a scale slider")
+  let markScale = 1;
   let skinFor = -1;         // the capture whose placed faces the skin carries
   let edgeIndex = null;     // each member by its two nodes, made when first asked
   const matrix = new THREE.Matrix4();
@@ -99,11 +103,50 @@ export function createFormworkView(THREE) {
     return object;
   }
 
-  // The same run judged again for a new wall, which changes only the trees'
-  // utilisation: drawn from it without building anything again (found by the
-  // final review of 11 October 2026: the tubes kept the run's own wall).
+  // The trees as their tube: round, the run's diameter, the wall showing at
+  // the open ends; centred on the unit the members are stretched along.
+  function treeGeometry(trees) {
+    const wall = Number(trees.wall) > 0 ? Number(trees.wall) : 0;
+    const geometry = tubeGeometry(THREE, trees.diameter / 2000,
+                                  (trees.diameter - 2 * wall) / 2000);
+    geometry.translate(0, -0.5, 0);
+    return geometry;
+  }
+
+  // Every mark at the Marks size.
+  function markGeometry(kind) {
+    const k = markScale;
+    if (kind === "heads") return new THREE.SphereGeometry(HEAD_M * k, 12, 8);
+    if (kind === "anchors") return new THREE.BoxGeometry(2 * MARK_M * k, 2 * MARK_M * k, 2 * MARK_M * k);
+    if (kind === "ground") return new THREE.SphereGeometry(MARK_M / 2 * k, 8, 6);
+    if (kind === "rings") return new THREE.TorusGeometry(RING_M * k, RING_TUBE_M * k, 8, 24);
+    return new THREE.CylinderGeometry(REEL_M * k, REEL_M * k, REEL_WIDTH_M * k, 16);
+  }
+
+  function swapGeometry(mesh, geometry) {
+    mesh.geometry.dispose();
+    mesh.geometry = geometry;
+  }
+
+  // The same run judged again for a new tube, which changes the trees'
+  // utilisation and, for a new diameter or wall, their drawing: the tubes are
+  // drawn again and nothing else is built (found by the final review of 11
+  // October 2026: the tubes kept the run's own wall).
   function rejudge(next) {
-    if (sim && next) sim = next;
+    if (!sim || !next) return;
+    if (parts && (next.trees.diameter !== sim.trees.diameter || next.trees.wall !== sim.trees.wall)) {
+      swapGeometry(parts.trees, treeGeometry(next.trees));
+    }
+    sim = next;
+  }
+
+  // The marks at this size, 1 their own; kept for every run built after.
+  function setMarks(scale) {
+    markScale = Number(scale) > 0 ? Number(scale) : 1;
+    if (!parts) return;
+    for (const kind of ["heads", "anchors", "ground", "rings", "reels"]) {
+      swapGeometry(parts[kind], markGeometry(kind));
+    }
   }
 
   // Everything the document draws, once; the design and the anchors stand
@@ -114,28 +157,27 @@ export function createFormworkView(THREE) {
     if (!sim) return;
     const rim = sim.rim.nodes.length;
     const heads = sim.trees.heads.length;
-    const radius = sim.trees.diameter / 2000;
     parts = {
       net: lines(sim.edges.length, new THREE.LineBasicMaterial({ vertexColors: true }), true),
       design: lines(sim.edges.length, new THREE.LineBasicMaterial({
         color: DESIGN_COLOUR, transparent: true, opacity: 0.45 }), false),
       wires: lines(rim, new THREE.LineBasicMaterial({ vertexColors: true }), true),
-      trees: marks(new THREE.CylinderGeometry(radius, radius, 1, 12), sim.trees.members.length,
+      trees: marks(treeGeometry(sim.trees), sim.trees.members.length,
                    new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.6, metalness: 0.3 })),
-      heads: marks(new THREE.SphereGeometry(HEAD_M, 12, 8), heads,
+      heads: marks(markGeometry("heads"), heads,
                    new THREE.MeshBasicMaterial({ color: 0xffffff })),
-      anchors: marks(new THREE.BoxGeometry(2 * MARK_M, 2 * MARK_M, 2 * MARK_M), rim,
+      anchors: marks(markGeometry("anchors"), rim,
                      new THREE.MeshBasicMaterial({ color: 0xffffff })),
-      ground: marks(new THREE.SphereGeometry(MARK_M / 2, 8, 6), sim.nodes,
+      ground: marks(markGeometry("ground"), sim.nodes,
                     new THREE.MeshBasicMaterial({ color: 0xc99a2e })),
       skin: skin(),
-      rings: marks(new THREE.TorusGeometry(RING_M, RING_TUBE_M, 8, 24),
+      rings: marks(markGeometry("rings"),
                    sim.nodes + sim.edges.length + rim + sim.trees.members.length,
                    new THREE.MeshBasicMaterial({ color: 0xffffff })),
       designFaces: designFaces(),
       offsets: lines(sim.nodes, new THREE.LineBasicMaterial({ vertexColors: true }), true),
       tendons: lines(tendonSegments(), new THREE.LineBasicMaterial({ vertexColors: true }), true),
-      reels: marks(new THREE.CylinderGeometry(REEL_M, REEL_M, REEL_WIDTH_M, 16),
+      reels: marks(markGeometry("reels"),
                    sim.tendons ? sim.tendons.lines.length : 0,
                    new THREE.MeshBasicMaterial({ color: 0xffffff })),
     };
@@ -281,7 +323,7 @@ export function createFormworkView(THREE) {
       const head = proud(path[0]);
       const next = path.length > 1 ? proud(path[1]) : head;
       const along = Math.hypot(next[0] - head[0], next[1] - head[1], next[2] - head[2]) || 1;
-      matrix.makeTranslation(...head.map((value, k) => value + (next[k] - value) / along * REEL_ALONG_M));
+      matrix.makeTranslation(...head.map((value, k) => value + (next[k] - value) / along * REEL_ALONG_M * markScale));
       parts.reels.setMatrixAt(t, matrix);
       parts.reels.setColorAt(t, tone(first || TENDON_PLAIN));
     });
@@ -451,5 +493,6 @@ export function createFormworkView(THREE) {
     edgeIndex = null;
   }
 
-  return { group, build, rejudge, show, point, project, nearestNode, clear, parts: () => parts };
+  return { group, build, rejudge, setMarks, show, point, project, nearestNode, clear,
+           parts: () => parts };
 }

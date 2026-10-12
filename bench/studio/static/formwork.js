@@ -9,7 +9,7 @@
 import {
   answer, answerHtml, captureLabel, captureTimes, colourKey, formworkPickHtml, modelLabels,
   formworkWarnings, frameLine, frameLineHtml, labelsShown, liveAnswer, nextScene, paintOverlay,
-  playhead, readSim, recordingCaption, weakestAt, withWall,
+  playhead, readSim, recordingCaption, weakestAt, withTube,
 } from "./formwork_model.js";
 import { spreadLabels } from "./labels.js";
 import { costHtml, graphsHtml } from "./run_popup_model.js";
@@ -31,6 +31,18 @@ const ESCAPES = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&
 
 function esc(value) {
   return String(value).replace(/[&<>"']/g, (c) => ESCAPES[c]);
+}
+
+// Each study's Marks size (Param, 2026-10-12, on the 3 m prototype: "the
+// coloured dots and the columns are way too big. maybe there can be a scale
+// slider"), kept in this browser.
+const MARKS_PREFIX = "vaulted-marks:";
+
+function marksFor(name) {
+  let stored = null;
+  try { stored = localStorage.getItem(MARKS_PREFIX + name); } catch (_) { /* private */ }
+  const value = Number(stored);
+  return stored !== null && value > 0 ? value : 1;
 }
 
 function byId(id) {
@@ -67,8 +79,9 @@ function simUrl(studyName, options) {
 // mechanism: the pop-up's controller (mechanism_pick.js). hooks: enter() and
 // leave() (the studio's timeline and objects), legend(key) (null hides it),
 // aim(point), camera(), canvasRect(), viewRight(), record() (the studio's
-// recorder: start, or stop).
-export function mountFormwork({ studyName, studyOptions, mechanism, view, hooks }) {
+// recorder: start, or stop). column(): the study's tube, wall and steel
+// (column_look_model.columnTube), or null before the catalogue is read.
+export function mountFormwork({ studyName, studyOptions, mechanism, view, hooks, column = () => null }) {
   const el = {
     run: byId("formwork-run"), runStatus: byId("formwork-run-status"),
     answer: byId("formwork-answer"), mechanismToggle: byId("mechanism-toggle"),
@@ -77,6 +90,7 @@ export function mountFormwork({ studyName, studyOptions, mechanism, view, hooks 
     wires: byId("formwork-wires"), wiresValue: byId("formwork-wires-value"),
     pull: byId("formwork-pull"), pullValue: byId("formwork-pull-value"),
     wall: byId("formwork-wall"), wallValue: byId("formwork-wall-value"),
+    marks: byId("formwork-marks"), marksValue: byId("formwork-marks-value"),
     skin: byId("formwork-skin"), skinValue: byId("formwork-skin-value"),
     scrub: byId("formwork-scrub"), scrubValue: byId("formwork-scrub-value"),
     speed: byId("formwork-speed"), speedValue: byId("formwork-speed-value"),
@@ -238,11 +252,35 @@ export function mountFormwork({ studyName, studyOptions, mechanism, view, hooks 
   }
 
 
-  // The run with its trees judged in the Wall dial's tube (spec section 7: a
-  // new wall is judged again from the run's own forces, without a run).
+  // The run with its trees judged in the tube chosen: the study's Tube and
+  // Steel and the Wall dial (spec section 7: a new wall is judged again from
+  // the run's own forces, without a run; Param, 2026-10-12: so is a new tube
+  // or steel, the trees' forces coming from the net, not their tube).
   function judge() {
-    const wall = Number(el.wall.value);
-    tab.judged = tab.sim && tab.sim.trees.wall !== wall ? withWall(tab.sim, wall) : tab.sim;
+    const chosen = column();
+    const tube = { wall: Number(el.wall.value) };
+    if (chosen) Object.assign(tube, { diameter: chosen.diameter, grade: chosen.grade, steel: chosen.steel });
+    const trees = tab.sim && tab.sim.trees;
+    const same = !trees || (trees.wall === tube.wall
+      && (!chosen || (trees.diameter === tube.diameter && trees.grade === tube.grade)));
+    tab.judged = same ? tab.sim : withTube(tab.sim, tube);
+  }
+
+  // A new tube, steel or wall: the trees judged and drawn again, no run.
+  function columnChanged() {
+    judge();
+    view.rejudge(tab.judged);
+    renderAnswer();
+    renderGraphs();
+    draw(true);
+  }
+
+  // The study's own Marks size, on the slider and on the drawing.
+  function showMarks() {
+    const value = marksFor(studyName());
+    el.marks.value = String(value);
+    el.marksValue.textContent = String(value);
+    view.setMarks(value);
   }
 
   el.play.addEventListener("click", () => {
@@ -263,10 +301,13 @@ export function mountFormwork({ studyName, studyOptions, mechanism, view, hooks 
   });
   el.wall.addEventListener("input", () => {
     el.wallValue.textContent = Number(el.wall.value).toFixed(1);
-    judge();
-    view.rejudge(tab.judged);
-    renderAnswer();
-    renderGraphs();
+    columnChanged();
+  });
+  el.marks.addEventListener("input", () => {
+    const value = Number(el.marks.value);
+    el.marksValue.textContent = String(value);
+    try { localStorage.setItem(MARKS_PREFIX + studyName(), String(value)); } catch (_) { /* private */ }
+    view.setMarks(value);
     draw(true);
   });
   el.tolerance.addEventListener("input", () => {
@@ -427,6 +468,7 @@ export function mountFormwork({ studyName, studyOptions, mechanism, view, hooks 
     el.scrub.value = "1";
     el.scrubValue.textContent = "1";
     el.scrubValue.nextElementSibling.textContent = `of ${Math.max(1, tab.times.length)}`;
+    showMarks();
     view.build(tab.judged);
     if (!sim) {
       el.label.textContent = "";
@@ -591,7 +633,9 @@ export function mountFormwork({ studyName, studyOptions, mechanism, view, hooks 
     el.run.disabled = true;
     el.runStatus.textContent = "starting";
     try {
+      const tube = column();
       const body = { ...sentOptions(options), mechanism: choices, wall: Number(el.wall.value),
+                     ...(tube ? { tube: tube.key, grade: tube.grade } : {}),
                      pull_in: Number(el.pull.value) };
       const response = await fetch(`/api/studies/${encodeURIComponent(studyName())}/formwork/run`,
         { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
@@ -738,5 +782,6 @@ export function mountFormwork({ studyName, studyOptions, mechanism, view, hooks 
   }
 
   return { active: () => tab.active, setActive, tick, place, pick, clear, reload, refresh,
-           closePopup: () => mechanism.closePopup(), recording, mechanismChanged };
+           closePopup: () => mechanism.closePopup(), recording, mechanismChanged,
+           columnChanged: () => { if (tab.sim) columnChanged(); } };
 }

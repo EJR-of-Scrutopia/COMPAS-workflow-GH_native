@@ -74,6 +74,9 @@ def test_the_route_lists_the_tubes_grades_and_finishes_and_the_spec(tmp_path, mo
     grades = {row["key"]: row for row in body["grades"]}
     assert grades["S355"]["label"] == "S355" and grades["S355"]["finish"] is None
     assert grades["1.4401"]["label"] == "316 stainless" and grades["1.4401"]["finish"] == "stainless"
+    # what the page judges the trees in, without a run
+    assert {key: grades["1.4401"][key] for key in ("fy_mpa", "e_mpa", "alpha", "lambda0")} == {
+        "fy_mpa": 220.0, "e_mpa": 200000.0, "alpha": 0.49, "lambda0": 0.3}
     finishes = {row["key"]: row for row in body["finishes"]}
     assert finishes["galvanised"]["render"] == catalogue.load_parts()[
         "column_finish"]["galvanised"]["render"]
