@@ -1117,6 +1117,8 @@ public sealed class ExportComponent : NativeComponentBase
         data.GetData(7, ref writeInput);
         data.GetData(8, ref mechanismInput);
         data.GetData(9, ref machineFolderInput);
+        string? emptyMechanism = EmptyMechanismWarning(
+            Params.Input[8].SourceCount > 0, mechanismInput);
 
         errors = new List<string>(resultValue.Validate());
         // THE COURSES ARE THE BRANCH PATHS AND NOTHING ELSE. The Courses
@@ -1131,6 +1133,8 @@ public sealed class ExportComponent : NativeComponentBase
         string? cellWarning = null;
         var notes = new List<string>();
         var remarks = new List<string>();
+        if (emptyMechanism is not null)
+            notes.Add(emptyMechanism);
         if (writeInput && string.IsNullOrWhiteSpace(pathInput))
         {
             // A missing disk target is not a reason to lose the solve.
@@ -1300,6 +1304,28 @@ public sealed class ExportComponent : NativeComponentBase
     /// index may itself be negative, so this guards the bound the studio's
     /// import actually enforces.
     /// </summary>
+    /// <summary>
+    /// AN EMPTY MECHANISM IS SAID (Param, 2026-10-12: "it doesnt update the
+    /// mechanism, the anchors, the skin etc. it keeps holding onto an old
+    /// version"). Mechanism (ME) wired but carrying nothing this solve -- the
+    /// component feeding it did not solve, which a required input that
+    /// collected no data is enough for, or had nothing to build -- used to
+    /// leave the mechanism document out in silence: the study went out
+    /// without it, Write left the file before it on disk, and the studio
+    /// went on drawing the anchors and the tie of that one. Unwired is a
+    /// study with no mechanism and says nothing.
+    /// </summary>
+    private static string? EmptyMechanismWarning(bool wired, string? mechanism)
+    {
+        if (!wired || !string.IsNullOrWhiteSpace(mechanism))
+            return null;
+        return "Mechanism (ME) is wired but empty, so no mechanism document " +
+               "is written or sent and the studio keeps the one before: the " +
+               "component feeding it did not build one this solve. Look at its " +
+               "own balloons (Placed Mechanism: an input that collected no " +
+               "data stops it solving).";
+    }
+
     private static bool HasNegativeCourse(
         IReadOnlyList<int> courses,
         out string detail)

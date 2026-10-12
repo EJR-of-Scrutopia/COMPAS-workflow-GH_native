@@ -755,6 +755,21 @@ internal static partial class Program
 
         try
         {
+            ValidateExportEmptyMechanismWarning(plugin);
+            Console.WriteLine(
+                "PASS  ExportComponent.EmptyMechanismWarning: a Mechanism " +
+                "(ME) wired but empty is said by name; a filled or an " +
+                "unwired one says nothing.");
+        }
+        catch (Exception exception)
+        {
+            failures.Add(
+                $"ExportComponent.EmptyMechanismWarning: " +
+                $"{DescribeException(exception)}");
+        }
+
+        try
+        {
             ValidateExportCoursesValidation(plugin);
             Console.WriteLine(
                 "PASS  ExportComponent.HasNegativeCourse: flags every " +
@@ -40273,6 +40288,42 @@ internal static partial class Program
     /// wiring around it (AddRuntimeMessage, "no file written") is not
     /// exercised here.
     /// </summary>
+    // Param, 2026-10-12: "it doesnt update the mechanism, the anchors, the
+    // skin etc. it keeps holding onto an old version". An empty Mechanism
+    // (ME) used to drop the mechanism document in silence: wired to a
+    // Placed Mechanism that did not solve, the study went out without it
+    // and the studio kept drawing the one before.
+    private static void ValidateExportEmptyMechanismWarning(Assembly plugin)
+    {
+        Type exportType = RequireComponentType(plugin, "ExportComponent");
+        MethodInfo method = exportType.GetMethod(
+            "EmptyMechanismWarning",
+            BindingFlags.NonPublic | BindingFlags.Static)
+            ?? throw new InvalidOperationException(
+                "ExportComponent.EmptyMechanismWarning was not found.");
+
+        var empty = (string?)method.Invoke(null, new object?[] { true, "  " });
+        if (empty is null ||
+            !empty.Contains("Mechanism (ME)", StringComparison.Ordinal) ||
+            !empty.Contains("no mechanism document", StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "A wired but empty Mechanism (ME) was not said by name; " +
+                $"received '{empty}'.");
+        }
+        if (method.Invoke(null, new object?[] { true, "{\"schema\":\"bench.mechanism/1\"}" }) is not null)
+        {
+            throw new InvalidOperationException(
+                "A Mechanism (ME) carrying a document was warned about.");
+        }
+        if (method.Invoke(null, new object?[] { false, string.Empty }) is not null)
+        {
+            throw new InvalidOperationException(
+                "An unwired Mechanism (ME), a study with no mechanism, was " +
+                "warned about.");
+        }
+    }
+
     private static void ValidateExportCoursesValidation(Assembly plugin)
     {
         Type exportType = RequireComponentType(plugin, "ExportComponent");
