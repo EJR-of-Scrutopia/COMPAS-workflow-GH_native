@@ -45,6 +45,18 @@ from tree_forest_compas import trees as tr
 SCHEMA = "bench.formwork-sim/1"
 
 
+def tube_of(request):
+    """The tree tube a run judges its trees in (Param, 2026-10-12: the column's
+    tube and steel are chosen): the request's own, else the 60.3 S355 tube the
+    trees were always judged in."""
+
+    tube = request.get("tube") or {"diameter": tr.DIAMETER, "grade": "S355", "fy": tr.S355.fy,
+                                   "e": tr.S355.e, "alpha": tr.S355.alpha,
+                                   "lambda0": tr.S355.lambda0}
+    return {"diameter": float(tube["diameter"]), "grade": str(tube["grade"]),
+            **{key: float(tube[key]) for key in ("fy", "e", "alpha", "lambda0")}}
+
+
 def pack(values):
     """An array as the document carries it: its shape, and its values as base64
     of little-endian float32."""
@@ -96,7 +108,9 @@ def model_from(request):
         holds_per_side=int(request.get("holds_per_side") or 0),
         tendons=tuple(tuple(int(node) for node in line["path"])
                       for line in request.get("tendons") or ()),
-        tendon_pull=float(request.get("tendon_pull") or 0.0))
+        tendon_pull=float(request.get("tendon_pull") or 0.0),
+        diameter=tube_of(request)["diameter"], steel=tr.Steel(
+            *(tube_of(request)[key] for key in ("fy", "e", "alpha", "lambda0"))))
 
 
 # What a state does not depend on: the rods, where the state goes, and words.
@@ -319,7 +333,7 @@ def solve(request, progress=None, figures=None):
         "trees": {
             "members": model.tree_members.tolist(), "feet": model.tree_feet,
             "heads": [[net, tree] for net, tree in model.heads],
-            "diameter": tr.DIAMETER, "wall": result.wall,
+            **tube_of(request), "wall": result.wall,
             "thinnest_wall": result.thinnest_wall,
         },
         "captures": [_capture_entry(capture, next(tiled) if capture.phase == "tiling" else None)

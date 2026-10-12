@@ -150,8 +150,12 @@ RUNS_LOCK = threading.Lock()
 # 3.2 mm wall is where the owner chose to start, a run deciding whether it can
 # be thinner or must be thicker (his ruling of 9 October 2026).
 FORMWORK_DEFAULTS = {"prestress": None, "rope": "rope-4mm", "wires_per_motor": 1,
-                     "wall": 3.2}
-FORMWORK_TUBE_MM = 60.3     # the trees' tube, the engine's trees.DIAMETER
+                     "wall": 3.2, "tube": "CHS-60.3", "grade": "S355"}
+# The column as specced (spec 2026-10-09: CHS 60.3, S355, a 3.2 mm wall), the
+# tube a run judges the trees in when it names none, and galvanised to look at
+# (Param, 2026-10-12: the tube, the grade and the finish are chosen).
+COLUMN_SPEC = {"tube": FORMWORK_DEFAULTS["tube"], "grade": FORMWORK_DEFAULTS["grade"],
+               "finish": "galvanised", "wall": FORMWORK_DEFAULTS["wall"]}
 PULL_IN_MAX = 30000.0   # N a tendon, the most the Pull in dial asks for (spec 2026-10-11
                         # across tendons, section 9: every pull to 30,000 N ran on the
                         # real study)
@@ -1295,6 +1299,27 @@ def create_app(runner=None, cra_runner=None, formwork_runner=None) -> FastAPI:
                  "render": rope["render"]} for key, rope in ropes.items()]
         return {"ropes": rows, "default": _default_rope(ropes)}
 
+    @app.get("/api/column-steel")
+    def column_steel():
+        """The column trees' tubes, steels and finishes, and the spec a study
+        starts from (Param, 2026-10-12: "i also would like the column to have
+        a thickness and shape to have what we have specced also. if we can
+        choose different steel for that would be good too")."""
+
+        import catalogue
+
+        parts = catalogue.load_parts()
+        tubes = sorted(parts["column_tube"].items(), key=lambda item: item[1]["diameter_mm"])
+        return {
+            "tubes": [{"key": key, "label": "CHS {:g}".format(tube["diameter_mm"]),
+                       "diameter_mm": tube["diameter_mm"]} for key, tube in tubes],
+            "grades": [{"key": key, "label": steel["label"], "finish": steel.get("finish")}
+                       for key, steel in parts["column_steel"].items()],
+            "finishes": [{"key": key, "label": finish["label"], "render": finish["render"]}
+                         for key, finish in parts["column_finish"].items()],
+            "spec": dict(COLUMN_SPEC),
+        }
+
     @app.put("/api/ropes/default")
     def ropes_default(body: dict):
         import catalogue
@@ -1456,10 +1481,22 @@ def create_app(runner=None, cra_runner=None, formwork_runner=None) -> FastAPI:
             raise HTTPException(400, "a number was unreadable: {}".format(error))
         if prestress is not None and not (math.isfinite(prestress) and prestress > 0.0):
             raise HTTPException(400, "prestress must be greater than zero newtons")
-        if not (math.isfinite(wall) and 0.0 < wall < FORMWORK_TUBE_MM / 2.0):
+        parts = catalogue.load_parts()
+        tube_key = str(body.get("tube") or FORMWORK_DEFAULTS["tube"])
+        grade = str(body.get("grade") or FORMWORK_DEFAULTS["grade"])
+        if tube_key not in parts["column_tube"]:
+            raise HTTPException(400, "tube: no tube {!r} in the catalogue".format(tube_key))
+        if grade not in parts["column_steel"]:
+            raise HTTPException(400, "grade: no steel {!r} in the catalogue".format(grade))
+        diameter = float(parts["column_tube"][tube_key]["diameter_mm"])
+        steel = parts["column_steel"][grade]
+        tube = {"diameter": diameter, "grade": grade, "fy": float(steel["fy_mpa"]),
+                "e": float(steel["e_mpa"]), "alpha": float(steel["alpha"]),
+                "lambda0": float(steel["lambda0"])}
+        if not (math.isfinite(wall) and 0.0 < wall < diameter / 2.0):
             raise HTTPException(
                 400, "wall must be the tube's wall in millimetres, more than 0 and less "
-                     "than {:g}, not {!r}".format(FORMWORK_TUBE_MM / 2.0, body.get("wall")))
+                     "than {:g}, not {!r}".format(diameter / 2.0, body.get("wall")))
         wires_per_motor = body.get("wires_per_motor", FORMWORK_DEFAULTS["wires_per_motor"])
         # a JSON true is not one wire, though int() would take it
         if (isinstance(wires_per_motor, bool) or not isinstance(wires_per_motor, int)
@@ -1493,7 +1530,6 @@ def create_app(runner=None, cra_runner=None, formwork_runner=None) -> FastAPI:
                 ", ".join(bundle.CUT_SOURCES)))
         if export not in geometry.available_exports(bundle.UPLOAD_DIR):
             raise HTTPException(404, "There is no export named {!r}.".format(export))
-        parts = catalogue.load_parts()
         # The mechanism (spec 2026-10-11 one Cable net tab, section 4.2): the net
         # is cut for one spool's pull of it, and its rope, wires a motor and
         # pulleys are the run's. The tab sends it and never a prestress; a body
@@ -1598,13 +1634,13 @@ def create_app(runner=None, cra_runner=None, formwork_runner=None) -> FastAPI:
                     ea=float(rope["ea_newtons"]),
                     mass_per_metre=float(rope["mass_per_metre_kg"]),
                     prestress=prestress, wires_per_motor=wires_per_motor, wall=wall,
-                    study=export,
+                    tube=tube, study=export,
                     options={"material": material, "pattern": pattern, "size": size,
                              "thickness": thickness, "density": density, "source": source,
                              "rope": rope_key, "prestress": prestress,
                              "prestress_from": prestress_from,
                              "wires_per_motor": wires_per_motor, "wall": wall,
-                             "pulleys": pulleys, "pull_in": pull_in, **mechanism_options},
+                             "tube": tube_key, "grade": grade, "pulleys": pulleys, "pull_in": pull_in, **mechanism_options},
                     runner=formwork_runner, progress=progress, annotate=annotate,
                     pull_in=pull_in)
                 run["state"] = "done"

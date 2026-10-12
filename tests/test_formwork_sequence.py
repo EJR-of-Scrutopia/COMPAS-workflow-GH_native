@@ -459,3 +459,21 @@ def test_each_capture_sends_its_figures_and_a_shared_first_pass_none():
     frames = len(_toy().frames)
     assert shared == [frames + k for k in range(1, len(two.captures) + 1)]
     assert told[-1] == (shared[-1], shared[-1])
+
+
+def test_the_trees_are_judged_in_the_models_own_tube_and_steel():
+    # Param, 2026-10-12: the column is the tube and the steel chosen, so the
+    # run judges its trees in that tube, not always in a 60.3 S355 one
+    steel = fs.tr.Steel(220.0, 200000.0, 0.49, 0.3)
+    model = _toy()._replace(diameter=26.9, steel=steel)
+    result = fs.simulate(model)
+    section = fs.tr.tube(26.9, 3.2)
+    for capture in result.captures:
+        assert capture.tree_utilisation == pytest.approx(fs.tr.utilisation(
+            capture.tree_x, model.tree_members, capture.tree_axial, section, steel))
+    loaded = [c for c in result.captures if abs(c.tree_axial).max() > 0.0]
+    assert loaded, "the toy's tree carries its head"
+    plain = fs.simulate(_toy())
+    assert _toy().diameter == 60.3 and _toy().steel == fs.tr.S355
+    assert max(c.tree_utilisation.max() for c in result.captures) > \
+        max(c.tree_utilisation.max() for c in plain.captures)

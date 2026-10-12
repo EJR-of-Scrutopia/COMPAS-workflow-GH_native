@@ -30,6 +30,20 @@ class TreeError(ValueError):
     """A tree that cannot be read, or a tube that cannot exist."""
 
 
+class Steel(NamedTuple):
+    """What a tube's steel brings to its resistance (Param, 2026-10-12: the
+    column's steel is chosen): its yield, its modulus, and its buckling
+    curve's imperfection factor and the slenderness the curve starts at."""
+
+    fy: float               # N/mm2
+    e: float                # N/mm2
+    alpha: float
+    lambda0: float
+
+
+S355 = Steel(FY_S355, E_STEEL, ALPHA_CURVE_A, 0.2)
+
+
 class Tube(NamedTuple):
     diameter: float         # mm
     wall: float             # mm
@@ -54,17 +68,18 @@ def tube(diameter, wall):
                 math.pi / 64.0 * (diameter ** 4 - inner ** 4))
 
 
-def resistance(section, length, compression):
+def resistance(section, length, compression, steel=S355):
     """The design resistance of one pinned member, N: its yield in tension,
-    its flexural buckling resistance in compression (EN 1993-1-1 6.3.1, curve a,
-    the member's own length as its buckling length)."""
+    its flexural buckling resistance in compression (EN 1993-1-1 6.3.1, on the
+    steel's own curve, S355 curve a unless told; the member's own length as its
+    buckling length)."""
 
-    plastic = section.area * FY_S355
+    plastic = section.area * steel.fy
     if not compression:
         return plastic / GAMMA_M0
-    critical = math.pi ** 2 * E_STEEL * section.inertia / float(length) ** 2
+    critical = math.pi ** 2 * steel.e * section.inertia / float(length) ** 2
     slenderness = math.sqrt(plastic / critical)
-    phi = 0.5 * (1.0 + ALPHA_CURVE_A * (slenderness - 0.2) + slenderness ** 2)
+    phi = 0.5 * (1.0 + steel.alpha * (slenderness - steel.lambda0) + slenderness ** 2)
     chi = min(1.0, 1.0 / (phi + math.sqrt(phi ** 2 - slenderness ** 2)))
     return chi * plastic / GAMMA_M1
 
@@ -144,23 +159,23 @@ def member_lengths(nodes, members):
     return np.linalg.norm(nodes[members[:, 1]] - nodes[members[:, 0]], axis=1)
 
 
-def utilisation(nodes, members, axial, section):
+def utilisation(nodes, members, axial, section, steel=S355):
     """Each member's force over its resistance: buckling when it pushes, yield
     when it pulls."""
 
     lengths = member_lengths(nodes, members)
     return np.array([0.0 if length < FOLDED_MM
-                     else abs(float(n)) / resistance(section, length, float(n) < 0.0)
+                     else abs(float(n)) / resistance(section, length, float(n) < 0.0, steel)
                      for n, length in zip(axial, lengths)])
 
 
-def thinnest_wall(nodes, members, axial, diameter=DIAMETER, walls=STANDARD_WALLS):
+def thinnest_wall(nodes, members, axial, diameter=DIAMETER, walls=STANDARD_WALLS, steel=S355):
     """The thinnest standard wall that keeps every member within its
     resistance, or None when none does."""
 
     for wall in sorted(walls):
         if 2.0 * wall >= diameter:
             continue
-        if utilisation(nodes, members, axial, tube(diameter, wall)).max(initial=0.0) <= 1.0:
+        if utilisation(nodes, members, axial, tube(diameter, wall), steel).max(initial=0.0) <= 1.0:
             return wall
     return None

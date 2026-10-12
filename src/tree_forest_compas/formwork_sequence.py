@@ -73,6 +73,8 @@ class Model(NamedTuple):
     holds_per_side: int = 0  # the rods placed on each side at the hold when holds is empty
     tendons: tuple = ()     # each tendon's path of nodes, from its column head to the free
                             # edge (spec 2026-10-11 across tendons)
+    diameter: float = tr.DIAMETER  # the tree tube across, mm, and its steel (Param,
+    steel: object = tr.S355        # 2026-10-12: the column's tube and steel are chosen)
     tendon_pull: float = 0.0  # N, every tendon's tension from the raise on; nought for none
 
 
@@ -231,7 +233,7 @@ def _capture(model, rest, contacts, reel, target, tree_x, phase, time, row, quar
     applied = {int(tree): -rest.reaction[int(net)] for net, tree in model.heads
                if int(net) in contacts.engaged}
     loads = tr.tree_forces(tree_x, model.tree_members, model.tree_feet, applied)
-    section = tr.tube(tr.DIAMETER, model.wall)
+    section = tr.tube(model.diameter, model.wall)
     let_out = np.array([max(0.0, ne.let_out(rest.x[n], model.rim[n])) for n in rim])
     reels = np.array([reel[n] for n in rim], dtype=float)
     stiffness = np.array([model.rim[n].stiffness for n in rim], dtype=float)
@@ -247,7 +249,8 @@ def _capture(model, rest, contacts, reel, target, tree_x, phase, time, row, quar
         wire_tension=stiffness * np.maximum(let_out + reels, 0.0),
         reel=reels, let_out=let_out,
         tree_x=np.asarray(tree_x, dtype=float), tree_axial=loads.axial,
-        tree_utilisation=tr.utilisation(tree_x, model.tree_members, loads.axial, section),
+        tree_utilisation=tr.utilisation(tree_x, model.tree_members, loads.axial, section,
+                                        model.steel),
         tree_bending=loads.bending,
         ground=tuple(sorted(int(node) for node in contacts.resting)),
         solver=rest.solver, iterations=rest.iterations, leftover=rest.leftover,
@@ -481,11 +484,11 @@ def simulate(model, progress=None, state=None, figures=None):
         state = state._replace(rest_lengths=rest_lengths, cut_force=cut_force, groups=groups)
     thinnest = None
     for wall in sorted(tr.STANDARD_WALLS):
-        if 2.0 * wall >= tr.DIAMETER:
+        if 2.0 * wall >= model.diameter:
             continue
-        section = tr.tube(tr.DIAMETER, wall)
-        if all(tr.utilisation(c.tree_x, model.tree_members, c.tree_axial, section).max(initial=0.0)
-               <= 1.0 for c in captures):
+        section = tr.tube(model.diameter, wall)
+        if all(tr.utilisation(c.tree_x, model.tree_members, c.tree_axial, section,
+                              model.steel).max(initial=0.0) <= 1.0 for c in captures):
             thinnest = wall
             break
     return Result(captures, rest_lengths, cut_force, groups, float(model.wall), thinnest,

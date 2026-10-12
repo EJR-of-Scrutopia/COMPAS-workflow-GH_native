@@ -225,3 +225,16 @@ def test_the_document_carries_the_pull_each_tendons_line_and_its_tension(tmp_pat
     again = solve_formwork.solve({**asked, "state_in": str(state)})
     assert again["resumed"] is True
     assert again["captures"] == solve_formwork.solve(asked)["captures"]
+
+
+def test_the_document_says_which_tube_and_steel_the_trees_were_judged_in():
+    # Param, 2026-10-12: the column's tube and steel are chosen; a request
+    # with none is the 60.3 S355 tube the trees were always judged in
+    plain = solve_formwork.solve(_request())["trees"]
+    assert plain["diameter"] == 60.3 and plain["grade"] == "S355"
+    assert (plain["fy"], plain["e"], plain["alpha"], plain["lambda0"]) == (355.0, 210000.0, 0.21, 0.2)
+    tube = {"diameter": 26.9, "grade": "1.4401", "fy": 220.0, "e": 200000.0,
+            "alpha": 0.49, "lambda0": 0.3}
+    chosen = solve_formwork.solve(dict(_request(), tube=tube))["trees"]
+    assert {key: chosen[key] for key in tube} == tube
+    assert chosen["wall"] == 3.2

@@ -255,9 +255,11 @@ def rows_from(arrays, binding, plan, thickness, density):
 
 
 def request_from(inputs, arrays, binding, plan, thickness, density, ea, mass_per_metre,
-                 prestress, wires_per_motor, wall, study=None, options=None, note=None):
+                 prestress, wires_per_motor, wall, study=None, options=None, note=None,
+                 tube=None):
     """The engine's request, every length in millimetres and every force in
-    newtons."""
+    newtons. tube, when given, is the tree tube and its steel the trees are
+    judged in (solve_formwork.tube_of); none is the 60.3 S355 tube."""
 
     vertices = arrays["vertices"]
     edges = [[int(u), int(v)] for u, v in arrays["edges"]]
@@ -275,6 +277,7 @@ def request_from(inputs, arrays, binding, plan, thickness, density, ea, mass_per
         "frames": inputs.frames,
         "rows": rows_from(arrays, binding, plan, thickness, density),
         "wall": float(wall),
+        **({} if tube is None else {"tube": dict(tube)}),
         "options": options, "note": note, "assumptions": list(inputs.assumptions),
     }
 
@@ -482,7 +485,7 @@ def travel_checks(parts, configuration, document, reeve_by_node, rim_nodes):
 def run_formwork(inputs, arrays, binding, plan, thickness, density, out_path, ea,
                  mass_per_metre, prestress, wires_per_motor, wall, study=None, options=None,
                  note=None, runner=None, python_exe=None, progress=None, holds_per_side=0,
-                 state_path=None, resume=False, annotate=None, pull_in=0.0):
+                 state_path=None, resume=False, annotate=None, pull_in=0.0, tube=None):
     """From a checked study and its cut to a written capture document. runner,
     when given, replaces the subprocess: it takes the request and progress and
     returns the document. progress, when given, is called with (captures done,
@@ -497,7 +500,8 @@ def run_formwork(inputs, arrays, binding, plan, thickness, density, out_path, ea
     finished document."""
 
     request = request_from(inputs, arrays, binding, plan, thickness, density, ea,
-                           mass_per_metre, prestress, wires_per_motor, wall, study, options, note)
+                           mass_per_metre, prestress, wires_per_motor, wall, study, options, note,
+                           tube=tube)
     vertices, edges = arrays.get("vertices"), arrays.get("edges")
     sides = (None if vertices is None or edges is None else
              sides_of(arrays.get("faces"), edges, [wire["node"] for wire in inputs.rim],

@@ -103,3 +103,26 @@ def test_a_tree_with_a_node_no_foot_reaches_or_a_loop_is_refused():
         tr.parents(members[:2], [0], 4)
     with pytest.raises(tr.TreeError, match="loop"):
         tr.parents(np.vstack([members, [[2, 3]]]), [0], 4)
+
+
+def test_a_tube_is_judged_in_its_own_steel():
+    # Param, 2026-10-12: the column's steel is chosen. A stainless 316 tube
+    # (EN 1993-1-4: 1.4401 at 220 N/mm2, E 200,000, hollow sections on
+    # alpha 0.49 from 0.3), worked out again here from the same formula
+    steel = tr.Steel(fy=220.0, e=200000.0, alpha=0.49, lambda0=0.3)
+    section = tr.tube(26.9, 2.6)
+    plastic = section.area * 220.0
+    critical = math.pi ** 2 * 200000.0 * section.inertia / 1000.0 ** 2
+    slenderness = math.sqrt(plastic / critical)
+    phi = 0.5 * (1.0 + 0.49 * (slenderness - 0.3) + slenderness ** 2)
+    chi = min(1.0, 1.0 / (phi + math.sqrt(phi ** 2 - slenderness ** 2)))
+    assert tr.resistance(section, 1000.0, True, steel) == pytest.approx(chi * plastic)
+    assert tr.resistance(section, 1000.0, False, steel) == pytest.approx(plastic)
+    # the steel the trees were always judged in is the default
+    assert tr.S355 == tr.Steel(355.0, 210000.0, 0.21, 0.2)
+    assert tr.resistance(section, 1000.0, True) == tr.resistance(section, 1000.0, True, tr.S355)
+    nodes = np.array([[0.0, 0.0, 0.0], [0.0, 0.0, 1000.0]])
+    members = np.array([[0, 1]])
+    axial = np.array([-2000.0])
+    assert tr.utilisation(nodes, members, axial, section, steel)[0] == pytest.approx(
+        2000.0 / (chi * plastic))

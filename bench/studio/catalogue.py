@@ -162,8 +162,64 @@ def load_parts(path=None):
         entry["capacity_newtons"] = float(entry["capacity_kg"]) * gravity
     for key, entry in (parts.get("rope") or {}).items():
         _check_rope_look(key, entry)
+    _check_columns(parts)
     _check_offered(parts)
     return parts
+
+
+def _valid_look(look):
+    """A colour as #rrggbb and a metalness and roughness from 0 to 1."""
+
+    try:
+        colour = str(look["colour"])
+        return (len(colour) == 7 and colour[0] == "#"
+                and all(c in "0123456789abcdef" for c in colour[1:])
+                and 0.0 <= float(look["metalness"]) <= 1.0
+                and 0.0 <= float(look["roughness"]) <= 1.0)
+    except (KeyError, TypeError, ValueError):
+        return False
+
+
+def _positive(entry, *names, at_least=0.0):
+    try:
+        return all(float(entry[name]) > at_least for name in names)
+    except (KeyError, TypeError, ValueError):
+        return False
+
+
+COLUMN_KINDS = ("column_tube", "column_steel", "column_finish")
+
+
+def _check_columns(parts):
+    """The column trees' tube, steel and finish (Param, 2026-10-12: the column
+    as specced, in the steel chosen): every tube a diameter, every steel the
+    figures its buckling resistance needs, every finish a look, and a steel
+    that wears one finish only a finish the catalogue holds. A section's
+    _note is for the reader of this file, not a part."""
+
+    for kind in COLUMN_KINDS:
+        section = parts.setdefault(kind, {})
+        for key in [key for key in section if key.startswith("_")]:
+            del section[key]
+    for key, tube in parts["column_tube"].items():
+        if not _positive(tube, "diameter_mm"):
+            raise CatalogueError(
+                "column tube {!r} needs its outside diameter in millimetres.".format(key))
+    for key, finish in parts["column_finish"].items():
+        if not _valid_look(finish.get("render")):
+            raise CatalogueError(
+                "column finish {!r} needs a render look: a colour as #rrggbb and a "
+                "metalness and roughness from 0 to 1.".format(key))
+    for key, steel in parts["column_steel"].items():
+        if not (_positive(steel, "fy_mpa", "e_mpa")
+                and _positive(steel, "alpha", "lambda0", at_least=-1.0e-12)):
+            raise CatalogueError(
+                "column steel {!r} needs fy_mpa, e_mpa, alpha and lambda0.".format(key))
+        finish = steel.get("finish")
+        if finish is not None and finish not in parts["column_finish"]:
+            raise CatalogueError(
+                "column steel {!r} wears a finish {!r} the catalogue does not hold.".format(
+                    key, finish))
 
 
 def _check_rope_look(key, rope):
@@ -172,16 +228,7 @@ def _check_rope_look(key, rope):
     metalness and roughness from 0 to 1, each rope its own so a finish can
     be retuned in this file."""
 
-    look = rope.get("render")
-    try:
-        colour = str(look["colour"])
-        valid = (len(colour) == 7 and colour[0] == "#"
-                 and all(c in "0123456789abcdef" for c in colour[1:])
-                 and 0.0 <= float(look["metalness"]) <= 1.0
-                 and 0.0 <= float(look["roughness"]) <= 1.0)
-    except (KeyError, TypeError, ValueError):
-        valid = False
-    if not valid:
+    if not _valid_look(rope.get("render")):
         raise CatalogueError(
             "rope {!r} needs a render look: a colour as #rrggbb and a metalness "
             "and roughness from 0 to 1.".format(key))
